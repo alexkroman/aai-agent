@@ -21,7 +21,6 @@ export function VoiceWidget({
 }) {
   const {
     messages,
-    statusText,
     statusClass,
     isRecording,
     toggleRecording,
@@ -59,19 +58,31 @@ export function VoiceWidget({
 
       <div className="aai-input-area">
         <button
-          className={`aai-mic-btn${isRecording ? " aai-recording" : ""}`}
+          className={`aai-mic-btn${isRecording ? " aai-recording" : ""}${statusClass ? ` aai-mic-${statusClass}` : ""}`}
           onClick={toggleRecording}
           title="Toggle microphone"
         >
-          <svg viewBox="0 0 24 24">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-          </svg>
-        </button>
+          {statusClass === "speaking" ? (
+            <svg viewBox="0 0 24 24">
+              <path d="M3 9v6h4l5 5V4L7 9H3z" />
+              <path d="M16.5 12A4.5 4.5 0 0 0 14 8v8a4.47 4.47 0 0 0 2.5-4z" />
+              <path d="M14 3.23v2.06a6.51 6.51 0 0 1 0 13.42v2.06A8.5 8.5 0 0 0 14 3.23z" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+            </svg>
+          )}
 
-        <div className={`aai-status${statusClass ? ` aai-${statusClass}` : ""}`}>
-          {statusText}
-        </div>
+          {statusClass === "listening" && <span className="aai-pulse-ring" />}
+          {statusClass === "processing" && (
+            <span className="aai-spinner-ring" />
+          )}
+          {statusClass === "speaking" && (
+            <span className="aai-speaking-ring" />
+          )}
+        </button>
       </div>
     </div>
   );

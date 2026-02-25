@@ -96,13 +96,13 @@
 /* ── input area ────────────────────────────────────────────────────────── */
 
 .aai-input-area {
+  margin-top: auto;
   padding: 16px 20px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
 }
-
 
 .aai-mic-btn {
   width: 64px;
@@ -114,7 +114,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+  transition: background 0.3s, transform 0.15s;
   position: relative;
 }
 
@@ -125,8 +125,14 @@
 
 .aai-mic-btn.aai-recording {
   background: #e03131;
-  box-shadow: 0 0 0 0 rgb(224 49 49 / 50%);
-  animation: aai-pulse-ring 1.5s ease-out infinite;
+}
+
+.aai-mic-btn.aai-mic-processing {
+  background: #e8890c;
+}
+
+.aai-mic-btn.aai-mic-speaking {
+  background: #37b24d;
 }
 
 .aai-mic-btn:disabled {
@@ -135,23 +141,79 @@
   animation: none;
 }
 
-@keyframes aai-pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgb(224 49 49 / 50%); }
-  100% { box-shadow: 0 0 0 20px rgb(224 49 49 / 0%); }
-}
-
 .aai-mic-btn svg {
   width: 28px;
   height: 28px;
   fill: white;
 }
 
+/* ── button ring overlays ──────────────────────────────────────────────── */
+
+.aai-pulse-ring,
+.aai-spinner-ring,
+.aai-speaking-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* Listening: gentle pulsing ring */
+.aai-pulse-ring {
+  border: 2px solid #e03131;
+  animation: aai-pulse 2s ease-out infinite;
+}
+
+@keyframes aai-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+/* Processing: rotating dashed spinner */
+.aai-spinner-ring {
+  border: 2.5px dashed #f59f00;
+  animation: aai-spin 1.2s linear infinite;
+}
+
+@keyframes aai-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Speaking: breathing glow */
+.aai-speaking-ring {
+  border: 2px solid #51cf66;
+  animation: aai-breathe 1.5s ease-in-out infinite;
+}
+
+@keyframes aai-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 0.7;
+  }
+}
+
+/* ── status text ───────────────────────────────────────────────────────── */
+
 .aai-status {
   font-size: 12px;
   color: #666;
   letter-spacing: 0.3px;
+  transition: color 0.3s;
 }
 
-.aai-listening  { color: #e03131; }
-.aai-processing { color: #f59f00; }
-.aai-speaking   { color: #51cf66; }
+.aai-status.aai-listening  { color: #e03131; }
+.aai-status.aai-processing { color: #f59f00; }
+.aai-status.aai-speaking   { color: #51cf66; }
