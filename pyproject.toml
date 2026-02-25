@@ -15,7 +15,7 @@ dependencies = [
 aai-agent = "aai_agent.cli:app"
 
 [project.optional-dependencies]
-fastapi = ["fastapi>=0.115.0"]
+fastapi = ["fastapi>=0.115.0", "itsdangerous>=2.0", "uvicorn[standard]>=0.41.0"]
 # Extra deps for running the example web assistant
 examples = [
     "aai-agent[fastapi]",
@@ -26,6 +26,14 @@ examples = [
     "uvicorn[standard]>=0.41.0",
     "websockets>=16.0",
     "wikipedia-api>=0.9.0",
+]
+
+test = [
+    "aai-agent[fastapi]",
+    "pytest>=8.0",
+    "anyio[trio]>=4.0",
+    "pytest-anyio>=0.0.0",
+    "httpx>=0.28.1",
 ]
 
 [build-system]

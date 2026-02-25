@@ -1,0 +1,72 @@
+"""Tests for aai_agent.cli."""
+
+import os
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from aai_agent.cli import app
+
+runner = CliRunner()
+
+
+class TestInit:
+    def test_scaffolds_project(self, tmp_path):
+        result = runner.invoke(app, ["init", str(tmp_path / "myproject")])
+        assert result.exit_code == 0
+        assert "Initialized voice agent project" in result.output
+
+        project = tmp_path / "myproject"
+        assert (project / "server.py").exists()
+        assert (project / "requirements.txt").exists()
+        assert (project / "static" / "index.html").exists()
+        assert (project / "static" / "aai-voice-agent.iife.js").exists()
+
+    def test_scaffolds_env_example(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        env_file = target / ".env.example"
+        assert env_file.exists()
+        content = env_file.read_text()
+        assert "ASSEMBLYAI_API_KEY" in content
+        assert "RIME_API_KEY" in content
+
+    def test_requirements_has_sdk_path(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        req = (target / "requirements.txt").read_text()
+        assert req.startswith("-e ")
+
+    def test_refuses_overwrite_without_force(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        result = runner.invoke(app, ["init", str(target)])
+        assert result.exit_code == 1
+        assert "already exist" in result.output
+
+    def test_force_overwrites(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        result = runner.invoke(app, ["init", str(target), "--force"])
+        assert result.exit_code == 0
+        assert "Initialized" in result.output
+
+    def test_default_directory(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+        assert (tmp_path / "server.py").exists()
+
+    def test_next_steps_output(self, tmp_path):
+        result = runner.invoke(app, ["init", str(tmp_path / "myapp")])
+        assert "aai-agent start" in result.output
+        assert "cp .env.example .env" in result.output
+        assert "uv pip install -r requirements.txt" in result.output
+
+    def test_server_py_content(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        content = (target / "server.py").read_text()
+        assert "create_voice_app" in content
+        assert "aai-agent start" in content

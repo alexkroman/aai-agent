@@ -8,3 +8,5 @@ node_modules/
 dist/
 *.egg-info/
 uv.lock
+.claude
+.mypy_cache

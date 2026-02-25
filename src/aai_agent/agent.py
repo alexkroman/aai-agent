@@ -13,12 +13,13 @@ from smolagents.agents import ActionStep, PlanningStep
 from smolagents.tools import Tool
 
 from .stt import AssemblyAISTT
+from .tools import AskUserTool, resolve_tools
 from .tts import RimeTTS
 from .types import STTConfig, TTSConfig, VoiceResponse
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 DEFAULT_INSTRUCTIONS = """\
 You are a helpful voice assistant. Your goal is to provide accurate, \
@@ -113,7 +114,7 @@ class VoiceAgent:
         model: str = DEFAULT_MODEL,
         tools: list[Tool] | None = None,
         instructions: str = DEFAULT_INSTRUCTIONS,
-        max_steps: int = 5,
+        max_steps: int = 3,
         step_callbacks: list[Callable] | None = None,
         tts_config: TTSConfig | None = None,
         stt_config: STTConfig | None = None,
@@ -121,6 +122,12 @@ class VoiceAgent:
         voice_rules: str | None = None,
         fallback_answer_prompt: dict[str, str] | None = None,
     ):
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass
+
         assemblyai_api_key = assemblyai_api_key or os.environ.get("ASSEMBLYAI_API_KEY")
         if not assemblyai_api_key:
             raise ValueError(
@@ -140,7 +147,7 @@ class VoiceAgent:
 
         self._assemblyai_api_key = assemblyai_api_key
         self._model_id = model
-        self._tools = tools or []
+        self._tools = resolve_tools(tools) if tools else []
         self._instructions = instructions
         self._greeting = greeting
         self._max_steps = max_steps
@@ -153,6 +160,8 @@ class VoiceAgent:
 
     def _build_agent(self) -> ToolCallingAgent:
         """Create the underlying smolagents ToolCallingAgent."""
+        # Always include AskUserTool so the agent can ask clarifying questions
+        tools = [AskUserTool(), *self._tools]
         agent = ToolCallingAgent(
             model=LiteLLMModel(
                 model_id=f"openai/{self._model_id}",
@@ -161,8 +170,9 @@ class VoiceAgent:
                 compliant_tool_call=True,
                 flatten_messages_as_text=True,
             ),
-            tools=self._tools,
+            tools=tools,
             max_steps=self._max_steps,
+            max_tool_threads=4,
             instructions=self._instructions + self._voice_rules,
             step_callbacks=[self._on_step, *self._step_callbacks],
         )

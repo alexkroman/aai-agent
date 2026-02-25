@@ -12,6 +12,10 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from .manager import VoiceAgentManager
 
 COOKIE_NAME = "voice_session_id"
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 
 
 def create_voice_router(
@@ -99,9 +103,10 @@ def create_voice_router(
 
 def create_voice_app(
     *,
-    agent_manager: VoiceAgentManager,
-    cors_origins: list[str] | None = None,
-    static_dir: str | None = None,
+    tools: list | None = None,
+    agent_manager: VoiceAgentManager | None = None,
+    cors_origins: list[str] | None = None,  # None = use defaults
+    static_dir: str | None = "static",
     session_secret: str | None = None,
     api_prefix: str = "/api",
 ) -> FastAPI:
@@ -111,11 +116,16 @@ def create_voice_app(
     handles CORS, the voice-agent router, and optional static file serving.
 
     Args:
-        agent_manager: A :class:`VoiceAgentManager` that owns per-session agents.
-        cors_origins: Allowed CORS origins (e.g.
-            ``["http://localhost:5173"]``). Omit to disable CORS.
-        static_dir: Path to a directory of static files (e.g. a Vite
-            ``dist/`` build) to serve at ``/``. Omit to skip.
+        tools: List of tools (instances or string names like
+            ``"DuckDuckGoSearchTool"``). A :class:`VoiceAgentManager` is
+            created automatically. Ignored if ``agent_manager`` is provided.
+        agent_manager: A :class:`VoiceAgentManager` that owns per-session
+            agents. If not provided, one is created from ``tools``.
+        cors_origins: Allowed CORS origins. Defaults to
+            ``["http://localhost:5173", "http://localhost:3000"]``.
+            Pass an empty list to disable CORS.
+        static_dir: Path to a directory of static files to serve at ``/``.
+            Defaults to ``"static"``. Pass ``None`` to disable.
         session_secret: Secret key for signing session cookies.
             Auto-generated if not provided.
         api_prefix: URL prefix for the voice-agent endpoints.
@@ -126,22 +136,23 @@ def create_voice_app(
 
     Example::
 
-        from aai_agent import VoiceAgentManager
         from aai_agent.fastapi import create_voice_app
 
-        manager = VoiceAgentManager(tools=[...])
         app = create_voice_app(
-            agent_manager=manager,
-            cors_origins=["http://localhost:5173"],
-            static_dir="frontend/dist",
+            tools=["DuckDuckGoSearchTool", "VisitWebpageTool"],
+            static_dir="static",
         )
     """
+    if agent_manager is None:
+        agent_manager = VoiceAgentManager(tools=tools or [])
+
     app = FastAPI()
 
-    if cors_origins:
+    origins = cors_origins if cors_origins is not None else DEFAULT_CORS_ORIGINS
+    if origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=cors_origins,
+            allow_origins=origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
