@@ -2,20 +2,50 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import logging
 import secrets
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from .manager import VoiceAgentManager
+from .tts import RimeTTS
+
+logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "voice_session_id"
-DEFAULT_CORS_ORIGINS = [
+DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:5173",
     "http://localhost:3000",
-]
+)
+
+
+async def _stream_tts_response(tts: RimeTTS, text: str, *, steps: list[str] | None = None) -> AsyncIterator[str]:
+    """Generate NDJSON lines: reply, audio chunks, done."""
+    reply = {"type": "reply", "text": text, "sample_rate": tts.config.sample_rate}
+    if steps is not None:
+        reply["steps"] = steps
+    yield json.dumps(reply) + "\n"
+
+    try:
+        async for chunk in tts.synthesize_stream(text):
+            yield json.dumps({
+                "type": "audio",
+                "data": base64.b64encode(chunk).decode(),
+            }) + "\n"
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("TTS streaming failed")
+
+    yield json.dumps({"type": "done"}) + "\n"
 
 
 def create_voice_router(
@@ -52,6 +82,8 @@ def create_voice_router(
     """
     router = APIRouter()
     signer = URLSafeSerializer(session_secret or secrets.token_hex(32))
+    # Track in-flight chat tasks per session so barge-in can cancel them.
+    _active_tasks: dict[str, asyncio.Task] = {}
 
     def _session_id(request: Request, response: Response) -> str:
         """Read or create a signed session cookie."""
@@ -68,6 +100,17 @@ def create_voice_router(
         )
         return sid
 
+    async def _cancel_active(sid: str) -> None:
+        """Cancel any in-flight chat task for this session."""
+        task = _active_tasks.pop(sid, None)
+        if task is not None and not task.done():
+            logger.info("Cancelling in-flight task for session %s", sid[:8])
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     @router.get("/tokens")
     async def tokens(request: Request, response: Response):
         sid = _session_id(request, response)
@@ -78,8 +121,15 @@ def create_voice_router(
     async def greet(request: Request, response: Response):
         sid = _session_id(request, response)
         agent = agent_manager.get_or_create(sid)
-        result = await agent.greet()
-        return {"reply": result.text, "audio": result.audio_base64}
+
+        greeting_text = agent._greeting
+        if not greeting_text:
+            return Response(status_code=204)
+
+        return StreamingResponse(
+            _stream_tts_response(agent.tts, greeting_text),
+            media_type="application/x-ndjson",
+        )
 
     @router.post("/chat")
     async def chat(request: Request, response: Response):
@@ -90,20 +140,48 @@ def create_voice_router(
         if not message:
             raise HTTPException(status_code=400, detail="No message provided")
 
+        # Cancel any previous in-flight task for this session (barge-in)
+        await _cancel_active(sid)
+
         agent = agent_manager.get_or_create(sid)
-        result = await agent.voice_chat(message)
-        return {
-            "reply": result.text,
-            "audio": result.audio_base64,
-            "steps": result.steps,
-        }
+
+        # Run LLM first (cancellable via task tracking)
+        async def _do_chat():
+            try:
+                return await agent.chat(message)
+            finally:
+                _active_tasks.pop(sid, None)
+
+        task = asyncio.create_task(_do_chat())
+        _active_tasks[sid] = task
+
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            return Response(status_code=499)
+
+        # Stream text reply immediately, then TTS audio chunks
+        return StreamingResponse(
+            _stream_tts_response(agent.tts, result.text, steps=result.steps),
+            media_type="application/x-ndjson",
+        )
+
+    @router.post("/cancel")
+    async def cancel(request: Request, response: Response):
+        """Cancel any in-flight chat task for this session."""
+        sid = _session_id(request, response)
+        await _cancel_active(sid)
+        # Also cancel at the agent level
+        agent = agent_manager.get_or_create(sid)
+        await agent.cancel()
+        return {"status": "cancelled"}
 
     return router
 
 
 def create_voice_app(
     *,
-    tools: list | None = None,
+    tools: list[str] | None = None,
     agent_manager: VoiceAgentManager | None = None,
     cors_origins: list[str] | None = None,  # None = use defaults
     static_dir: str | None = "static",
@@ -148,7 +226,7 @@ def create_voice_app(
 
     app = FastAPI()
 
-    origins = cors_origins if cors_origins is not None else DEFAULT_CORS_ORIGINS
+    origins = cors_origins if cors_origins is not None else list(DEFAULT_CORS_ORIGINS)
     if origins:
         app.add_middleware(
             CORSMiddleware,

@@ -6,8 +6,6 @@ from smolagents import DuckDuckGoSearchTool, VisitWebpageTool
 from aai_agent.tools import (
     TOOL_REGISTRY,
     AskUserTool,
-    PythonInterpreterTool,
-    WikipediaSearchTool,
     resolve_tools,
 )
 

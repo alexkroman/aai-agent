@@ -1,10 +1,13 @@
 """Tests for aai_agent.stt."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from aai_agent.stt import AssemblyAISTT, TOKEN_URL
 from aai_agent.types import STTConfig
+
+from helpers import make_async_context_mock
 
 
 class TestAssemblyAISTT:
@@ -34,10 +37,9 @@ class TestAssemblyAISTT:
         mock_response.json.return_value = {"token": "ephemeral-token"}
         mock_response.raise_for_status = MagicMock()
 
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client = make_async_context_mock(
+            get=AsyncMock(return_value=mock_response),
+        )
 
         with patch("aai_agent.stt.httpx.AsyncClient", return_value=mock_client):
             token = await stt.create_token()

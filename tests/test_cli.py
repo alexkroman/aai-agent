@@ -1,9 +1,6 @@
 """Tests for aai_agent.cli."""
 
-import os
-from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from aai_agent.cli import app

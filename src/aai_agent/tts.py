@@ -1,5 +1,10 @@
 """Rime TTS connector."""
 
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any
+
 import httpx
 
 from .types import TTSConfig
@@ -19,6 +24,27 @@ class RimeTTS:
         self.api_key = api_key
         self.config = config or TTSConfig()
 
+    def _request_params(self, text: str, *, accept: str = "audio/wav") -> dict[str, Any]:
+        """Return shared httpx request kwargs for TTS."""
+        return {
+            "method": "POST",
+            "url": RIME_API_URL,
+            "headers": {
+                "Accept": accept,
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            "json": {
+                "text": text,
+                "speaker": self.config.speaker,
+                "modelId": self.config.model,
+                "samplingRate": self.config.sample_rate,
+                "speedAlpha": self.config.speed,
+                "max_tokens": self.config.max_tokens,
+            },
+            "timeout": 60.0,
+        }
+
     async def synthesize(self, text: str) -> bytes:
         """Convert text to speech, returning raw WAV bytes.
 
@@ -29,26 +55,20 @@ class RimeTTS:
             WAV audio bytes.
         """
         async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                RIME_API_URL,
-                headers={
-                    "Accept": "audio/wav",
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "speaker": self.config.speaker,
-                    "modelId": self.config.model,
-                    "samplingRate": self.config.sample_rate,
-                    "speedAlpha": self.config.speed,
-                    "repetition_penalty": self.config.repetition_penalty,
-                    "temperature": self.config.temperature,
-                    "top_p": self.config.top_p,
-                    "max_tokens": self.config.max_tokens,
-                },
-                timeout=60.0,
-            ) as resp:
+            async with client.stream(**self._request_params(text)) as resp:
                 resp.raise_for_status()
                 return b"".join([chunk async for chunk in resp.aiter_bytes()])
+
+    async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
+        """Stream raw PCM audio chunks as they arrive from Rime.
+
+        Yields:
+            Raw 16-bit signed little-endian PCM bytes.
+        """
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                **self._request_params(text, accept="audio/pcm")
+            ) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes():
+                    yield chunk

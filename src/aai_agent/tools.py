@@ -44,14 +44,14 @@ class AskUserTool(Tool):
 
 TOOL_REGISTRY = {
     "AskUserTool": AskUserTool,
-    "DuckDuckGoSearchTool": DuckDuckGoSearchTool,
+    "DuckDuckGoSearchTool": lambda: DuckDuckGoSearchTool(max_results=3),
     "VisitWebpageTool": VisitWebpageTool,
     "WikipediaSearchTool": WikipediaSearchTool,
     "PythonInterpreterTool": PythonInterpreterTool,
 }
 
 
-def resolve_tools(tools: list) -> list:
+def resolve_tools(tools: list[Tool | str]) -> list[Tool]:
     """Resolve a mixed list of tool instances and string names into tool instances.
 
     Strings are looked up in the built-in tool registry. Tool instances are
@@ -63,16 +63,16 @@ def resolve_tools(tools: list) -> list:
     Returns:
         List of instantiated tool objects.
     """
-    resolved = []
+    resolved: list[Tool] = []
     for tool in tools:
         if isinstance(tool, str):
-            cls = TOOL_REGISTRY.get(tool)
-            if cls is None:
+            factory = TOOL_REGISTRY.get(tool)
+            if factory is None:
                 raise ValueError(
                     f"Unknown tool: {tool!r}. "
                     f"Available: {', '.join(TOOL_REGISTRY)}"
                 )
-            resolved.append(cls())
+            resolved.append(factory())
         else:
             resolved.append(tool)
     return resolved

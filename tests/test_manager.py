@@ -1,22 +1,10 @@
 """Tests for aai_agent.manager."""
 
-import os
 import time
-from unittest.mock import patch
 
-import pytest
 
 from aai_agent.agent import VoiceAgent
 from aai_agent.manager import VoiceAgentManager
-
-
-@pytest.fixture
-def manager():
-    with patch.dict(
-        os.environ,
-        {"ASSEMBLYAI_API_KEY": "test-key", "RIME_API_KEY": "test-key"},
-    ):
-        return VoiceAgentManager(ttl_seconds=3600)
 
 
 class TestGetOrCreate:
@@ -62,73 +50,38 @@ class TestRemove:
 
 
 class TestTTLExpiry:
-    def test_expired_sessions_evicted(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(ttl_seconds=1)
-            manager.get_or_create("old-session")
-            assert manager.active_sessions == 1
+    def test_expired_sessions_evicted(self, mock_env):
+        manager = VoiceAgentManager(ttl_seconds=0.1)
+        manager.get_or_create("old-session")
+        assert manager.active_sessions == 1
 
-            # Simulate time passing by manipulating the stored timestamp
-            with manager._lock:
-                agent, _ = manager._sessions["old-session"]
-                manager._sessions["old-session"] = (agent, time.monotonic() - 2)
+        time.sleep(0.15)
+        assert manager.active_sessions == 0
 
-            assert manager.active_sessions == 0
+    def test_ttl_zero_disables_expiry(self, mock_env):
+        manager = VoiceAgentManager(ttl_seconds=0)
+        manager.get_or_create("session-1")
+        # With ttl=0, sessions use a plain dict and never expire
+        assert manager.active_sessions == 1
 
-    def test_ttl_zero_disables_expiry(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(ttl_seconds=0)
-            manager.get_or_create("session-1")
-
-            # Manipulate timestamp to be very old
-            with manager._lock:
-                agent, _ = manager._sessions["session-1"]
-                manager._sessions["session-1"] = (agent, 0)
-
-            assert manager.active_sessions == 1
-
-    def test_active_session_not_evicted(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(ttl_seconds=100)
-            manager.get_or_create("session-1")
-            assert manager.active_sessions == 1
+    def test_active_session_not_evicted(self, mock_env):
+        manager = VoiceAgentManager(ttl_seconds=100)
+        manager.get_or_create("session-1")
+        assert manager.active_sessions == 1
 
 
 class TestAgentKwargsForwarding:
-    def test_tools_forwarded(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(
-                tools=["DuckDuckGoSearchTool"],
-            )
-            agent = manager.get_or_create("s1")
-            assert len(agent._tools) == 1
+    def test_tools_forwarded(self, mock_env):
+        manager = VoiceAgentManager(tools=["DuckDuckGoSearchTool"])
+        agent = manager.get_or_create("s1")
+        assert len(agent._tools) == 1
 
-    def test_custom_model_forwarded(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(model="custom-model")
-            agent = manager.get_or_create("s1")
-            assert agent._model_id == "custom-model"
+    def test_custom_model_forwarded(self, mock_env):
+        manager = VoiceAgentManager(model="custom-model")
+        agent = manager.get_or_create("s1")
+        assert agent._model_id == "custom-model"
 
-    def test_custom_greeting_forwarded(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            manager = VoiceAgentManager(greeting="Yo!")
-            agent = manager.get_or_create("s1")
-            assert agent._greeting == "Yo!"
+    def test_custom_greeting_forwarded(self, mock_env):
+        manager = VoiceAgentManager(greeting="Yo!")
+        agent = manager.get_or_create("s1")
+        assert agent._greeting == "Yo!"

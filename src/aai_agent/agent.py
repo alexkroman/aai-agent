@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import threading
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 import anyio.to_thread
 from smolagents import LiteLLMModel, ToolCallingAgent
-from smolagents.agents import ActionStep, PlanningStep
+from smolagents.agents import ActionStep, PlanningStep, TaskStep
+from smolagents.memory import MemoryStep
 from smolagents.tools import Tool
 
 from .stt import AssemblyAISTT
 from .tools import AskUserTool, resolve_tools
 from .tts import RimeTTS
-from .types import STTConfig, TTSConfig, VoiceResponse
+from .types import FallbackAnswerPrompt, STTConfig, StreamingToken, TTSConfig, VoiceResponse
+
+logger = logging.getLogger(__name__)
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
@@ -40,25 +45,37 @@ If you need to list items, say "First," "Next," and "Finally."
 VOICE_RULES = (
     "\n\nCRITICAL: When you call final_answer, your answer will be spoken aloud by a TTS system. "
     "Write your answer exactly as you would say it out loud to a friend. "
-    "Two to three sentences max. No markdown, no bullet points, no numbered lists, no code. "
+    "One to two sentences max. No markdown, no bullet points, no numbered lists, no code. "
     "Sound like a human talking, not a document."
+    "\n\nTTS Text Formatting Rules (follow these exactly):"
+    "\n- Use commas for slight pauses, periods for longer pauses."
+    "\n- Write numbers as digits: 123, $7.95, 70°F, 100%."
+    "\n- Write dates as: October 12, 2024. Write times as: 10:30 AM."
+    "\n- Write phone numbers with dashes: 555-772-9140."
+    "\n- Spell out initialisms with periods and spaces: u. s. a., f. b. i., a. i."
+    "\n- Common abbreviations like Dr., St., Rd. are fine as-is."
+    "\n- Never use markdown symbols: no *, #, [], (), >, or ```. No URLs."
+    "\n- Use punctuation expressively: ? for questions, ?! for excited questions, "
+    "... for trailing off."
 )
 
 DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I help you with?"
 
-FALLBACK_ANSWER_PROMPT = {
-    "pre_messages": (
+FALLBACK_ANSWER_PROMPT = FallbackAnswerPrompt(
+    pre_messages=(
         "An agent tried to answer a user query but got stuck. "
         "You must provide a spoken answer instead. Here is the agent's memory:"
     ),
-    "post_messages": (
+    post_messages=(
         "Answer the following as if you're speaking to someone in conversation:\n"
         "{{task}}\n\n"
         "Your answer will be read aloud by a text-to-speech system. "
-        "Keep it to two or three sentences. Talk like a real person would — "
-        "no lists, no formatting, no jargon. Just give them the answer directly."
+        "Keep it to one or two sentences. Talk like a real person would — "
+        "no lists, no formatting, no jargon. Just give them the answer directly. "
+        "Write numbers as digits, spell out initialisms with periods and spaces "
+        "(like u. s. a.), and use commas for pauses."
     ),
-}
+)
 
 class VoiceAgent:
     """A voice-first AI agent backed by AssemblyAI STT, Rime TTS, and smolagents.
@@ -86,7 +103,6 @@ class VoiceAgent:
         voice_rules: Appended to instructions to guide voice-friendly output.
             Pass an empty string to disable. Defaults to VOICE_RULES.
         fallback_answer_prompt: Template used when the agent gets stuck.
-            Dict with "pre_messages" and "post_messages" keys.
             Defaults to FALLBACK_ANSWER_PROMPT.
 
     Example::
@@ -112,15 +128,15 @@ class VoiceAgent:
         rime_api_key: str | None = None,
         *,
         model: str = DEFAULT_MODEL,
-        tools: list[Tool] | None = None,
+        tools: list[Tool | str] | None = None,
         instructions: str = DEFAULT_INSTRUCTIONS,
         max_steps: int = 3,
-        step_callbacks: list[Callable] | None = None,
+        step_callbacks: list[Callable[[MemoryStep], None]] | None = None,
         tts_config: TTSConfig | None = None,
         stt_config: STTConfig | None = None,
         greeting: str = DEFAULT_GREETING,
         voice_rules: str | None = None,
-        fallback_answer_prompt: dict[str, str] | None = None,
+        fallback_answer_prompt: FallbackAnswerPrompt | None = None,
     ):
         try:
             from dotenv import load_dotenv
@@ -142,6 +158,9 @@ class VoiceAgent:
                 "RIME_API_KEY environment variable"
             )
 
+        if max_steps < 1:
+            raise ValueError("max_steps must be at least 1")
+
         self.stt = AssemblyAISTT(assemblyai_api_key, stt_config)
         self.tts = RimeTTS(rime_api_key, tts_config)
 
@@ -157,6 +176,8 @@ class VoiceAgent:
 
         self._step_log = threading.local()
         self._agent: ToolCallingAgent | None = None
+        self._saved_memory_steps: list[TaskStep | ActionStep | PlanningStep] | None = None
+        self._current_task: asyncio.Task | None = None
 
     def _build_agent(self) -> ToolCallingAgent:
         """Create the underlying smolagents ToolCallingAgent."""
@@ -176,15 +197,27 @@ class VoiceAgent:
             instructions=self._instructions + self._voice_rules,
             step_callbacks=[self._on_step, *self._step_callbacks],
         )
-        agent.prompt_templates["final_answer"] = self._fallback_answer_prompt
+        agent.prompt_templates["final_answer"] = self._fallback_answer_prompt.model_dump()  # type: ignore[assignment]
         return agent
+
+    def _invalidate_agent(self) -> None:
+        """Mark the agent for rebuild, preserving conversation history."""
+        if self._agent is not None:
+            try:
+                self._saved_memory_steps = list(self._agent.memory.steps)
+            except Exception:
+                pass
+        self._agent = None
 
     async def _ensure_agent(self) -> ToolCallingAgent:
         if self._agent is None:
             self._agent = await anyio.to_thread.run_sync(self._build_agent)
+            if self._saved_memory_steps is not None:
+                self._agent.memory.steps = self._saved_memory_steps
+                self._saved_memory_steps = None
         return self._agent
 
-    def _on_step(self, step):
+    def _on_step(self, step: MemoryStep) -> None:
         """Collect step summaries into thread-local log."""
         log = getattr(self._step_log, "steps", None)
         if log is None:
@@ -199,6 +232,17 @@ class VoiceAgent:
             elif step.model_output:
                 log.append(step.model_output[:100])
 
+    async def cancel(self) -> None:
+        """Cancel any in-flight chat task for this agent."""
+        task = self._current_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._current_task = None
+
     async def chat(self, message: str, *, reset: bool = False) -> VoiceResponse:
         """Send a text message and get a text response.
 
@@ -209,16 +253,48 @@ class VoiceAgent:
         Returns:
             VoiceResponse with text and steps (no audio).
         """
+        message = message.strip()
+        if not message:
+            raise ValueError("message must not be empty")
+
+        # Cancel any in-flight request before starting a new one
+        await self.cancel()
+
         agent = await self._ensure_agent()
 
         def run():
             self._step_log.steps = []
-            result = agent.run(message, reset=reset)
+            try:
+                result = agent.run(message, reset=reset)
+            except Exception as exc:
+                # smolagents raises UnboundLocalError when the agent is
+                # interrupted or fails to produce a final_answer.
+                # Rebuild the agent to clear corrupted state.
+                if isinstance(exc, UnboundLocalError):
+                    logger.warning("Agent state corrupted, rebuilding: %s", exc)
+                    self._invalidate_agent()
+                    steps = list(getattr(self._step_log, "steps", None) or [])
+                    self._step_log.steps = None
+                    return "Sorry, I got interrupted. Could you say that again?", steps
+                raise
             steps = list(self._step_log.steps)
             self._step_log.steps = None
             return str(result), steps
 
-        text, steps = await anyio.to_thread.run_sync(run)
+        async def _run_chat():
+            return await anyio.to_thread.run_sync(run, abandon_on_cancel=True)
+
+        self._current_task = asyncio.current_task()
+        try:
+            text, steps = await _run_chat()
+        except asyncio.CancelledError:
+            logger.info("Chat cancelled (barge-in)")
+            # Rebuild agent to clear any partial state, keep history
+            self._invalidate_agent()
+            raise
+        finally:
+            self._current_task = None
+
         return VoiceResponse(text=text, steps=steps)
 
     async def voice_chat(self, message: str, *, reset: bool = False) -> VoiceResponse:
@@ -233,10 +309,13 @@ class VoiceAgent:
         """
         response = await self.chat(message, reset=reset)
 
+        # If cancelled between chat and TTS, let it propagate
         try:
             response.audio = await self.tts.synthesize(response.text)
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            pass  # Audio generation is best-effort
+            logger.exception("TTS synthesis failed for text: %s", response.text[:100])
 
         return response
 
@@ -265,14 +344,14 @@ class VoiceAgent:
         try:
             response.audio = await self.tts.synthesize(self._greeting)
         except Exception:
-            pass
+            logger.exception("TTS synthesis failed for greeting")
         return response
 
-    async def create_streaming_token(self) -> dict:
+    async def create_streaming_token(self) -> StreamingToken:
         """Create an AssemblyAI streaming token and WebSocket URL for browser-side STT.
 
         Returns:
-            Dict with wss_url (ready-to-use WebSocket URL) and sample_rate.
+            StreamingToken with wss_url (ready-to-use WebSocket URL) and sample_rate.
         """
         token = await self.stt.create_token()
         cfg = self.stt.config
@@ -283,7 +362,7 @@ class VoiceAgent:
             "format_turns": str(cfg.format_turns).lower(),
             "end_of_turn_confidence_threshold": cfg.end_of_turn_confidence_threshold,
         })
-        return {
-            "wss_url": f"{cfg.wss_base}?{params}",
-            "sample_rate": cfg.sample_rate,
-        }
+        return StreamingToken(
+            wss_url=f"{cfg.wss_base}?{params}",
+            sample_rate=cfg.sample_rate,
+        )

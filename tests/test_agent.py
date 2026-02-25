@@ -7,13 +7,16 @@ import pytest
 
 from aai_agent.agent import (
     DEFAULT_GREETING,
-    DEFAULT_INSTRUCTIONS,
     DEFAULT_MODEL,
-    FALLBACK_ANSWER_PROMPT,
     VOICE_RULES,
     VoiceAgent,
 )
-from aai_agent.types import STTConfig, TTSConfig, VoiceResponse
+from aai_agent.types import STTConfig, StreamingToken, TTSConfig, VoiceResponse
+
+
+@pytest.fixture
+def agent(mock_env):
+    return VoiceAgent()
 
 
 class TestVoiceAgentInit:
@@ -53,124 +56,66 @@ class TestVoiceAgentInit:
     def test_default_model(self):
         assert DEFAULT_MODEL == "claude-haiku-4-5-20251001"
 
-    def test_custom_model(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(model="custom-model")
-            assert agent._model_id == "custom-model"
+    def test_custom_model(self, mock_env):
+        agent = VoiceAgent(model="custom-model")
+        assert agent._model_id == "custom-model"
 
-    def test_default_greeting(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent()
-            assert agent._greeting == DEFAULT_GREETING
+    @pytest.mark.parametrize("greeting,expected", [
+        (None, DEFAULT_GREETING),
+        ("Hi!", "Hi!"),
+        ("", ""),
+    ])
+    def test_greeting(self, mock_env, greeting, expected):
+        kwargs = {} if greeting is None else {"greeting": greeting}
+        agent = VoiceAgent(**kwargs)
+        assert agent._greeting == expected
 
-    def test_custom_greeting(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(greeting="Hi!")
-            assert agent._greeting == "Hi!"
+    def test_default_max_steps(self, mock_env):
+        agent = VoiceAgent()
+        assert agent._max_steps == 3
 
-    def test_empty_greeting(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(greeting="")
-            assert agent._greeting == ""
+    def test_max_steps_rejects_zero(self, mock_env):
+        with pytest.raises(ValueError, match="max_steps"):
+            VoiceAgent(max_steps=0)
 
-    def test_default_max_steps(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent()
-            assert agent._max_steps == 3
+    def test_max_steps_rejects_negative(self, mock_env):
+        with pytest.raises(ValueError, match="max_steps"):
+            VoiceAgent(max_steps=-1)
 
-    def test_custom_configs(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            tts_cfg = TTSConfig(speaker="aria")
-            stt_cfg = STTConfig(sample_rate=8000)
-            agent = VoiceAgent(tts_config=tts_cfg, stt_config=stt_cfg)
-            assert agent.tts.config.speaker == "aria"
-            assert agent.stt.config.sample_rate == 8000
+    def test_custom_configs(self, mock_env):
+        tts_cfg = TTSConfig(speaker="aria")
+        stt_cfg = STTConfig(sample_rate=8000)
+        agent = VoiceAgent(tts_config=tts_cfg, stt_config=stt_cfg)
+        assert agent.tts.config.speaker == "aria"
+        assert agent.stt.config.sample_rate == 8000
 
-    def test_voice_rules_default(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent()
-            assert agent._voice_rules == VOICE_RULES
+    @pytest.mark.parametrize("voice_rules,expected", [
+        (None, VOICE_RULES),
+        ("Be brief.", "Be brief."),
+        ("", ""),
+    ])
+    def test_voice_rules(self, mock_env, voice_rules, expected):
+        kwargs = {} if voice_rules is None else {"voice_rules": voice_rules}
+        agent = VoiceAgent(**kwargs)
+        assert agent._voice_rules == expected
 
-    def test_voice_rules_custom(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(voice_rules="Be brief.")
-            assert agent._voice_rules == "Be brief."
-
-    def test_voice_rules_disabled(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(voice_rules="")
-            assert agent._voice_rules == ""
-
-    def test_tools_resolved_from_strings(self):
+    def test_tools_resolved_from_strings(self, mock_env):
         from smolagents import DuckDuckGoSearchTool
+        agent = VoiceAgent(tools=["DuckDuckGoSearchTool"])
+        assert len(agent._tools) == 1
+        assert isinstance(agent._tools[0], DuckDuckGoSearchTool)
 
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(tools=["DuckDuckGoSearchTool"])
-            assert len(agent._tools) == 1
-            assert isinstance(agent._tools[0], DuckDuckGoSearchTool)
+    def test_ask_user_tool_always_included(self, mock_env):
+        agent = VoiceAgent()
+        built = agent._build_agent()
+        tool_names = [t.name for t in built.tools.values()]
+        assert "ask_user" in tool_names
 
-    def test_ask_user_tool_always_included(self):
-        from aai_agent.tools import AskUserTool
-
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent()
-            built = agent._build_agent()
-            tool_names = [t.name for t in built.tools.values()]
-            assert "ask_user" in tool_names
-
-    def test_ask_user_tool_not_duplicated(self):
-        from aai_agent.tools import AskUserTool
-
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(tools=["DuckDuckGoSearchTool"])
-            built = agent._build_agent()
-            tool_names = [t.name for t in built.tools.values()]
-            assert tool_names.count("ask_user") == 1
-
-
-@pytest.fixture
-def agent():
-    with patch.dict(
-        os.environ,
-        {"ASSEMBLYAI_API_KEY": "test-key", "RIME_API_KEY": "test-key"},
-    ):
-        return VoiceAgent()
+    def test_ask_user_tool_not_duplicated(self, mock_env):
+        agent = VoiceAgent(tools=["DuckDuckGoSearchTool"])
+        built = agent._build_agent()
+        tool_names = [t.name for t in built.tools.values()]
+        assert tool_names.count("ask_user") == 1
 
 
 class TestVoiceAgentGreet:
@@ -189,18 +134,24 @@ class TestVoiceAgentGreet:
         assert resp.audio is None
 
     @pytest.mark.anyio
-    async def test_greet_disabled(self):
-        with patch.dict(
-            os.environ,
-            {"ASSEMBLYAI_API_KEY": "k", "RIME_API_KEY": "k"},
-        ):
-            agent = VoiceAgent(greeting="")
-            resp = await agent.greet()
-            assert resp.text == ""
-            assert resp.audio is None
+    async def test_greet_disabled(self, mock_env):
+        agent = VoiceAgent(greeting="")
+        resp = await agent.greet()
+        assert resp.text == ""
+        assert resp.audio is None
 
 
 class TestVoiceAgentChat:
+    @pytest.mark.anyio
+    async def test_chat_rejects_empty_message(self, agent):
+        with pytest.raises(ValueError, match="message must not be empty"):
+            await agent.chat("")
+
+    @pytest.mark.anyio
+    async def test_chat_rejects_whitespace_message(self, agent):
+        with pytest.raises(ValueError, match="message must not be empty"):
+            await agent.chat("   ")
+
     @pytest.mark.anyio
     async def test_chat_returns_voice_response(self, agent):
         mock_agent = MagicMock()
@@ -262,9 +213,8 @@ class TestVoiceAgentStreamingToken:
         agent.stt.create_token = AsyncMock(return_value="test-token")
 
         result = await agent.create_streaming_token()
-        assert "wss_url" in result
-        assert "sample_rate" in result
-        assert result["sample_rate"] == 16000
-        assert "test-token" in result["wss_url"]
-        assert "sample_rate=16000" in result["wss_url"]
-        assert "speech_model=u3-pro" in result["wss_url"]
+        assert isinstance(result, StreamingToken)
+        assert result.sample_rate == 16000
+        assert "test-token" in result.wss_url
+        assert "sample_rate=16000" in result.wss_url
+        assert "speech_model=u3-pro" in result.wss_url

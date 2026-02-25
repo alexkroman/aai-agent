@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
-import time
+from collections.abc import MutableMapping
+
+from cachetools import TTLCache
 
 from .agent import VoiceAgent
 
@@ -50,21 +52,23 @@ class VoiceAgentManager:
         assemblyai_api_key: str | None = None,
         rime_api_key: str | None = None,
         *,
-        ttl_seconds: int = 3600,
+        ttl_seconds: float = 3600,
         **agent_kwargs,
     ):
         self._assemblyai_api_key = assemblyai_api_key
         self._rime_api_key = rime_api_key
-        self._ttl = ttl_seconds
         self._agent_kwargs = agent_kwargs
-        self._sessions: dict[str, tuple[VoiceAgent, float]] = {}
         self._lock = threading.Lock()
+        self._sessions: MutableMapping[str, VoiceAgent]
+        if ttl_seconds > 0:
+            self._sessions = TTLCache(maxsize=4096, ttl=ttl_seconds)
+        else:
+            self._sessions = {}
 
     def get_or_create(self, session_id: str) -> VoiceAgent:
         """Get an existing agent or create a new one for the given session.
 
-        Updates the session's last-accessed timestamp and evicts any
-        sessions that have exceeded the TTL.
+        Accessing a session refreshes its TTL timestamp.
 
         Args:
             session_id: Unique session identifier.
@@ -72,15 +76,11 @@ class VoiceAgentManager:
         Returns:
             VoiceAgent instance for this session.
         """
-        now = time.monotonic()
-
         with self._lock:
-            self._evict(now)
-
-            entry = self._sessions.get(session_id)
-            if entry is not None:
-                agent, _ = entry
-                self._sessions[session_id] = (agent, now)
+            agent = self._sessions.get(session_id)
+            if agent is not None:
+                # Re-set to refresh TTL in TTLCache
+                self._sessions[session_id] = agent
                 return agent
 
             agent = VoiceAgent(
@@ -88,7 +88,7 @@ class VoiceAgentManager:
                 rime_api_key=self._rime_api_key,
                 **self._agent_kwargs,
             )
-            self._sessions[session_id] = (agent, now)
+            self._sessions[session_id] = agent
             return agent
 
     def remove(self, session_id: str) -> None:
@@ -104,14 +104,6 @@ class VoiceAgentManager:
     def active_sessions(self) -> int:
         """Number of currently active (non-expired) sessions."""
         with self._lock:
-            self._evict(time.monotonic())
+            if isinstance(self._sessions, TTLCache):
+                self._sessions.expire()
             return len(self._sessions)
-
-    def _evict(self, now: float) -> None:
-        """Remove sessions that have exceeded the TTL. Caller must hold the lock."""
-        if self._ttl <= 0:
-            return
-        cutoff = now - self._ttl
-        expired = [sid for sid, (_, ts) in self._sessions.items() if ts < cutoff]
-        for sid in expired:
-            del self._sessions[sid]

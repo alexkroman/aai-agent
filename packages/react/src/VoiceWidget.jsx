@@ -21,8 +21,6 @@ export function VoiceWidget({
 }) {
   const {
     messages,
-    liveTranscript,
-    showTranscript,
     statusText,
     statusClass,
     isRecording,
@@ -41,19 +39,12 @@ export function VoiceWidget({
         <h1 className="aai-title">{title}</h1>
       </header>
 
-      <div className="aai-conversation">
+      <div className={`aai-conversation${isRecording ? " aai-active" : ""}`}>
         {messages.map((msg) => {
           if (msg.type === "thinking") {
             return (
               <div key={msg.id} className="aai-msg aai-thinking">
                 Thinking<span className="aai-dots" />
-              </div>
-            );
-          }
-          if (msg.type === "steps") {
-            return (
-              <div key={msg.id} className="aai-steps">
-                {msg.steps.join(" \u2192 ")}
               </div>
             );
           }
@@ -67,10 +58,6 @@ export function VoiceWidget({
       </div>
 
       <div className="aai-input-area">
-        <div className={`aai-live-transcript${showTranscript ? " aai-visible" : ""}`}>
-          {liveTranscript}
-        </div>
-
         <button
           className={`aai-mic-btn${isRecording ? " aai-recording" : ""}`}
           onClick={toggleRecording}

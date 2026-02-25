@@ -9,7 +9,7 @@ Build a voice assistant that can search the web, run Python code, and answer que
 ### 1. Scaffold a project
 
 ```bash
-pip install aai-agent[examples]
+pip install aai-agent[fastapi]
 aai-agent init my-assistant
 cd my-assistant
 ```
@@ -408,9 +408,6 @@ packages/react/
     pcm-worklet.js      # AudioWorklet for PCM encoding (inlined as Blob URL)
     styles.css          # Scoped styles (aai-* prefixed)
 
-examples/web_assistant/
-  server.py         # Working example with web search tools
-  static/           # Pre-built frontend
 ```
 
 ## Installation
@@ -422,8 +419,6 @@ pip install aai-agent
 # With FastAPI support
 pip install aai-agent[fastapi]
 
-# With example dependencies (web search, Wikipedia, etc.)
-pip install aai-agent[examples]
 ```
 
 Requires Python 3.11+.
