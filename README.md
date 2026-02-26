@@ -10,7 +10,7 @@ Build a voice assistant that can search the web, run Python code, and answer que
 
 ```bash
 pip install aai-agent[fastapi]
-aai-agent init my-assistant
+aai-agent new my-assistant
 cd my-assistant
 ```
 

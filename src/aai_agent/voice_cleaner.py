@@ -42,12 +42,12 @@ _p = inflect.engine()
 
 def _num2words(n: int | float) -> str:
     """Typed wrapper around inflect's ``number_to_words``."""
-    return cast(str, _num2words(n))  # type: ignore[arg-type]
+    return cast(str, _p.number_to_words(n))  # type: ignore[arg-type]
 
 
 def _ordinal(word: str) -> str:
     """Typed wrapper around inflect's ``ordinal``."""
-    return cast(str, _ordinal(word))  # type: ignore[arg-type]
+    return cast(str, _p.ordinal(word))  # type: ignore[arg-type]
 
 
 class VoiceCleaner:

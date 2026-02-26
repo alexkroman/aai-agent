@@ -21,18 +21,8 @@ def callback():
     """Voice agent SDK powered by AssemblyAI, Rime TTS, and smolagents."""
 
 
-@app.command()
-def init(
-    directory: str = typer.Argument(
-        ".", help="Target directory (defaults to current directory)"
-    ),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
-):
-    """Scaffold a new voice agent project.
-
-    Copies a ready-to-run server, .env template, and static frontend
-    into the target directory.
-    """
+def _scaffold(directory: str, *, force: bool) -> None:
+    """Shared implementation for the ``new`` / ``init`` commands."""
     target = Path(directory).resolve()
 
     template_items = [
@@ -66,7 +56,7 @@ def init(
     )
 
     rel = directory if directory != "." else target.name
-    typer.echo(f"Initialized voice agent project in {target}")
+    typer.echo(f"Created voice agent project in {target}")
     typer.echo()
     typer.echo("Next steps:")
     typer.echo(f"  cd {rel}")
@@ -74,6 +64,32 @@ def init(
     typer.echo("  uv venv && source .venv/bin/activate")
     typer.echo("  uv pip install -r requirements.txt")
     typer.echo("  aai-agent start")
+
+
+@app.command()
+def new(
+    directory: str = typer.Argument(
+        ".", help="Target directory (defaults to current directory)"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
+):
+    """Scaffold a new voice agent project.
+
+    Copies a ready-to-run server, .env template, and static frontend
+    into the target directory.
+    """
+    _scaffold(directory, force=force)
+
+
+@app.command(hidden=True)
+def init(
+    directory: str = typer.Argument(
+        ".", help="Target directory (defaults to current directory)"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
+):
+    """Scaffold a new voice agent project (alias for 'new')."""
+    _scaffold(directory, force=force)
 
 
 @app.command()
@@ -88,7 +104,7 @@ def update(
 
     if not target.exists():
         typer.echo(f"No static/ directory found in {target.parent}")
-        typer.echo("Run 'aai-agent init' first to scaffold a project.")
+        typer.echo("Run 'aai-agent new' first to scaffold a project.")
         raise typer.Exit(1)
 
     for name in ("aai-voice-agent.iife.js", "react.css"):
@@ -99,21 +115,29 @@ def update(
 
 @app.command()
 def start(
-    server: str = typer.Option(
-        "server:app", "--server", "-s", help="Uvicorn app import string"
+    entry: str = typer.Argument(
+        "server:app", help="Uvicorn app import string (module:attribute)"
     ),
     host: str = typer.Option("", "--host", "-h", help="Bind host"),
     port: int = typer.Option(0, "--port", "-p", help="Bind port"),
-    reload: bool = typer.Option(False, help="Enable auto-reload"),
+    watch: bool = typer.Option(
+        False, "--watch", "-w", help="Watch for file changes and reload"
+    ),
+    debug: bool = typer.Option(
+        False, "--debug", "-d", help="Enable debug mode (auto-reload + verbose logging)"
+    ),
     prod: bool = typer.Option(
         False, "--prod", help="Production mode (0.0.0.0, no reload)"
     ),
 ):
     """Start the voice agent server.
 
-    In production mode (--prod or when FLY_APP_NAME / PORT env vars are
-    detected), defaults to host 0.0.0.0 and reload disabled.
-    Otherwise defaults to localhost:8000 with auto-reload.
+    By default starts in development mode on localhost:8000 with auto-reload.
+    Use --watch to enable file-watching, --debug for debug mode, or --prod
+    for production (0.0.0.0, no reload).
+
+    Production mode is also auto-detected when FLY_APP_NAME, RAILWAY_ENVIRONMENT,
+    or PORT environment variables are set.
     """
     import os
     import sys
@@ -129,9 +153,14 @@ def start(
         host = "0.0.0.0" if is_prod else "localhost"
     if not port:
         port = int(os.environ.get("PORT", 8000))
-    if not prod and not reload:
-        # No explicit flags: default reload on for dev, off for prod
+
+    # Resolve reload: --watch or --debug enable it explicitly,
+    # --prod disables it, otherwise default to on in dev.
+    reload = watch or debug
+    if not watch and not debug and not prod:
         reload = not is_prod
+
+    log_level = "debug" if debug else "info"
 
     # Ensure the current directory is importable so uvicorn can find server.py
     cwd = str(Path.cwd())
@@ -139,4 +168,4 @@ def start(
         sys.path.insert(0, cwd)
 
     typer.echo(f"Starting server at http://{host}:{port}")
-    uvicorn.run(server, host=host, port=port, reload=reload)
+    uvicorn.run(entry, host=host, port=port, reload=reload, log_level=log_level)

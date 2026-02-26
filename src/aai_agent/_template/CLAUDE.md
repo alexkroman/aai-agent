@@ -1,6 +1,6 @@
 # Voice Agent Project
 
-This project was scaffolded with `aai-agent init`. It's a voice-first AI assistant powered by AssemblyAI (STT), smolagents (LLM agent), and Rime (TTS).
+This project was scaffolded with `aai-agent new`. It's a voice-first AI assistant powered by AssemblyAI (STT), smolagents (LLM agent), and Rime (TTS).
 
 ## Project Structure
 
@@ -34,22 +34,97 @@ app = create_voice_app(tools=[get_weather])
 
 You can also pass built-in tools by name: `"DuckDuckGoSearchTool"`, `"VisitWebpageTool"`, `"WikipediaSearchTool"`, `"PythonInterpreterTool"`.
 
-### Create a Custom Tool
+### Tool Design Best Practices
+
+**Every `@tool` function must have:**
+1. A type-annotated signature — the agent reads the types to know what to pass.
+2. A docstring with a description of *when* to use the tool, plus an `Args:` block.
+3. A return type of `str` — the agent reads the return value as text.
+
+**Writing good tool docstrings:** The docstring is the agent's only guide for *when* and *how* to call your tool. Be specific about the situations that should trigger it:
 
 ```python
-from aai_agent import tool
-from aai_agent.fastapi import create_voice_app
-
 @tool
-def get_weather(city: str) -> str:
-    """Get the current weather for a city.
+def search_docs(query: str) -> str:
+    """Search the knowledge base using semantic search.
+    Use this to find answers about products, APIs, features,
+    pricing, error codes, or how to do something.
 
     Args:
-        city: The city to get weather for, e.g. "San Francisco".
+        query: The search query.
     """
-    return f"The weather in {city} is 72°F and sunny."
+```
 
-app = create_voice_app(tools=[get_weather])
+**Return values should include instructions for the agent.** Since this is a voice agent, the tool's return value is not spoken directly — the agent reads it, then formulates a spoken response. Include hints about what to tell the user:
+
+```python
+@tool
+def submit_ticket(subject: str, description: str) -> str:
+    """Create a support ticket for the customer's issue.
+
+    Args:
+        subject: Short subject line.
+        description: Detailed description of the issue.
+    """
+    ticket_id = generate_id()
+    return (
+        f"Ticket created. ID: {ticket_id}. Subject: {subject}. "
+        f"Tell the customer their ticket number so they can reference it."
+    )
+```
+
+**Tools can use module-level state** (database clients, API connections, caches):
+
+```python
+import chromadb
+
+_client = chromadb.PersistentClient(path="./chroma_db")
+_collection = _client.get_collection(name="docs")
+
+@tool
+def search_docs(query: str) -> str:
+    """Search the documentation.
+
+    Args:
+        query: The search query.
+    """
+    results = _collection.query(query_texts=[query], n_results=5)
+    # ... format results ...
+```
+
+**Tools can make HTTP calls** to external APIs:
+
+```python
+import httpx
+
+@tool
+def check_status(service: str = "all") -> str:
+    """Check the current operational status of services.
+
+    Args:
+        service: Which service to check.
+    """
+    try:
+        resp = httpx.get("https://status.example.com/api/v2/summary.json", timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        # ... parse and format ...
+    except Exception:
+        return "Unable to reach the status page right now."
+```
+
+**Tools can call other tools** using `.forward()`:
+
+```python
+@tool
+def get_pricing(query: str) -> str:
+    """Look up pricing information.
+
+    Args:
+        query: What the customer wants to know about pricing.
+    """
+    docs = search_docs.forward(query=f"pricing {query}")
+    return f"Pricing context:\n{PRICING_DATA}\n\nRelated docs:\n{docs}"
 ```
 
 ### Change Personality, Voice, Greeting, or Model
@@ -58,20 +133,48 @@ For full control, create a `VoiceAgentManager` and pass it to `create_voice_app`
 
 ```python
 from aai_agent import VoiceAgentManager
-from aai_agent.types import TTSConfig, STTConfig
+from aai_agent.types import TTSConfig
 from aai_agent.fastapi import create_voice_app
 
+INSTRUCTIONS = """\
+You are a friendly, knowledgeable customer support agent for Acme Corp. \
+Your job is to help customers with questions about products and services.
+
+Your capabilities:
+- Answer questions about products, features, and pricing by searching docs.
+- Help troubleshoot technical issues.
+- Create support tickets for issues that need follow-up.
+- Transfer customers to a human agent when needed.
+
+Behavior guidelines:
+- Always search the documentation first before answering technical questions.
+- Be warm and empathetic. Acknowledge the customer's frustration if they have an issue.
+- If you can't find the answer, be honest and offer to create a ticket \
+or connect them to a human agent.
+- Keep responses concise and conversational since this is a voice interface.
+- Refer to the company as "Acme" or "we" — you represent the company."""
+
+GREETING = (
+    "Hi there! Welcome to Acme support. "
+    "I can help you with questions about our products, troubleshoot issues, "
+    "or connect you with our team. What can I help you with?"
+)
+
 manager = VoiceAgentManager(
-    instructions="You are a pirate assistant. Always respond in pirate speak.",
-    greeting="Ahoy! What can I help ye with?",
+    instructions=INSTRUCTIONS,
+    greeting=GREETING,
     model="claude-haiku-4-5-20251001",
     max_steps=3,
-    tts_config=TTSConfig(speaker="cove", speed=1.0),
-    tools=["DuckDuckGoSearchTool"],
+    tts_config=TTSConfig(speaker="cove"),
+    tools=[my_tool_1, my_tool_2],
 )
 
 app = create_voice_app(agent_manager=manager)
 ```
+
+**Instructions pattern:** Define the agent's role, list its capabilities (tied to your tools), then add behavior guidelines for tone and voice-specific rules. Store in a `INSTRUCTIONS` constant at the top of `server.py`.
+
+**Greeting pattern:** Keep it short (1-2 sentences), mention what you can help with, end with an open question. Store in a `GREETING` constant.
 
 ### VoiceAgentManager / VoiceAgent Parameters
 
