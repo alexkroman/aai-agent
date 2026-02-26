@@ -31,13 +31,9 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.aai-conversation.aai-active {
-  display: flex;
 }
 
 .aai-conversation::-webkit-scrollbar {

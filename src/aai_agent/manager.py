@@ -112,35 +112,27 @@ class VoiceAgentManager:
             )
 
         # Build kwargs dict for VoiceAgent, only including explicitly set values
-        self._agent_kwargs: dict = {}
-        if model is not None:
-            self._agent_kwargs["model"] = model
-        if tools is not None:
-            self._agent_kwargs["tools"] = tools
-        if instructions is not None:
-            self._agent_kwargs["instructions"] = instructions
-        if max_steps is not None:
-            self._agent_kwargs["max_steps"] = max_steps
-        if step_callbacks is not None:
-            self._agent_kwargs["step_callbacks"] = step_callbacks
-        if tts_config is not None:
-            self._agent_kwargs["tts_config"] = tts_config
-        if stt_config is not None:
-            self._agent_kwargs["stt_config"] = stt_config
-        if greeting is not None:
-            self._agent_kwargs["greeting"] = greeting
-        if voice_rules is not None:
-            self._agent_kwargs["voice_rules"] = voice_rules
-        if fallback_answer_prompt is not None:
-            self._agent_kwargs["fallback_answer_prompt"] = fallback_answer_prompt
-        if agent_cls is not None:
-            self._agent_kwargs["agent_cls"] = agent_cls
-        if max_tool_threads is not None:
-            self._agent_kwargs["max_tool_threads"] = max_tool_threads
-        if include_ask_user is not None:
-            self._agent_kwargs["include_ask_user"] = include_ask_user
-        if model_kwargs is not None:
-            self._agent_kwargs["model_kwargs"] = model_kwargs
+        # so that VoiceAgent's own defaults are used for anything not provided.
+        self._agent_kwargs: dict = {
+            k: v
+            for k, v in {
+                "model": model,
+                "tools": tools,
+                "instructions": instructions,
+                "max_steps": max_steps,
+                "step_callbacks": step_callbacks,
+                "tts_config": tts_config,
+                "stt_config": stt_config,
+                "greeting": greeting,
+                "voice_rules": voice_rules,
+                "fallback_answer_prompt": fallback_answer_prompt,
+                "agent_cls": agent_cls,
+                "max_tool_threads": max_tool_threads,
+                "include_ask_user": include_ask_user,
+                "model_kwargs": model_kwargs,
+            }.items()
+            if v is not None
+        }
 
         self._lock = threading.Lock()
         self._sessions: MutableMapping[str, VoiceAgent]

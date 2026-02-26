@@ -13,8 +13,8 @@ vi.mock("../src/useVoiceAgent", () => ({
   useVoiceAgent: vi.fn(() => ({
     messages: [],
     error: null,
-    statusClass: "",
-    isRecording: false,
+    phase: "idle",
+    turnPhase: "listening",
     toggleRecording: mockToggleRecording,
     sendMessage: mockSendMessage,
     clearMessages: mockClearMessages,
@@ -29,15 +29,15 @@ const mockedUseVoiceAgent = vi.mocked(useVoiceAgent);
 const defaultMock: VoiceAgentResult = {
   messages: [],
   error: null,
-  statusClass: "",
-  isRecording: false,
+  phase: "idle",
+  turnPhase: "listening",
   toggleRecording: mockToggleRecording,
   sendMessage: mockSendMessage,
   clearMessages: mockClearMessages,
 };
 
 function mockMessages(...msgs: Message[]): VoiceAgentResult {
-  return { ...defaultMock, messages: msgs, isRecording: true };
+  return { ...defaultMock, messages: msgs, phase: "active" };
 }
 
 describe("VoiceWidget", () => {
@@ -64,11 +64,11 @@ describe("VoiceWidget", () => {
     expect(mockToggleRecording).toHaveBeenCalledOnce();
   });
 
-  it("shows recording class when isRecording", () => {
+  it("shows recording class when active", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      statusClass: "listening",
-      isRecording: true,
+      phase: "active",
+      turnPhase: "listening",
     });
 
     render(<VoiceWidget />);
@@ -80,8 +80,8 @@ describe("VoiceWidget", () => {
   it("shows pulse ring when listening", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      statusClass: "listening",
-      isRecording: true,
+      phase: "active",
+      turnPhase: "listening",
     });
 
     const { container } = render(<VoiceWidget />);
@@ -93,8 +93,8 @@ describe("VoiceWidget", () => {
   it("shows spinner ring when processing", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      statusClass: "processing",
-      isRecording: true,
+      phase: "active",
+      turnPhase: "processing",
     });
 
     const { container } = render(<VoiceWidget />);
@@ -105,8 +105,8 @@ describe("VoiceWidget", () => {
   it("shows speaking ring and speaker icon when speaking", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      statusClass: "speaking",
-      isRecording: true,
+      phase: "active",
+      turnPhase: "speaking",
     });
 
     const { container } = render(<VoiceWidget />);
@@ -138,7 +138,7 @@ describe("VoiceWidget", () => {
     expect(screen.getByText("Thinking")).toBeInTheDocument();
   });
 
-  it("conversation pane is hidden when not recording", () => {
+  it("conversation pane is hidden when idle", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
       messages: [{ id: createMessageId("1"), text: "hi", role: "user", type: "message" }],
@@ -149,10 +149,10 @@ describe("VoiceWidget", () => {
     expect(convo!.className).not.toContain("aai-active");
   });
 
-  it("conversation pane is visible when recording", () => {
+  it("conversation pane is visible when active", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      isRecording: true,
+      phase: "active",
     });
 
     const { container } = render(<VoiceWidget />);
@@ -185,7 +185,7 @@ describe("VoiceWidget", () => {
   it("has accessible conversation log", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      isRecording: true,
+      phase: "active",
     });
 
     const { container } = render(<VoiceWidget />);
@@ -194,11 +194,11 @@ describe("VoiceWidget", () => {
     expect(log!.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("mic button has aria-pressed when recording", () => {
+  it("mic button has aria-pressed when active", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      statusClass: "listening",
-      isRecording: true,
+      phase: "active",
+      turnPhase: "listening",
     });
 
     render(<VoiceWidget />);
@@ -206,7 +206,7 @@ describe("VoiceWidget", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("conversation is aria-hidden when not recording", () => {
+  it("conversation is aria-hidden when idle", () => {
     mockedUseVoiceAgent.mockReturnValue(defaultMock);
 
     const { container } = render(<VoiceWidget />);

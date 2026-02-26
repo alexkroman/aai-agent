@@ -46,6 +46,34 @@ def _load_dotenv() -> None:
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
+
+class _SafeLiteLLMModel(LiteLLMModel):
+    """LiteLLMModel subclass that sanitizes empty text content.
+
+    The LLM Gateway rejects messages with empty text content blocks
+    (e.g. when the model returns content="" alongside tool calls).
+    This wrapper replaces empty text with a placeholder before sending.
+    """
+
+    def _prepare_completion_kwargs(self, messages, **kwargs):  # type: ignore[override]
+        completion_kwargs = super()._prepare_completion_kwargs(
+            messages=messages, **kwargs
+        )
+        for msg in completion_kwargs.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, str) and not content.strip():
+                msg["content"] = "..."
+            elif isinstance(content, list):
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "text"
+                        and not (block.get("text") or "").strip()
+                    ):
+                        block["text"] = "..."
+        return completion_kwargs
+
+
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 DEFAULT_INSTRUCTIONS = """\
@@ -215,7 +243,7 @@ class VoiceAgent:
             tools.append(AskUserTool())
         tools.extend(self._tools)
 
-        model = LiteLLMModel(
+        model = _SafeLiteLLMModel(
             model_id=f"openai/{self._model_id}",
             api_base=LLM_GATEWAY_BASE,
             api_key=self._assemblyai_api_key,

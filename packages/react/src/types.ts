@@ -54,11 +54,17 @@ export interface VoiceAgentOptions {
 export interface VoiceAgentResult {
   readonly messages: readonly Message[];
   readonly error: VoiceAgentError | null;
-  readonly statusClass: StatusClass;
-  readonly isRecording: boolean;
+  readonly phase: Phase;
+  readonly turnPhase: TurnPhase;
   readonly toggleRecording: () => void;
   readonly sendMessage: (text: string) => Promise<void>;
   readonly clearMessages: () => void;
+}
+
+/** Derive the CSS status class from the current phases. */
+export function statusClassOf(phase: Phase, turnPhase: TurnPhase): StatusClass {
+  if (phase !== "active") return "";
+  return turnPhase;
 }
 
 export interface STTHandlers {
@@ -130,14 +136,17 @@ export interface VoiceDeps {
   readonly onTurnEnd?: (text: string) => void;
 }
 
+export type Phase = "idle" | "connecting" | "active";
+export type TurnPhase = "listening" | "processing" | "speaking";
+
 export interface VoiceStoreState {
+  phase: Phase;
+  turnPhase: TurnPhase;
   messages: Message[];
-  statusText: string;
-  statusClass: StatusClass;
-  isRecording: boolean;
   error: VoiceAgentError | null;
   _setDeps: (deps: VoiceDeps) => void;
   _initDebounce: (ms: number) => void;
+  setPhase: (phase: Phase, turnPhase?: TurnPhase) => void;
   addMessage: (
     text: string,
     role: MessageRole,

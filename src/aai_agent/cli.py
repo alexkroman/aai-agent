@@ -77,6 +77,27 @@ def init(
 
 
 @app.command()
+def update(
+    directory: str = typer.Argument(
+        ".", help="Target directory (defaults to current directory)"
+    ),
+):
+    """Update the frontend static assets (JS + CSS) to the latest version."""
+    target = Path(directory).resolve() / "static"
+    source = TEMPLATE_DIR / "static"
+
+    if not target.exists():
+        typer.echo(f"No static/ directory found in {target.parent}")
+        typer.echo("Run 'aai-agent init' first to scaffold a project.")
+        raise typer.Exit(1)
+
+    for name in ("aai-voice-agent.iife.js", "react.css"):
+        src = source / name
+        shutil.copy2(src, target / name)
+        typer.echo(f"Updated {name}")
+
+
+@app.command()
 def start(
     server: str = typer.Option(
         "server:app", "--server", "-s", help="Uvicorn app import string"

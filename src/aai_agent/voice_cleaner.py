@@ -29,7 +29,7 @@ _RE_PERCENTAGES = re.compile(r"(\d+(?:\.\d+)?)%")
 _RE_PHONE = re.compile(r"\b\d{3,4}(?:-\d{3,4}){1,3}\b")
 _RE_ORDINALS = re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b")
 _RE_NUMBERS = re.compile(r"(?<![:\w])\b\d+(?:\.\d+)?\b(?![:\w])")
-_RE_ACRONYMS = re.compile(r"\b[A-Z]{2,}\b")
+_RE_ACRONYMS = re.compile(r"\b[A-Z]{2,}(?:'?s)?\b")
 _RE_SPACES = re.compile(r"[ \t]+")
 _RE_NEWLINES = re.compile(r"\n{2,}")
 
@@ -225,7 +225,7 @@ class VoiceCleaner:
         return _RE_NUMBERS.sub(_replace, text)
 
     # ------------------------------------------------------------------
-    # Acronyms: API → A. P. I.
+    # Acronyms: API → a. p. i.
     # ------------------------------------------------------------------
     # Words that look like acronyms but should be left alone
     _NOT_ACRONYMS = frozenset(
@@ -240,9 +240,14 @@ class VoiceCleaner:
     def _expand_acronyms(self, text: str) -> str:
         def _replace(m: re.Match) -> str:
             word = m.group(0)
+            # Strip plural suffix, expand the acronym, then re-attach
+            suffix = ""
+            if word.endswith("'s") or (word.endswith("s") and word[-2].isupper()):
+                suffix = "s"
+                word = word.rstrip("s").rstrip("'")
             if word in self._NOT_ACRONYMS:
-                return word
-            return ". ".join(word) + "."
+                return word + suffix
+            return ". ".join(word.lower()) + "." + suffix
 
         return _RE_ACRONYMS.sub(_replace, text)
 

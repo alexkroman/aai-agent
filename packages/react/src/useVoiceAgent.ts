@@ -25,22 +25,25 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 3;
 
 /**
  * Creates a zustand store that owns all voice-agent orchestration.
- * Mutable internal state lives in the closure (not in zustand) so it
- * never triggers React re-renders.  External deps (hooks from
- * useSTTSocket / useTTSPlayback and config props) are injected via
- * _setDeps and kept current on every render.
+ *
+ * Phase and turnPhase live in zustand as the single source of truth.
+ * UI concerns like CSS classes are derived from these phases by consumers.
+ *
+ * Cancellation is handled by two AbortControllers:
+ *   - sessionAbort: created when connecting, aborted when returning to
+ *     idle.  Every fetch in the session uses this signal, so stopping
+ *     the session kills everything — no stale-finally races.
+ *   - turnAbort: created per greet/chat turn, aborted on barge-in.
+ *     Lets us cancel one request without nuking the whole session.
  */
 export function createVoiceStore() {
-  // Mutable internal state — never triggers re-renders
-  let busy = false;
+  // Resources — not state, just handles tied to phase transitions
+  let sessionAbort: AbortController | null = null;
+  let turnAbort: AbortController | null = null;
   let turnText = "";
-  let chatAbort: AbortController | null = null;
-  let chatTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  let recording = false;
   let debouncedSend: DebouncedFn | null = null;
   let deps: VoiceDeps | null = null;
 
-  /** Safely access deps — throws a clear error instead of null dereference. */
   function getDeps(): VoiceDeps {
     if (!deps)
       throw new Error(
@@ -49,12 +52,17 @@ export function createVoiceStore() {
     return deps;
   }
 
-  return create<VoiceStoreState>((set, get) => {
-    const setStatus = (
-      text: string,
-      cls: VoiceStoreState["statusClass"] = "",
-    ) => set({ statusText: text, statusClass: cls });
+  /** Create a turn-scoped AbortController chained to the session. */
+  function newTurnAbort(): AbortController {
+    const ac = new AbortController();
+    // If session is aborted, also abort the turn
+    sessionAbort?.signal.addEventListener("abort", () => ac.abort(), {
+      signal: ac.signal,
+    });
+    return ac;
+  }
 
+  return create<VoiceStoreState>((set, get) => {
     const setError = (error: VoiceAgentError | null) => {
       set({ error });
       if (error) getDeps().onError?.(error);
@@ -64,21 +72,20 @@ export function createVoiceStore() {
       onReply: (msg: ReplyMessage) => void,
     ): TTSStreamHandlers => ({
       onReply,
-      onSpeaking: () => setStatus("Speaking...", "speaking"),
+      onSpeaking: () => get().setPhase("active", "speaking"),
       onDone: () => {
-        if (recording) setStatus("Listening...", "listening");
+        if (get().phase === "active") get().setPhase("active", "listening");
       },
     });
 
     return {
-      // ── reactive state ─────────────────────────────────────────────────
+      // ── state ────────────────────────────────────────────────────────────
+      phase: "idle",
+      turnPhase: "listening",
       messages: [],
-      statusText: "Click microphone to start",
-      statusClass: "",
-      isRecording: false,
       error: null,
 
-      // ── dep injection (called every render) ────────────────────────────
+      // ── dep injection (called every render) ──────────────────────────────
       _setDeps: (d) => {
         deps = d;
       },
@@ -87,7 +94,12 @@ export function createVoiceStore() {
         debouncedSend = debounce(() => get().sendTurnToAgent(), ms);
       },
 
-      // ── state helpers ──────────────────────────────────────────────────
+      // ── phase transitions ────────────────────────────────────────────────
+      setPhase: (p, tp) => {
+        set(tp ? { phase: p, turnPhase: tp } : { phase: p });
+      },
+
+      // ── state helpers ────────────────────────────────────────────────────
       addMessage: (text, role, type = "message") => {
         const id = crypto.randomUUID() as MessageId;
         set((s) => {
@@ -104,11 +116,13 @@ export function createVoiceStore() {
         set((s) => ({ messages: s.messages.filter((m) => m.id !== id) })),
       clearMessages: () => set({ messages: [] }),
 
-      // ── orchestration actions ──────────────────────────────────────────
+      // ── orchestration actions ────────────────────────────────────────────
       bargeIn: () => {
         const d = getDeps();
-        if (chatAbort) chatAbort.abort();
-        clearTimeout(chatTimeoutId);
+        if (turnAbort) {
+          turnAbort.abort();
+          turnAbort = null;
+        }
         d.stopPlayback();
         d.sendClear();
         d.onBargeIn?.();
@@ -117,28 +131,28 @@ export function createVoiceStore() {
 
       sendTurnToAgent: async () => {
         const d = getDeps();
-        const { addMessage, removeMessage, bargeIn } = get();
+        const { addMessage, removeMessage, bargeIn, setPhase } = get();
         const text = turnText.trim();
         turnText = "";
         if (!text) return;
 
-        if (busy) bargeIn();
-        busy = true;
+        if (turnAbort) bargeIn();
 
         d.onTurnStart?.(text);
         addMessage(text, "user");
 
         const thinkingId = addMessage("", "assistant", "thinking");
-        setStatus("Thinking...", "processing");
-        chatAbort = new AbortController();
-        chatTimeoutId = setTimeout(() => chatAbort?.abort(), d.fetchTimeout);
+        setPhase("active", "processing");
+
+        const abort = newTurnAbort();
+        turnAbort = abort;
 
         try {
           const resp = await fetch(`${d.baseUrl}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: text }),
-            signal: chatAbort.signal,
+            signal: abort.signal,
           });
 
           let replyText = "";
@@ -165,11 +179,9 @@ export function createVoiceStore() {
             addMessage("Sorry, something went wrong.", "assistant");
           }
         } finally {
-          clearTimeout(chatTimeoutId);
-          busy = false;
-          chatAbort = null;
-          if (recording && !d.speakingRef.current) {
-            setStatus("Listening...", "listening");
+          if (turnAbort === abort) turnAbort = null;
+          if (get().phase === "active" && !d.speakingRef.current) {
+            setPhase("active", "listening");
           }
         }
       },
@@ -192,7 +204,7 @@ export function createVoiceStore() {
           text.length >= d.bargeInMinChars
         ) {
           get().bargeIn();
-          setStatus("Listening...", "listening");
+          get().setPhase("active", "listening");
         }
 
         if (msg.turn_is_formatted) {
@@ -203,12 +215,18 @@ export function createVoiceStore() {
 
       greet: async () => {
         const d = getDeps();
-        const { addMessage } = get();
+        const { addMessage, bargeIn } = get();
+
+        if (turnAbort) bargeIn();
+        const abort = newTurnAbort();
+        turnAbort = abort;
+
         try {
           const resp = await fetch(`${d.baseUrl}/greet`, {
             method: "POST",
-            signal: AbortSignal.timeout(d.fetchTimeout),
+            signal: abort.signal,
           });
+          if (get().phase !== "active") return;
           if (resp.status === 204) return;
           await d.readStream(
             resp,
@@ -217,41 +235,45 @@ export function createVoiceStore() {
             }),
           );
         } catch (err) {
-          console.error("Greeting error:", err);
+          if (err instanceof Error && err.name !== "AbortError") {
+            console.error("Greeting error:", err);
+          }
+        } finally {
+          if (turnAbort === abort) turnAbort = null;
         }
       },
 
       reconnectSTT: async () => {
         const d = getDeps();
-        if (!recording || !d.reconnect) return;
+        if (get().phase !== "active" || !d.reconnect) return;
 
         for (let attempt = 1; attempt <= d.maxReconnectAttempts; attempt++) {
           try {
             await new Promise((r) =>
               setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000)),
             );
-            if (!recording) return; // user stopped during backoff
+            if (get().phase !== "active") return;
 
             const resp = await fetch(`${d.baseUrl}/tokens`, {
-              signal: AbortSignal.timeout(d.fetchTimeout),
+              signal: sessionAbort?.signal,
             });
             const { wss_url }: TokensResponse = await resp.json();
 
             await d.sttConnect(wss_url, {
               onMessage: get().handleAAIMessage,
               onUnexpectedClose: () => {
-                if (recording) get().reconnectSTT();
+                if (get().phase === "active") get().reconnectSTT();
               },
             });
 
-            setStatus("Listening...", "listening");
-            return; // success
+            get().setPhase("active", "listening");
+            return;
           } catch (err) {
+            if (err instanceof Error && err.name === "AbortError") return;
             console.warn(`STT reconnect attempt ${attempt} failed:`, err);
           }
         }
 
-        // all attempts exhausted
         const error: VoiceAgentError = {
           code: "reconnect_failed",
           message: "Failed to reconnect to speech recognition",
@@ -261,43 +283,56 @@ export function createVoiceStore() {
       },
 
       stopRecording: () => {
+        if (get().phase === "idle") return;
         const d = getDeps();
-        debouncedSend?.cancel();
-        turnText = "";
-        if (chatAbort) {
-          chatAbort.abort();
-          chatAbort = null;
-        }
-        clearTimeout(chatTimeoutId);
 
-        get().bargeIn();
+        // Abort the session — kills ALL in-flight fetches (connect, greet, chat)
+        if (sessionAbort) {
+          sessionAbort.abort();
+          sessionAbort = null;
+        }
+        turnAbort = null;
+
+        debouncedSend?.cancel();
+        d.stopPlayback();
+        d.sendClear();
         d.sttDisconnect();
 
-        recording = false;
-        busy = false;
-        set({ isRecording: false });
-        setStatus("Click microphone to start");
+        get().setPhase("idle", "listening");
 
         d.onDisconnect?.();
         fetch(`${d.baseUrl}/reset`, { method: "POST" }).catch(() => {});
       },
 
       startRecording: async () => {
-        const d = getDeps();
-        const { handleAAIMessage, greet, stopRecording, reconnectSTT } = get();
-        try {
-          setStatus("Connecting...");
-          setError(null);
+        if (get().phase !== "idle") return;
 
-          const resp = await fetch(`${d.baseUrl}/tokens`, {
-            signal: AbortSignal.timeout(d.fetchTimeout),
-          });
+        const d = getDeps();
+        const {
+          handleAAIMessage,
+          greet,
+          stopRecording,
+          reconnectSTT,
+          setPhase,
+        } = get();
+
+        // Create session-scoped abort — stopRecording kills it
+        sessionAbort = new AbortController();
+        const signal = sessionAbort.signal;
+
+        setPhase("connecting");
+        setError(null);
+
+        try {
+          const resp = await fetch(`${d.baseUrl}/tokens`, { signal });
+          if (get().phase !== "connecting") return;
+
           const { wss_url, sample_rate }: TokensResponse = await resp.json();
 
           await d.sttConnect(wss_url, {
             onMessage: handleAAIMessage,
             onUnexpectedClose: () => {
-              if (recording) {
+              if (get().phase === "active") {
                 if (d.reconnect) {
                   reconnectSTT();
                 } else {
@@ -311,17 +346,19 @@ export function createVoiceStore() {
               }
             },
           });
+          if (get().phase !== "connecting") return;
 
           await d.startCapture(sample_rate);
+          if (get().phase !== "connecting") return;
 
-          recording = true;
           turnText = "";
-          set({ isRecording: true });
-          setStatus("Listening...", "listening");
+          setPhase("active", "listening");
 
           d.onConnect?.();
           if (d.autoGreet) greet();
         } catch (err) {
+          if (get().phase !== "connecting") return;
+
           const isMicDenied =
             err instanceof DOMException &&
             (err.name === "NotAllowedError" ||
@@ -336,14 +373,13 @@ export function createVoiceStore() {
           };
           setError(error);
           console.error("Failed to start recording:", err);
-          setStatus(error.message);
           stopRecording();
         }
       },
 
       toggleRecording: () => {
-        if (recording) get().stopRecording();
-        else get().startRecording();
+        if (get().phase === "idle") get().startRecording();
+        else get().stopRecording();
       },
     };
   });
@@ -411,15 +447,26 @@ export function useVoiceAgent({
     useStore.getState()._initDebounce(debounceMs);
   }, [useStore, debounceMs]);
 
-  return useStore(
+  // Actions are stable references — select them once, not through useShallow
+  const { toggleRecording, sendMessage, clearMessages } = useStore.getState();
+
+  // Only reactive state goes through the selector
+  const { messages, error, phase, turnPhase } = useStore(
     useShallow((s: VoiceStoreState) => ({
       messages: s.messages,
       error: s.error,
-      statusClass: s.statusClass,
-      isRecording: s.isRecording,
-      toggleRecording: s.toggleRecording,
-      sendMessage: s.sendMessage,
-      clearMessages: s.clearMessages,
+      phase: s.phase,
+      turnPhase: s.turnPhase,
     })),
   );
+
+  return {
+    messages,
+    error,
+    phase,
+    turnPhase,
+    toggleRecording,
+    sendMessage,
+    clearMessages,
+  };
 }

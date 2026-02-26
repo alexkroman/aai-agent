@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useVoiceAgent } from "./useVoiceAgent";
+import { statusClassOf } from "./types";
 import type { VoiceAgentOptions } from "./types";
 
 interface VoiceWidgetProps extends VoiceAgentOptions {
@@ -16,7 +17,7 @@ export function VoiceWidget({
   title = "Voice Assistant",
   ...options
 }: VoiceWidgetProps) {
-  const { messages, statusClass, isRecording, toggleRecording } =
+  const { messages, phase, turnPhase, toggleRecording } =
     useVoiceAgent(options);
 
   const endRef = useRef<HTMLDivElement>(null);
@@ -25,7 +26,9 @@ export function VoiceWidget({
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const micLabel = isRecording ? "Stop recording" : "Start recording";
+  const active = phase !== "idle";
+  const statusClass = statusClassOf(phase, turnPhase);
+  const micLabel = active ? "Stop recording" : "Start recording";
 
   return (
     <div className="aai-container" role="region" aria-label={title}>
@@ -34,11 +37,11 @@ export function VoiceWidget({
       </header>
 
       <div
-        className={`aai-conversation${isRecording ? " aai-active" : ""}`}
+        className={`aai-conversation${active ? " aai-active" : ""}`}
         role="log"
         aria-live="polite"
         aria-label="Conversation"
-        aria-hidden={!isRecording}
+        aria-hidden={!active}
       >
         {messages.map((msg) => {
           if (msg.type === "thinking") {
@@ -68,10 +71,10 @@ export function VoiceWidget({
 
       <div className="aai-input-area">
         <button
-          className={`aai-mic-btn${isRecording ? " aai-recording" : ""}${statusClass ? ` aai-mic-${statusClass}` : ""}`}
+          className={`aai-mic-btn${active ? " aai-recording" : ""}${statusClass ? ` aai-mic-${statusClass}` : ""}`}
           onClick={toggleRecording}
           aria-label={micLabel}
-          aria-pressed={isRecording}
+          aria-pressed={active}
         >
           {statusClass === "speaking" ? (
             <svg viewBox="0 0 24 24" aria-hidden="true">

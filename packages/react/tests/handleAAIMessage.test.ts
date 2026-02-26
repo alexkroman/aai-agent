@@ -27,6 +27,20 @@ function createTestStore({
   return { store, onBargeIn };
 }
 
+/** Activate the store by running through startRecording with mocked deps. */
+async function activateStore(store: ReturnType<typeof createVoiceStore>) {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    json: () => Promise.resolve({ wss_url: "wss://test", sample_rate: 16000 }),
+    status: 200,
+  }) as unknown as typeof fetch;
+  try {
+    await store.getState().startRecording();
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+}
+
 describe("handleAAIMessage", () => {
   it("ignores non-Turn messages", () => {
     const { store, onBargeIn } = createTestStore({ speakingCurrent: true });
@@ -66,15 +80,16 @@ describe("handleAAIMessage", () => {
     expect(onBargeIn).not.toHaveBeenCalled();
   });
 
-  it("barges in when speaking and transcript meets min chars", () => {
+  it("barges in when speaking and transcript meets min chars", async () => {
     const { store, onBargeIn } = createTestStore({ speakingCurrent: true, bargeInMinChars: 10 });
+    await activateStore(store);
     store.getState().handleAAIMessage({
       type: "Turn",
       transcript: "this is long enough",
       turn_is_formatted: true,
     });
     expect(onBargeIn).toHaveBeenCalledOnce();
-    expect(store.getState().statusClass).toBe("listening");
+    expect(store.getState().turnPhase).toBe("listening");
   });
 
   it("does not trigger debouncedSend when turn_is_formatted is false", () => {

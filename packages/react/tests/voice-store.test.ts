@@ -53,8 +53,8 @@ describe("createVoiceStore", () => {
     const store = createVoiceStore();
     const state = store.getState();
     expect(state.messages).toEqual([]);
-    expect(state.statusClass).toBe("");
-    expect(state.isRecording).toBe(false);
+    expect(state.turnPhase).toBe("listening");
+    expect(state.phase).toBe("idle");
     expect(state.error).toBeNull();
   });
 
