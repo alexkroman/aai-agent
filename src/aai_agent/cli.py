@@ -78,15 +78,16 @@ def start(
     server: str = typer.Option(
         "server:app", "--server", "-s", help="Uvicorn app import string"
     ),
-    host: str | None = typer.Option(None, "--host", "-h", help="Bind host"),
-    port: int | None = typer.Option(None, "--port", "-p", help="Bind port"),
-    reload: bool | None = typer.Option(None, help="Enable auto-reload"),
+    host: str = typer.Option("", "--host", "-h", help="Bind host"),
+    port: int = typer.Option(0, "--port", "-p", help="Bind port"),
+    reload: bool = typer.Option(False, help="Enable auto-reload"),
     prod: bool = typer.Option(False, "--prod", help="Production mode (0.0.0.0, no reload)"),
 ):
     """Start the voice agent server.
 
     In production mode (--prod or when FLY_APP_NAME / PORT env vars are
     detected), defaults to host 0.0.0.0 and reload disabled.
+    Otherwise defaults to localhost:8000 with auto-reload.
     """
     import os
     import sys
@@ -96,11 +97,12 @@ def start(
     # Auto-detect production environment
     is_prod = prod or os.environ.get("FLY_APP_NAME") or os.environ.get("RAILWAY_ENVIRONMENT")
 
-    if host is None:
+    if not host:
         host = "0.0.0.0" if is_prod else "localhost"
-    if port is None:
+    if not port:
         port = int(os.environ.get("PORT", 8000))
-    if reload is None:
+    if not prod and not reload:
+        # No explicit flags: default reload on for dev, off for prod
         reload = not is_prod
 
     # Ensure the current directory is importable so uvicorn can find server.py
