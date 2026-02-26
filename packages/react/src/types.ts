@@ -1,3 +1,5 @@
+import type { DebouncedFn } from "./debounce";
+
 declare const __brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [__brand]: B };
 
@@ -107,7 +109,7 @@ export interface VoiceDeps {
   readonly sttDisconnect: () => void;
   readonly sendClear: () => void;
   readonly ttsConnect: (url: string, sampleRate?: number) => Promise<WebSocket>;
-  readonly ttsSpeak: (text: string, handlers?: TTSHandlers) => void;
+  readonly ttsSpeak: (text: string, handlers?: TTSHandlers) => void | Promise<void>;
   readonly ttsStop: () => void;
   readonly ttsDisconnect: () => void;
   readonly speakingRef: { current: boolean };
@@ -127,6 +129,12 @@ export interface VoiceStoreState {
   turnPhase: TurnPhase;
   messages: Message[];
   error: VoiceAgentError | null;
+  // Internal state (not included in consumer selectors)
+  _sessionAbort: AbortController | null;
+  _turnAbort: AbortController | null;
+  _turnText: string;
+  _debouncedSend: DebouncedFn | null;
+  _deps: VoiceDeps | null;
   _setDeps: (deps: VoiceDeps) => void;
   _initDebounce: (ms: number) => void;
   setPhase: (phase: Phase, turnPhase?: TurnPhase) => void;

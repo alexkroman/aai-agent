@@ -5,7 +5,6 @@ import { debounce } from "./debounce";
 import { useSTTSocket } from "./useSTTSocket";
 import { useTTSPlayback } from "./useTTSPlayback";
 import type {
-  MessageId,
   VoiceStoreState,
   VoiceDeps,
   VoiceAgentOptions,
@@ -15,7 +14,6 @@ import type {
   TokensResponse,
   TTSHandlers,
 } from "./types";
-import type { DebouncedFn } from "./debounce";
 
 const DEFAULT_DEBOUNCE_MS = 1500;
 const DEFAULT_BARGE_IN_MIN_CHARS = 20;
@@ -29,39 +27,33 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 3;
  * UI concerns like CSS classes are derived from these phases by consumers.
  *
  * Cancellation is handled by two AbortControllers:
- *   - sessionAbort: created when connecting, aborted when returning to
+ *   - _sessionAbort: created when connecting, aborted when returning to
  *     idle.  Every fetch in the session uses this signal, so stopping
  *     the session kills everything — no stale-finally races.
- *   - turnAbort: created per greet/chat turn, aborted on barge-in.
+ *   - _turnAbort: created per greet/chat turn, aborted on barge-in.
  *     Lets us cancel one request without nuking the whole session.
  */
 export function createVoiceStore() {
-  // Resources — not state, just handles tied to phase transitions
-  let sessionAbort: AbortController | null = null;
-  let turnAbort: AbortController | null = null;
-  let turnText = "";
-  let debouncedSend: DebouncedFn | null = null;
-  let deps: VoiceDeps | null = null;
-
-  function getDeps(): VoiceDeps {
-    if (!deps)
-      throw new Error(
-        "Voice store used before dependencies were injected via _setDeps",
-      );
-    return deps;
-  }
-
-  /** Create a turn-scoped AbortController chained to the session. */
-  function newTurnAbort(): AbortController {
-    const ac = new AbortController();
-    // If session is aborted, also abort the turn
-    sessionAbort?.signal.addEventListener("abort", () => ac.abort(), {
-      signal: ac.signal,
-    });
-    return ac;
-  }
-
   return create<VoiceStoreState>((set, get) => {
+    function getDeps(): VoiceDeps {
+      const d = get()._deps;
+      if (!d)
+        throw new Error(
+          "Voice store used before dependencies were injected via _setDeps",
+        );
+      return d;
+    }
+
+    /** Create a turn-scoped AbortController chained to the session. */
+    function newTurnAbort(): AbortController {
+      const ac = new AbortController();
+      const sa = get()._sessionAbort;
+      sa?.signal.addEventListener("abort", () => ac.abort(), {
+        signal: ac.signal,
+      });
+      return ac;
+    }
+
     const setError = (error: VoiceAgentError | null) => {
       set({ error });
       if (error) getDeps().onError?.(error);
@@ -81,13 +73,22 @@ export function createVoiceStore() {
       messages: [],
       error: null,
 
+      // ── internal state ─────────────────────────────────────────────────
+      _sessionAbort: null,
+      _turnAbort: null,
+      _turnText: "",
+      _debouncedSend: null,
+      _deps: null,
+
       // ── dep injection (called every render) ──────────────────────────────
       _setDeps: (d) => {
-        deps = d;
+        set({ _deps: d });
       },
       _initDebounce: (ms) => {
-        debouncedSend?.cancel();
-        debouncedSend = debounce(() => get().sendTurnToAgent(), ms);
+        get()._debouncedSend?.cancel();
+        set({
+          _debouncedSend: debounce(() => get().sendTurnToAgent(), ms),
+        });
       },
 
       // ── phase transitions ────────────────────────────────────────────────
@@ -97,10 +98,10 @@ export function createVoiceStore() {
 
       // ── state helpers ────────────────────────────────────────────────────
       addMessage: (text, role, type = "message") => {
-        const id = crypto.randomUUID() as MessageId;
+        const id = crypto.randomUUID() as import("./types").MessageId;
         set((s) => {
           const messages = [...s.messages, { id, text, role, type }];
-          const max = deps?.maxMessages ?? 0;
+          const max = s._deps?.maxMessages ?? 0;
           if (max > 0 && messages.length > max) {
             return { messages: messages.slice(-max) };
           }
@@ -115,9 +116,10 @@ export function createVoiceStore() {
       // ── orchestration actions ────────────────────────────────────────────
       bargeIn: () => {
         const d = getDeps();
-        if (turnAbort) {
-          turnAbort.abort();
-          turnAbort = null;
+        const ta = get()._turnAbort;
+        if (ta) {
+          ta.abort();
+          set({ _turnAbort: null });
         }
         d.ttsStop();
         d.sendClear();
@@ -128,11 +130,11 @@ export function createVoiceStore() {
       sendTurnToAgent: async () => {
         const d = getDeps();
         const { addMessage, removeMessage, bargeIn, setPhase } = get();
-        const text = turnText.trim();
-        turnText = "";
+        const text = get()._turnText.trim();
+        set({ _turnText: "" });
         if (!text) return;
 
-        if (turnAbort) bargeIn();
+        if (get()._turnAbort) bargeIn();
 
         d.onTurnStart?.(text);
         addMessage(text, "user");
@@ -141,7 +143,7 @@ export function createVoiceStore() {
         setPhase("active", "processing");
 
         const abort = newTurnAbort();
-        turnAbort = abort;
+        set({ _turnAbort: abort });
 
         try {
           const resp = await fetch(`${d.baseUrl}/chat`, {
@@ -175,7 +177,7 @@ export function createVoiceStore() {
             addMessage("Sorry, something went wrong.", "assistant");
           }
         } finally {
-          if (turnAbort === abort) turnAbort = null;
+          if (get()._turnAbort === abort) set({ _turnAbort: null });
           if (get().phase === "active" && !d.speakingRef.current) {
             setPhase("active", "listening");
           }
@@ -183,8 +185,8 @@ export function createVoiceStore() {
       },
 
       sendMessage: async (text: string) => {
-        debouncedSend?.cancel();
-        turnText = text;
+        get()._debouncedSend?.cancel();
+        set({ _turnText: text });
         await get().sendTurnToAgent();
       },
 
@@ -204,8 +206,8 @@ export function createVoiceStore() {
         }
 
         if (msg.turn_is_formatted) {
-          turnText = text;
-          debouncedSend?.();
+          set({ _turnText: text });
+          get()._debouncedSend?.();
         }
       },
 
@@ -213,9 +215,9 @@ export function createVoiceStore() {
         const d = getDeps();
         const { addMessage, bargeIn } = get();
 
-        if (turnAbort) bargeIn();
+        if (get()._turnAbort) bargeIn();
         const abort = newTurnAbort();
-        turnAbort = abort;
+        set({ _turnAbort: abort });
 
         try {
           const resp = await fetch(`${d.baseUrl}/greet`, {
@@ -235,7 +237,7 @@ export function createVoiceStore() {
             console.error("Greeting error:", err);
           }
         } finally {
-          if (turnAbort === abort) turnAbort = null;
+          if (get()._turnAbort === abort) set({ _turnAbort: null });
         }
       },
 
@@ -251,7 +253,7 @@ export function createVoiceStore() {
             if (get().phase !== "active") return;
 
             const resp = await fetch(`${d.baseUrl}/tokens`, {
-              signal: sessionAbort?.signal,
+              signal: get()._sessionAbort?.signal,
             });
             const { wss_url }: TokensResponse = await resp.json();
 
@@ -283,13 +285,15 @@ export function createVoiceStore() {
         const d = getDeps();
 
         // Abort the session — kills ALL in-flight fetches (connect, greet, chat)
-        if (sessionAbort) {
-          sessionAbort.abort();
-          sessionAbort = null;
+        const sa = get()._sessionAbort;
+        if (sa) {
+          sa.abort();
+          set({ _sessionAbort: null, _turnAbort: null });
+        } else {
+          set({ _turnAbort: null });
         }
-        turnAbort = null;
 
-        debouncedSend?.cancel();
+        get()._debouncedSend?.cancel();
         d.ttsStop();
         d.sendClear();
         d.sttDisconnect();
@@ -314,11 +318,12 @@ export function createVoiceStore() {
         } = get();
 
         // Create session-scoped abort — stopRecording kills it
-        sessionAbort = new AbortController();
-        const signal = sessionAbort.signal;
+        const sa = new AbortController();
+        set({ _sessionAbort: sa });
+        const signal = sa.signal;
 
         setPhase("connecting");
-        setError(null);
+        set({ error: null });
 
         try {
           const resp = await fetch(`${d.baseUrl}/tokens`, { signal });
@@ -362,7 +367,7 @@ export function createVoiceStore() {
           await d.startCapture(sample_rate);
           if (get().phase !== "connecting") return;
 
-          turnText = "";
+          set({ _turnText: "" });
           setPhase("active", "listening");
 
           d.onConnect?.();

@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 
+import websockets
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -66,8 +67,10 @@ def create_voice_router(
     """
     router = APIRouter()
     signer = URLSafeSerializer(session_secret or secrets.token_hex(32))
+
     # Track in-flight chat tasks per session so barge-in can cancel them.
     _active_tasks: dict[str, asyncio.Task] = {}
+    _active_tasks_lock = asyncio.Lock()
 
     def _session_id(request: Request, response: Response) -> str:
         """Read or create a signed session cookie."""
@@ -88,7 +91,8 @@ def create_voice_router(
 
     async def _cancel_active(sid: str) -> None:
         """Cancel any in-flight chat task for this session."""
-        task = _active_tasks.pop(sid, None)
+        async with _active_tasks_lock:
+            task = _active_tasks.pop(sid, None)
         if task is not None and not task.done():
             logger.info("Cancelling in-flight task for session %s", sid[:8])
             task.cancel()
@@ -133,10 +137,12 @@ def create_voice_router(
             try:
                 return await agent.chat(message)
             finally:
-                _active_tasks.pop(sid, None)
+                async with _active_tasks_lock:
+                    _active_tasks.pop(sid, None)
 
         task = asyncio.create_task(_do_chat())
-        _active_tasks[sid] = task
+        async with _active_tasks_lock:
+            _active_tasks[sid] = task
 
         try:
             result = await task
@@ -145,80 +151,79 @@ def create_voice_router(
 
         return {"text": result.text, "steps": result.steps}
 
+    async def _cancel_session(sid: str) -> None:
+        """Cancel any in-flight work for a session."""
+        await _cancel_active(sid)
+        agent = agent_manager.get_or_create(sid)
+        await agent.cancel()
+
     @router.post("/cancel")
     async def cancel(request: Request, response: Response):
         """Cancel any in-flight chat task for this session."""
         sid = _session_id(request, response)
-        await _cancel_active(sid)
-        # Also cancel at the agent level
-        agent = agent_manager.get_or_create(sid)
-        await agent.cancel()
+        await _cancel_session(sid)
         return {"status": "cancelled"}
 
     @router.post("/reset")
     async def reset(request: Request, response: Response):
         """Reset the session, clearing agent conversation history."""
         sid = _session_id(request, response)
-        await _cancel_active(sid)
+        await _cancel_session(sid)
         agent_manager.remove(sid)
         return {"status": "reset"}
 
+    # ── TTS proxy config (resolved once at startup) ─────────────────────
+    _tts_api_key = os.environ.get("ASSEMBLYAI_TTS_API_KEY", "")
+    _tts_wss_url = os.environ.get("ASSEMBLYAI_TTS_WSS_URL", DEFAULT_TTS_WSS_URL)
+    _tts_headers = {"Authorization": f"Api-Key {_tts_api_key}"}
+    _tts_voice = os.environ.get("ASSEMBLYAI_TTS_VOICE", "tara")
+    _tts_config_json = json.dumps(
+        {"voice": _tts_voice, "max_tokens": 2000, "buffer_size": 5, "repetition_penalty": 1.1}
+    )
+    _cleaner = VoiceCleaner()
+
+    async def _cancel_relay(task: asyncio.Task | None) -> None:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     @router.websocket("/tts")
     async def tts_proxy(ws: WebSocket):
-        """WebSocket proxy for Assembly TTS.
+        """WebSocket proxy for Orpheus TTS.
 
         Keeps the TTS API key server-side.  The browser sends
         ``{"text": "..."}`` and receives binary PCM audio frames
         followed by ``{"type": "done"}``.  Send ``{"type": "cancel"}``
         to abort an in-flight synthesis.
         """
-        import websockets
-
-        api_key = os.environ.get("ASSEMBLY_TTS_API_KEY")
-        if not api_key:
+        if not _tts_api_key:
             await ws.close(code=1008, reason="TTS not configured")
             return
 
-        tts_base = os.environ.get("ASSEMBLY_TTS_WSS_URL", DEFAULT_TTS_WSS_URL)
-        tts_headers = {"Authorization": f"Api-Key {api_key}"}
-        tts_voice = os.environ.get("ASSEMBLY_TTS_VOICE", "tara")
-        cleaner = VoiceCleaner()
         relay_task: asyncio.Task | None = None
-
         await ws.accept()
+        logger.info("TTS WebSocket connected")
 
         async def _relay(text: str) -> None:
-            """Connect to upstream Orpheus TTS and relay audio chunks.
-
-            Orpheus protocol:
-              1. Send JSON config (voice, max_tokens, buffer_size)
-              2. Send text word-by-word as individual string messages
-              3. Send ``__END__`` sentinel
-              4. Receive binary PCM audio frames until connection closes
-            """
+            """Connect to upstream Orpheus TTS and relay audio chunks."""
             try:
                 async with websockets.connect(
-                    tts_base, additional_headers=tts_headers
+                    _tts_wss_url,
+                    additional_headers=_tts_headers,
+                    max_size=None,
                 ) as upstream:
-                    # Send voice config
-                    await upstream.send(
-                        json.dumps(
-                            {
-                                "voice": tts_voice,
-                                "max_tokens": 2000,
-                                "buffer_size": 5,
-                            }
-                        )
-                    )
-                    # Send text word-by-word then sentinel
+                    await upstream.send(_tts_config_json)
                     for word in text.split():
                         await upstream.send(word)
                     await upstream.send("__END__")
 
-                    # Relay audio frames
                     async for msg in upstream:
                         if isinstance(msg, bytes):
                             await ws.send_bytes(msg)
+
                 await ws.send_json({"type": "done"})
             except asyncio.CancelledError:
                 raise
@@ -235,41 +240,25 @@ def create_voice_router(
             while True:
                 data = await ws.receive_json()
 
-                # Handle cancel
                 if data.get("type") == "cancel":
-                    if relay_task and not relay_task.done():
-                        relay_task.cancel()
-                        try:
-                            await relay_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
+                    await _cancel_relay(relay_task)
+                    relay_task = None
                     continue
 
                 text = data.get("text", "").strip()
                 if not text:
                     continue
 
-                # Cancel any in-flight synthesis before starting new one
-                if relay_task and not relay_task.done():
-                    relay_task.cancel()
-                    try:
-                        await relay_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-
-                text = cleaner.normalize(text)
+                logger.info("TTS synthesizing: %s", text[:80])
+                await _cancel_relay(relay_task)
+                text = _cleaner.normalize(text)
                 relay_task = asyncio.create_task(_relay(text))
         except WebSocketDisconnect:
             pass
         except Exception:
             logger.exception("TTS WebSocket error")
         finally:
-            if relay_task and not relay_task.done():
-                relay_task.cancel()
-                try:
-                    await relay_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+            await _cancel_relay(relay_task)
 
     return router
 
@@ -361,6 +350,14 @@ def create_voice_app(
     )
 
     if static_dir:
+
+        @app.middleware("http")
+        async def no_cache_static(request: Request, call_next):
+            response = await call_next(request)
+            if not request.url.path.startswith(api_prefix):
+                response.headers["Cache-Control"] = "no-cache"
+            return response
+
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
     return app

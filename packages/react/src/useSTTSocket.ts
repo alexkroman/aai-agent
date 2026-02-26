@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect } from "react";
 import { getPCMWorkletUrl } from "./pcm-worklet";
+import { openWebSocket, closeWebSocket } from "./ws";
 import type { STTHandlers, AAIMessage } from "./types";
 
 /**
@@ -13,24 +14,21 @@ export function useSTTSocket() {
   const streamRef = useRef<MediaStream | null>(null);
 
   const connect = useCallback(
-    (url: string, { onMessage, onUnexpectedClose }: STTHandlers = {}) =>
-      new Promise<WebSocket>((resolve, reject) => {
-        const ws = new WebSocket(url);
-        ws.binaryType = "arraybuffer";
-        ws.onopen = () => {
-          socketRef.current = ws;
-          resolve(ws);
-        };
-        ws.onerror = (e) => reject(e);
-        ws.onmessage = (evt: MessageEvent<unknown>) => {
+    async (
+      url: string,
+      { onMessage, onUnexpectedClose }: STTHandlers = {},
+    ) => {
+      const ws = await openWebSocket(url, {
+        onMessage: (evt) => {
           if (typeof evt.data === "string" && onMessage) {
             onMessage(JSON.parse(evt.data) as AAIMessage);
           }
-        };
-        ws.onclose = () => {
-          if (onUnexpectedClose) onUnexpectedClose();
-        };
-      }),
+        },
+        onClose: onUnexpectedClose,
+      });
+      socketRef.current = ws;
+      return ws;
+    },
     [],
   );
 
@@ -64,14 +62,11 @@ export function useSTTSocket() {
   }, []);
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.onclose = null;
-      if (socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: "terminate_session" }));
-      }
-      socketRef.current.close();
-      socketRef.current = null;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "terminate_session" }));
     }
+    closeWebSocket(socketRef.current);
+    socketRef.current = null;
     if (workletNodeRef.current) {
       workletNodeRef.current.disconnect();
       workletNodeRef.current = null;

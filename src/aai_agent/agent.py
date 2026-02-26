@@ -234,6 +234,10 @@ class VoiceAgent:
             None
         )
         self._current_task: asyncio.Task | None = None
+        # Protects _agent and _saved_memory_steps (accessed from both async and thread contexts)
+        self._agent_lock = threading.Lock()
+        # Protects _current_task (async-only)
+        self._task_lock = asyncio.Lock()
 
     def _build_agent(self) -> MultiStepAgent:
         """Create the underlying smolagents agent."""
@@ -270,20 +274,28 @@ class VoiceAgent:
 
     def _invalidate_agent(self) -> None:
         """Mark the agent for rebuild, preserving conversation history."""
-        if self._agent is not None:
-            try:
-                self._saved_memory_steps = list(self._agent.memory.steps)
-            except Exception:
-                pass
-        self._agent = None
+        with self._agent_lock:
+            if self._agent is not None:
+                try:
+                    self._saved_memory_steps = list(self._agent.memory.steps)
+                except Exception:
+                    pass
+            self._agent = None
 
     async def _ensure_agent(self) -> MultiStepAgent:
-        if self._agent is None:
-            self._agent = await anyio.to_thread.run_sync(self._build_agent)
-            if self._saved_memory_steps is not None:
-                self._agent.memory.steps = self._saved_memory_steps
-                self._saved_memory_steps = None
-        return self._agent
+        with self._agent_lock:
+            if self._agent is not None:
+                return self._agent
+        # Build agent outside the lock (slow operation)
+        new_agent = await anyio.to_thread.run_sync(self._build_agent)
+        with self._agent_lock:
+            # Double-check: another coroutine may have built it while we waited
+            if self._agent is None:
+                self._agent = new_agent
+                if self._saved_memory_steps is not None:
+                    self._agent.memory.steps = self._saved_memory_steps
+                    self._saved_memory_steps = None
+            return self._agent
 
     def _on_step(self, step: MemoryStep) -> None:
         """Collect step summaries into thread-local log."""
@@ -312,9 +324,10 @@ class VoiceAgent:
         Returns the underlying smolagents ``AgentMemory`` object which contains
         the full conversation history in ``memory.steps``.
         """
-        if self._agent is not None:
-            return self._agent.memory
-        return None
+        with self._agent_lock:
+            if self._agent is not None:
+                return self._agent.memory
+            return None
 
     async def aclose(self) -> None:
         """Close the underlying STT and TTS HTTP clients."""
@@ -334,19 +347,21 @@ class VoiceAgent:
         ``chat()`` call starts a fresh conversation.
         """
         await self.cancel()
-        self._saved_memory_steps = None
-        self._agent = None
+        with self._agent_lock:
+            self._saved_memory_steps = None
+            self._agent = None
 
     async def cancel(self) -> None:
         """Cancel any in-flight chat task for this agent."""
-        task = self._current_task
+        async with self._task_lock:
+            task = self._current_task
+            self._current_task = None
         if task is not None and not task.done():
             task.cancel()
             try:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
-            self._current_task = None
 
     async def chat(self, message: str, *, reset: bool = False) -> VoiceResponse:
         """Send a text message and get a text response.
@@ -389,7 +404,8 @@ class VoiceAgent:
         async def _run_chat():
             return await anyio.to_thread.run_sync(run, abandon_on_cancel=True)
 
-        self._current_task = asyncio.current_task()
+        async with self._task_lock:
+            self._current_task = asyncio.current_task()
         try:
             text, steps = await _run_chat()
         except asyncio.CancelledError:
@@ -398,7 +414,8 @@ class VoiceAgent:
             self._invalidate_agent()
             raise
         finally:
-            self._current_task = None
+            async with self._task_lock:
+                self._current_task = None
 
         return VoiceResponse(text=text, steps=steps)
 
@@ -457,7 +474,7 @@ class VoiceAgent:
     async def create_streaming_token(self) -> StreamingToken:
         """Create an AssemblyAI streaming token and WebSocket URL for browser-side STT.
 
-        If the ``ASSEMBLY_TTS_API_KEY`` environment variable is set,
+        If the ``ASSEMBLYAI_TTS_API_KEY`` environment variable is set,
         ``tts_enabled`` is ``True`` in the response, telling the browser
         to connect to the server's ``/tts`` WebSocket proxy for audio.
 
@@ -480,5 +497,5 @@ class VoiceAgent:
         return StreamingToken(
             wss_url=f"{cfg.wss_base}?{params}",
             sample_rate=cfg.sample_rate,
-            tts_enabled=bool(os.environ.get("ASSEMBLY_TTS_API_KEY")),
+            tts_enabled=bool(os.environ.get("ASSEMBLYAI_TTS_API_KEY")),
         )

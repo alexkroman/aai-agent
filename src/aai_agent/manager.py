@@ -111,6 +111,11 @@ class VoiceAgentManager:
                 "RIME_API_KEY environment variable"
             )
 
+        if not os.environ.get("ASSEMBLYAI_TTS_API_KEY"):
+            raise ValueError(
+                "ASSEMBLYAI_TTS_API_KEY environment variable must be set to enable Orpheus TTS"
+            )
+
         # Build kwargs dict for VoiceAgent, only including explicitly set values
         # so that VoiceAgent's own defaults are used for anything not provided.
         self._agent_kwargs: dict = {
