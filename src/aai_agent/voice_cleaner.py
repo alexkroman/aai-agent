@@ -7,7 +7,10 @@ Handles acronyms, numbers, currency, markdown artifacts, URLs, and more.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+
+from typing import cast
+
+import inflect
 
 # Pre-compiled regex patterns
 _RE_CODE_BLOCKS = re.compile(r"```[\s\S]*?```")
@@ -23,22 +26,28 @@ _RE_NUMBERED = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 _RE_BLOCKQUOTES = re.compile(r"^\s*>\s?", re.MULTILINE)
 _RE_HORIZ_RULES = re.compile(r"^[-*_]{3,}\s*$", re.MULTILINE)
 _RE_URLS = re.compile(r"https?://\S+")
-_RE_CURRENCY_CENTS = re.compile(r"\$(\d+)\.(\d{2})\b")
-_RE_CURRENCY_WHOLE = re.compile(r"\$(\d+)\b")
+_RE_CURRENCY = re.compile(r"([$£€¥])(\d+(?:,\d{3})*(?:\.\d{2})?)")
 _RE_PERCENTAGES = re.compile(r"(\d+(?:\.\d+)?)%")
-_RE_PHONE = re.compile(r"\b\d{3,4}(?:-\d{3,4}){1,3}\b")
+_RE_PHONE = re.compile(r"(\d{3})-(\d{3})-(\d{4})")
 _RE_ORDINALS = re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b")
 _RE_NUMBERS = re.compile(r"(?<![:\w])\b\d+(?:\.\d+)?\b(?![:\w])")
 _RE_ACRONYMS = re.compile(r"\b[A-Z]{2,}(?:'?s)?\b")
 _RE_SPACES = re.compile(r"[ \t]+")
 _RE_NEWLINES = re.compile(r"\n{2,}")
 
-# Resolve num2words once at import time
-_num2words: Callable[..., str] | None
-try:
-    from num2words import num2words as _num2words
-except ImportError:
-    _num2words = None
+_CURRENCY_MAP = {"$": "dollars", "£": "pounds", "€": "euros", "¥": "yen"}
+
+_p = inflect.engine()
+
+
+def _num2words(n: int | float) -> str:
+    """Typed wrapper around inflect's ``number_to_words``."""
+    return cast(str, _num2words(n))  # type: ignore[arg-type]
+
+
+def _ordinal(word: str) -> str:
+    """Typed wrapper around inflect's ``ordinal``."""
+    return cast(str, _ordinal(word))  # type: ignore[arg-type]
 
 
 class VoiceCleaner:
@@ -46,7 +55,7 @@ class VoiceCleaner:
 
     Automatically applied to all text before it reaches the TTS engine.
     Handles:
-    - Acronyms / initialisms (API → A. P. I.)
+    - Acronyms / initialisms (API → a. p. i.)
     - Numbers, ordinals, currency, percentages
     - Markdown stripping (bold, links, code, headers, lists)
     - URL removal
@@ -93,24 +102,21 @@ class VoiceCleaner:
         return _RE_URLS.sub("", text)
 
     # ------------------------------------------------------------------
-    # Currency: $7.95 → 7 dollars and 95 cents
+    # Currency: $7.95 → seven dollars and ninety-five cents
     # ------------------------------------------------------------------
     def _expand_currency(self, text: str) -> str:
-        def _replace_dollars(m: re.Match) -> str:
-            dollars = int(m.group(1))
-            cents = m.group(2)
-            parts = []
-            if dollars:
-                parts.append(f"{dollars} {'dollar' if dollars == 1 else 'dollars'}")
-            if cents:
-                c = int(cents)
-                if c:
-                    parts.append(f"{c} {'cent' if c == 1 else 'cents'}")
-            return " and ".join(parts) if parts else "zero dollars"
+        def _replace(m: re.Match) -> str:
+            symbol, num = m.groups()
+            num_clean = num.replace(",", "")
+            currency = _CURRENCY_MAP.get(symbol, "currency")
+            if "." in num_clean:
+                dollars, cents = num_clean.split(".")
+                dollars_words = _num2words(int(dollars))
+                cents_words = _num2words(int(cents))
+                return f"{dollars_words} {currency} and {cents_words} cents"
+            return f"{_num2words(int(num_clean))} {currency}"
 
-        text = _RE_CURRENCY_CENTS.sub(_replace_dollars, text)
-        text = _RE_CURRENCY_WHOLE.sub(lambda m: f"{m.group(1)} dollars", text)
-        return text
+        return _RE_CURRENCY.sub(_replace, text)
 
     # ------------------------------------------------------------------
     # Percentages: 100% → 100 percent
@@ -119,15 +125,13 @@ class VoiceCleaner:
         return _RE_PERCENTAGES.sub(r"\1 percent", text)
 
     # ------------------------------------------------------------------
-    # Phone numbers: 555-772-9140 → 5 5 5, 7 7 2, 9 1 4 0
+    # Phone numbers: 555-772-9140 → five five five, seven seven two, ...
     # ------------------------------------------------------------------
     def _expand_phone_numbers(self, text: str) -> str:
-        def _digits_spaced(segment: str) -> str:
-            return " ".join(segment)
-
         def _replace(m: re.Match) -> str:
-            parts = [_digits_spaced(p) for p in m.group(0).split("-")]
-            return ", ".join(parts)
+            return ", ".join(
+                " ".join(_num2words(int(d)) for d in group) for group in m.groups()
+            )
 
         return _RE_PHONE.sub(_replace, text)
 
@@ -162,44 +166,9 @@ class VoiceCleaner:
     # ------------------------------------------------------------------
     # Ordinals: 1st → first, 2nd → second, etc.
     # ------------------------------------------------------------------
-    _ORDINAL_MAP = {
-        "1": "first",
-        "2": "second",
-        "3": "third",
-        "4": "fourth",
-        "5": "fifth",
-        "6": "sixth",
-        "7": "seventh",
-        "8": "eighth",
-        "9": "ninth",
-        "10": "tenth",
-        "11": "eleventh",
-        "12": "twelfth",
-        "13": "thirteenth",
-        "14": "fourteenth",
-        "15": "fifteenth",
-        "16": "sixteenth",
-        "17": "seventeenth",
-        "18": "eighteenth",
-        "19": "nineteenth",
-        "20": "twentieth",
-        "21": "twenty-first",
-        "22": "twenty-second",
-        "23": "twenty-third",
-        "24": "twenty-fourth",
-        "25": "twenty-fifth",
-        "26": "twenty-sixth",
-        "27": "twenty-seventh",
-        "28": "twenty-eighth",
-        "29": "twenty-ninth",
-        "30": "thirtieth",
-        "31": "thirty-first",
-    }
-
     def _expand_ordinals(self, text: str) -> str:
         def _replace(m: re.Match) -> str:
-            num = m.group(1) or ""
-            return self._ORDINAL_MAP.get(num, m.group(0) or "")
+            return _ordinal(_num2words(int(m.group(1))))
 
         return _RE_ORDINALS.sub(_replace, text)
 
@@ -207,21 +176,15 @@ class VoiceCleaner:
     # Numbers: 123 → one hundred and twenty-three
     # ------------------------------------------------------------------
     def _expand_numbers(self, text: str) -> str:
-        converter = _num2words
-        if converter is None:
-            return text
-
         def _replace(m: re.Match) -> str:
             raw = m.group(0)
             try:
                 if "." in raw:
-                    return converter(float(raw))
-                return converter(int(raw))
+                    return _num2words(float(raw))
+                return _num2words(int(raw))
             except (ValueError, OverflowError):
                 return raw
 
-        # Match standalone numbers (integers and decimals), but not those
-        # already part of a word or time format (10:30)
         return _RE_NUMBERS.sub(_replace, text)
 
     # ------------------------------------------------------------------
