@@ -12,6 +12,7 @@ function debounce(fn, ms) {
 }
 
 const DEFAULT_DEBOUNCE_MS = 1500;
+const DEFAULT_BARGE_IN_MIN_CHARS = 20;
 
 /**
  * Creates a zustand store that owns all voice-agent orchestration.
@@ -115,7 +116,7 @@ function createVoiceStore() {
       const text = msg.transcript?.trim();
       if (!text) return;
 
-      if (deps.speakingRef.current) {
+      if (deps.speakingRef.current && text.length >= deps.bargeInMinChars) {
         get().bargeIn();
         setStatus("Listening...", "listening");
       }
@@ -149,8 +150,10 @@ function createVoiceStore() {
 
       recording = false;
       busy = false;
-      set({ isRecording: false });
+      set({ isRecording: false, messages: [] });
       setStatus("Click microphone to start");
+
+      fetch(`${deps.baseUrl}/reset`, { method: "POST" }).catch(() => {});
     },
 
     startRecording: async () => {
@@ -199,6 +202,7 @@ export function useVoiceAgent({
   baseUrl = "",
   debounceMs = DEFAULT_DEBOUNCE_MS,
   autoGreet = true,
+  bargeInMinChars = DEFAULT_BARGE_IN_MIN_CHARS,
 } = {}) {
   const useStoreRef = useRef(null);
   if (!useStoreRef.current) useStoreRef.current = createVoiceStore();
@@ -209,7 +213,7 @@ export function useVoiceAgent({
 
   // Keep external deps current every render
   useStore.getState()._setDeps({
-    baseUrl, autoGreet,
+    baseUrl, autoGreet, bargeInMinChars,
     sttConnect, startCapture, sttDisconnect, sendClear,
     readStream, stopPlayback, speakingRef,
   });

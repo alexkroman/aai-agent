@@ -1,14 +1,12 @@
 import { useRef, useCallback, useEffect } from "react";
 import { parseNDJSON } from "./ndjson";
 
-function decodeBase64PCM(data) {
+function decodeBase64PCMRaw(data) {
   const bin = atob(data);
-  const pcm = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) pcm[i] = bin.charCodeAt(i);
-  const int16 = new Int16Array(pcm.buffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
-  return float32;
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const sampleCount = (bin.length & ~1) >> 1;
+  return { int16: new Int16Array(bytes.buffer, 0, sampleCount), sampleCount };
 }
 
 /**
@@ -29,7 +27,6 @@ export function useTTSPlayback() {
 
   const readStream = useCallback(
     async (resp, { onReply, onSpeaking, onDone } = {}) => {
-      let ttsCtx = null;
       let nextTime = 0;
       let sampleRate = 24000;
 
@@ -38,17 +35,24 @@ export function useTTSPlayback() {
           if (msg.sample_rate) sampleRate = msg.sample_rate;
           if (onReply) onReply(msg);
         } else if (msg.type === "audio") {
+          let ttsCtx = ttsContextRef.current;
           if (!ttsCtx || ttsCtx.state === "closed") {
             ttsCtx = new AudioContext({ sampleRate });
             ttsContextRef.current = ttsCtx;
             speakingRef.current = true;
             nextTime = ttsCtx.currentTime;
             if (onSpeaking) onSpeaking();
+          } else if (ttsCtx.state === "suspended") {
+            await ttsCtx.resume();
+            speakingRef.current = true;
+            nextTime = ttsCtx.currentTime;
+            if (onSpeaking) onSpeaking();
           }
 
-          const float32 = decodeBase64PCM(msg.data);
-          const buffer = ttsCtx.createBuffer(1, float32.length, ttsCtx.sampleRate);
-          buffer.getChannelData(0).set(float32);
+          const { int16, sampleCount } = decodeBase64PCMRaw(msg.data);
+          const buffer = ttsCtx.createBuffer(1, sampleCount, ttsCtx.sampleRate);
+          const channel = buffer.getChannelData(0);
+          for (let i = 0; i < sampleCount; i++) channel[i] = int16[i] / 32768;
 
           const source = ttsCtx.createBufferSource();
           source.buffer = buffer;
@@ -57,13 +61,12 @@ export function useTTSPlayback() {
           const startTime = Math.max(ttsCtx.currentTime, nextTime);
           source.start(startTime);
           nextTime = startTime + buffer.duration;
-        } else if (msg.type === "done" && ttsCtx && ttsCtx.state !== "closed") {
+        } else if (msg.type === "done") {
+          const ttsCtx = ttsContextRef.current;
+          if (!ttsCtx || ttsCtx.state === "closed") continue;
           const endDelay = Math.max(0, nextTime - ttsCtx.currentTime);
-          const ctx = ttsCtx;
           setTimeout(() => {
-            if (ttsContextRef.current === ctx) {
-              ctx.close();
-              ttsContextRef.current = null;
+            if (ttsContextRef.current === ttsCtx) {
               speakingRef.current = false;
               if (onDone) onDone();
             }

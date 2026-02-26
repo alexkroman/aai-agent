@@ -20,6 +20,7 @@ class AssemblyAISTT:
     def __init__(self, api_key: str, config: STTConfig | None = None):
         self.api_key = api_key
         self.config = config or STTConfig()
+        self._client = httpx.AsyncClient(timeout=30.0)
 
     async def create_token(self) -> str:
         """Create an ephemeral streaming token.
@@ -27,14 +28,13 @@ class AssemblyAISTT:
         Returns:
             A temporary token for browser-side WebSocket connections.
         """
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                TOKEN_URL,
-                headers={"Authorization": self.api_key},
-                params={"expires_in_seconds": self.config.token_expires_in},
-            )
-            resp.raise_for_status()
-            return resp.json()["token"]
+        resp = await self._client.get(
+            TOKEN_URL,
+            headers={"Authorization": self.api_key},
+            params={"expires_in_seconds": self.config.token_expires_in},
+        )
+        resp.raise_for_status()
+        return resp.json()["token"]
 
     @property
     def sample_rate(self) -> int:
@@ -47,3 +47,7 @@ class AssemblyAISTT:
     @property
     def speech_model(self) -> str:
         return self.config.speech_model
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()

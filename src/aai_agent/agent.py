@@ -18,7 +18,13 @@ from smolagents.tools import Tool
 from .stt import AssemblyAISTT
 from .tools import AskUserTool, resolve_tools
 from .tts import RimeTTS
-from .types import FallbackAnswerPrompt, STTConfig, StreamingToken, TTSConfig, VoiceResponse
+from .types import (
+    FallbackAnswerPrompt,
+    STTConfig,
+    StreamingToken,
+    TTSConfig,
+    VoiceResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +53,6 @@ VOICE_RULES = (
     "Write your answer exactly as you would say it out loud to a friend. "
     "One to two sentences max. No markdown, no bullet points, no numbered lists, no code. "
     "Sound like a human talking, not a document."
-    "\n\nTTS Text Formatting Rules (follow these exactly):"
-    "\n- Use commas for slight pauses, periods for longer pauses."
-    "\n- Write numbers as digits: 123, $7.95, 70°F, 100%."
-    "\n- Write dates as: October 12, 2024. Write times as: 10:30 AM."
-    "\n- Write phone numbers with dashes: 555-772-9140."
-    "\n- Spell out initialisms with periods and spaces: u. s. a., f. b. i., a. i."
-    "\n- Common abbreviations like Dr., St., Rd. are fine as-is."
-    "\n- Never use markdown symbols: no *, #, [], (), >, or ```. No URLs."
-    "\n- Use punctuation expressively: ? for questions, ?! for excited questions, "
-    "... for trailing off."
 )
 
 DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I help you with?"
@@ -71,11 +67,10 @@ FALLBACK_ANSWER_PROMPT = FallbackAnswerPrompt(
         "{{task}}\n\n"
         "Your answer will be read aloud by a text-to-speech system. "
         "Keep it to one or two sentences. Talk like a real person would — "
-        "no lists, no formatting, no jargon. Just give them the answer directly. "
-        "Write numbers as digits, spell out initialisms with periods and spaces "
-        "(like u. s. a.), and use commas for pauses."
+        "no lists, no formatting, no jargon. Just give them the answer directly."
     ),
 )
+
 
 class VoiceAgent:
     """A voice-first AI agent backed by AssemblyAI STT, Rime TTS, and smolagents.
@@ -140,6 +135,7 @@ class VoiceAgent:
     ):
         try:
             from dotenv import load_dotenv
+
             load_dotenv()
         except ImportError:
             pass
@@ -176,7 +172,9 @@ class VoiceAgent:
 
         self._step_log = threading.local()
         self._agent: ToolCallingAgent | None = None
-        self._saved_memory_steps: list[TaskStep | ActionStep | PlanningStep] | None = None
+        self._saved_memory_steps: list[TaskStep | ActionStep | PlanningStep] | None = (
+            None
+        )
         self._current_task: asyncio.Task | None = None
 
     def _build_agent(self) -> ToolCallingAgent:
@@ -197,7 +195,9 @@ class VoiceAgent:
             instructions=self._instructions + self._voice_rules,
             step_callbacks=[self._on_step, *self._step_callbacks],
         )
-        agent.prompt_templates["final_answer"] = self._fallback_answer_prompt.model_dump()  # type: ignore[assignment]
+        agent.prompt_templates["final_answer"] = (
+            self._fallback_answer_prompt.model_dump()
+        )  # type: ignore[assignment]
         return agent
 
     def _invalidate_agent(self) -> None:
@@ -355,13 +355,15 @@ class VoiceAgent:
         """
         token = await self.stt.create_token()
         cfg = self.stt.config
-        params = urlencode({
-            "sample_rate": cfg.sample_rate,
-            "speech_model": cfg.speech_model,
-            "token": token,
-            "format_turns": str(cfg.format_turns).lower(),
-            "end_of_turn_confidence_threshold": cfg.end_of_turn_confidence_threshold,
-        })
+        params = urlencode(
+            {
+                "sample_rate": cfg.sample_rate,
+                "speech_model": cfg.speech_model,
+                "token": token,
+                "format_turns": str(cfg.format_turns).lower(),
+                "end_of_turn_confidence_threshold": cfg.end_of_turn_confidence_threshold,
+            }
+        )
         return StreamingToken(
             wss_url=f"{cfg.wss_base}?{params}",
             sample_rate=cfg.sample_rate,

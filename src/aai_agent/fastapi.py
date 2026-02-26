@@ -176,6 +176,14 @@ def create_voice_router(
         await agent.cancel()
         return {"status": "cancelled"}
 
+    @router.post("/reset")
+    async def reset(request: Request, response: Response):
+        """Reset the session, clearing agent conversation history."""
+        sid = _session_id(request, response)
+        await _cancel_active(sid)
+        agent_manager.remove(sid)
+        return {"status": "reset"}
+
     return router
 
 

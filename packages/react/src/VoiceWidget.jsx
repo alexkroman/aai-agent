@@ -12,11 +12,13 @@ import { useVoiceAgent } from "./useVoiceAgent";
  * @param {number} [props.debounceMs=1500]  Silence debounce (ms)
  * @param {boolean} [props.autoGreet=true]  Play greeting on connect
  * @param {string} [props.title="Voice Assistant"]  Header title
+ * @param {number} [props.bargeInMinChars=20]  Min transcript chars before barge-in
  */
 export function VoiceWidget({
   baseUrl,
   debounceMs,
   autoGreet,
+  bargeInMinChars,
   title = "Voice Assistant",
 }) {
   const {
@@ -24,7 +26,7 @@ export function VoiceWidget({
     statusClass,
     isRecording,
     toggleRecording,
-  } = useVoiceAgent({ baseUrl, debounceMs, autoGreet });
+  } = useVoiceAgent({ baseUrl, debounceMs, autoGreet, bargeInMinChars });
 
   const endRef = useRef(null);
 

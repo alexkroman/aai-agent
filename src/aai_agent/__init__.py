@@ -9,8 +9,12 @@ from .agent import (
 )
 from .manager import VoiceAgentManager
 from .stt import AssemblyAISTT
+from smolagents.tools import Tool
+
+from .tools import KnowledgeBaseTool, WebTool
 from .tts import RimeTTS
 from .types import FallbackAnswerPrompt, STTConfig, StreamingToken, TTSConfig, VoiceResponse
+from .voice_cleaner import VoiceCleaner
 
 __all__ = [
     "DEFAULT_GREETING",
@@ -26,4 +30,8 @@ __all__ = [
     "TTSConfig",
     "VoiceResponse",
     "VOICE_RULES",
+    "Tool",
+    "KnowledgeBaseTool",
+    "WebTool",
+    "VoiceCleaner",
 ]

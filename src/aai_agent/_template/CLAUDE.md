@@ -79,18 +79,44 @@ app = create_voice_app(agent_manager=manager)
 
 ### TTSConfig Options (Voice)
 
+**Do not change the Rime TTS defaults** (`model="arcana"`, `sample_rate=24000`, `speed=1.15`, `max_tokens=1200`). These are tuned for low-latency voice agent use. The only setting you should change is `speaker` to pick a different voice.
+
 ```python
-TTSConfig(
-    speaker="luna",          # Voice name
-    model="arcana",          # TTS model
-    sample_rate=24000,       # Audio sample rate
-    speed=1.15,              # Playback speed
-    repetition_penalty=1.5,
-    temperature=0.5,
-    top_p=1.0,
-    max_tokens=1200,
-)
+TTSConfig(speaker="celeste")  # just change the voice
 ```
+
+#### Rime Arcana Voices
+
+Flagship English voices (pass any of these as the `speaker` value):
+
+| Voice | Gender | Age | Accent |
+|-------|--------|-----|--------|
+| `lintel` (default) | Female | Young adult | American |
+| `luna` | Female | Young adult | American |
+| `lyra` | Female | Young adult | American |
+| `celeste` | Female | Young adult | American |
+| `estelle` | Female | Young adult | American |
+| `oculus` | Female | Young adult | American |
+| `transom` | Female | Young adult | American |
+| `astra` | Female | Young adult | American |
+| `moss` | Female | Adult | Singaporean |
+| `vashti` | Female | Adult | British |
+| `eucalyptus` | Female | Young adult | Australian |
+| `fern` | Male | Young adult | American |
+| `sirius` | Male | Young adult | American |
+| `eliphas` | Male | Young adult | American |
+| `walnut` | Male | Young adult | American |
+| `stucco` | Male | Young adult | American |
+| `truss` | Male | Young adult | American |
+| `bond` | Male | Adult | American |
+| `cupola` | Male | Adult | American |
+| `atrium` | Male | Adult | American |
+| `parapet` | Male | Adult | American |
+| `masonry` | Male | Adult | American |
+| `pilaster` | Male | Adult | American |
+| `marlu` | Male | Adult | Australian |
+
+There are 200+ additional voices available. See the full list at https://docs.rime.ai/api-reference/voices
 
 ### STTConfig Options (Speech-to-Text)
 
@@ -134,8 +160,21 @@ Voice-First Rules:
 ```
 CRITICAL: When you call final_answer, your answer will be spoken aloud by a
 TTS system. Write your answer exactly as you would say it out loud to a friend.
-Two to three sentences max. No markdown, no bullet points, no numbered lists,
+One to two sentences max. No markdown, no bullet points, no numbered lists,
 no code. Sound like a human talking, not a document.
+
+TTS Text Formatting Rules (follow these exactly):
+- Use commas for slight pauses, periods for longer pauses.
+- Write numbers as digits: 123, $7.95, 70°F, 100%.
+- Write dates as: October 12, 2024. Write times as: 10:30 AM.
+- Write phone numbers with dashes: 555-772-9140.
+- ALWAYS spell out acronyms letter by letter with periods and spaces.
+  SDK → S. D. K., API → A. P. I., USA → U. S. A., AI → A. I.
+  Never write bare acronyms.
+- Common abbreviations like Dr., St., Rd. are fine as-is.
+- Never use markdown symbols: no *, #, [], (), >, or ```. No URLs.
+- Use punctuation expressively: ? for questions, ?! for excited questions,
+  ... for trailing off.
 ```
 Pass `voice_rules=""` to disable.
 

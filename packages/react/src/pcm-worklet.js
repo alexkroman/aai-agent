@@ -6,22 +6,21 @@ const PCM_WORKLET_SOURCE = /* js */ `
 class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._buf = [];
-    this._len = 0;
     this._target = 1600;
+    this._buf = new Int16Array(this._target);
+    this._pos = 0;
   }
   process(inputs) {
     const ch = inputs[0]?.[0];
     if (!ch) return true;
     for (let i = 0; i < ch.length; i++) {
       const s = Math.max(-1, Math.min(1, ch[i]));
-      this._buf.push(s < 0 ? s * 0x8000 : s * 0x7fff);
-      this._len++;
-    }
-    if (this._len >= this._target) {
-      const pcm = new Int16Array(this._buf.splice(0, this._target));
-      this._len -= this._target;
-      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+      this._buf[this._pos++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (this._pos >= this._target) {
+        this.port.postMessage(this._buf.buffer, [this._buf.buffer]);
+        this._buf = new Int16Array(this._target);
+        this._pos = 0;
+      }
     }
     return true;
   }

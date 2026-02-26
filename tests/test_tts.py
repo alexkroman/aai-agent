@@ -1,6 +1,6 @@
 """Tests for aai_agent.tts."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -37,17 +37,24 @@ class TestRimeTTS:
         mock_response.aiter_bytes = mock_aiter_bytes
 
         mock_stream_ctx = make_async_context_mock(__aenter__=mock_response)
-        mock_client = make_async_context_mock(
-            stream=MagicMock(return_value=mock_stream_ctx),
-        )
+        tts._client = MagicMock()
+        tts._client.stream = MagicMock(return_value=mock_stream_ctx)
 
-        with patch("aai_agent.tts.httpx.AsyncClient", return_value=mock_client):
-            result = await tts.synthesize("Hello world")
+        result = await tts.synthesize("Hello world")
 
         assert result == b"RIFFdata"
-        mock_client.stream.assert_called_once()
-        call_kwargs = mock_client.stream.call_args.kwargs
+        tts._client.stream.assert_called_once()
+        call_kwargs = tts._client.stream.call_args.kwargs
         assert call_kwargs["method"] == "POST"
         assert call_kwargs["url"] == RIME_API_URL
         assert call_kwargs["json"]["text"] == "Hello world"
         assert call_kwargs["json"]["speaker"] == "lintel"
+
+    @pytest.mark.anyio
+    async def test_aclose(self):
+        tts = RimeTTS("test-key")
+        tts._client = MagicMock()
+        tts._client.aclose = AsyncMock()
+
+        await tts.aclose()
+        tts._client.aclose.assert_called_once()

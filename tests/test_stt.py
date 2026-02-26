@@ -1,13 +1,11 @@
 """Tests for aai_agent.stt."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aai_agent.stt import AssemblyAISTT, TOKEN_URL
 from aai_agent.types import STTConfig
-
-from helpers import make_async_context_mock
 
 
 class TestAssemblyAISTT:
@@ -37,16 +35,23 @@ class TestAssemblyAISTT:
         mock_response.json.return_value = {"token": "ephemeral-token"}
         mock_response.raise_for_status = MagicMock()
 
-        mock_client = make_async_context_mock(
-            get=AsyncMock(return_value=mock_response),
-        )
+        stt._client = MagicMock()
+        stt._client.get = AsyncMock(return_value=mock_response)
 
-        with patch("aai_agent.stt.httpx.AsyncClient", return_value=mock_client):
-            token = await stt.create_token()
+        token = await stt.create_token()
 
         assert token == "ephemeral-token"
-        mock_client.get.assert_called_once_with(
+        stt._client.get.assert_called_once_with(
             TOKEN_URL,
             headers={"Authorization": "test-key"},
             params={"expires_in_seconds": 480},
         )
+
+    @pytest.mark.anyio
+    async def test_aclose(self):
+        stt = AssemblyAISTT("test-key")
+        stt._client = MagicMock()
+        stt._client.aclose = AsyncMock()
+
+        await stt.aclose()
+        stt._client.aclose.assert_called_once()

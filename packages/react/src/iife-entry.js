@@ -13,6 +13,7 @@ class AAIVoiceAgentElement extends HTMLElement {
     const title = this.getAttribute("title") || "Voice Assistant";
     const debounceMs = Number(this.getAttribute("debounce-ms")) || undefined;
     const autoGreet = this.getAttribute("auto-greet") !== "false";
+    const bargeInMinChars = Number(this.getAttribute("barge-in-min-chars")) || undefined;
 
     const container = document.createElement("div");
     container.style.width = this.getAttribute("width") || "420px";
@@ -20,7 +21,7 @@ class AAIVoiceAgentElement extends HTMLElement {
     this.appendChild(container);
 
     ReactDOM.createRoot(container).render(
-      React.createElement(VoiceWidget, { baseUrl, title, debounceMs, autoGreet }),
+      React.createElement(VoiceWidget, { baseUrl, title, debounceMs, autoGreet, bargeInMinChars }),
     );
   }
 }
