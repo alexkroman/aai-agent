@@ -6,12 +6,17 @@ export default defineConfig({
   plugins: [react()],
   build: {
     lib: {
-      entry: resolve(__dirname, "src/index.js"),
+      entry: resolve(__dirname, "src/index.ts"),
       formats: ["es"],
       fileName: "index",
     },
     rollupOptions: {
       external: ["react", "react-dom", "react/jsx-runtime"],
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./tests/setup.ts"],
   },
 });

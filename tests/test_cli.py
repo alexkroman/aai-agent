@@ -1,6 +1,5 @@
 """Tests for aai_agent.cli."""
 
-
 from typer.testing import CliRunner
 
 from aai_agent.cli import app
@@ -33,7 +32,7 @@ class TestInit:
         target = tmp_path / "proj"
         runner.invoke(app, ["init", str(target)])
         req = (target / "requirements.txt").read_text()
-        assert req.startswith("-e ")
+        assert req.startswith("aai-agent")
 
     def test_refuses_overwrite_without_force(self, tmp_path):
         target = tmp_path / "proj"

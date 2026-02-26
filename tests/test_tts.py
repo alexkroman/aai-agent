@@ -25,8 +25,6 @@ class TestRimeTTS:
 
     @pytest.mark.anyio
     async def test_synthesize(self):
-        tts = RimeTTS("test-key")
-
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
@@ -37,14 +35,15 @@ class TestRimeTTS:
         mock_response.aiter_bytes = mock_aiter_bytes
 
         mock_stream_ctx = make_async_context_mock(__aenter__=mock_response)
-        tts._client = MagicMock()
-        tts._client.stream = MagicMock(return_value=mock_stream_ctx)
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+        tts = RimeTTS("test-key", client=mock_client)
 
         result = await tts.synthesize("Hello world")
 
         assert result == b"RIFFdata"
-        tts._client.stream.assert_called_once()
-        call_kwargs = tts._client.stream.call_args.kwargs
+        mock_client.stream.assert_called_once()
+        call_kwargs = mock_client.stream.call_args.kwargs
         assert call_kwargs["method"] == "POST"
         assert call_kwargs["url"] == RIME_API_URL
         assert call_kwargs["json"]["text"] == "Hello world"
@@ -52,9 +51,17 @@ class TestRimeTTS:
 
     @pytest.mark.anyio
     async def test_aclose(self):
-        tts = RimeTTS("test-key")
-        tts._client = MagicMock()
-        tts._client.aclose = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.aclose = AsyncMock()
+        tts = RimeTTS("test-key", client=mock_client)
 
         await tts.aclose()
-        tts._client.aclose.assert_called_once()
+        mock_client.aclose.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_async_context_manager(self):
+        mock_client = MagicMock()
+        mock_client.aclose = AsyncMock()
+        async with RimeTTS("test-key", client=mock_client) as tts:
+            assert tts.api_key == "test-key"
+        mock_client.aclose.assert_called_once()

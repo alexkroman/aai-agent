@@ -17,6 +17,7 @@ DEFAULT_EMBEDDING_MODEL = "multi-qa-MiniLM-L6-cos-v1"
 # Text cleaning
 # ---------------------------------------------------------------------------
 
+
 def _table_to_prose(match: re.Match) -> str:
     """Convert a markdown table into natural-language sentences."""
     lines = match.group(0).strip().split("\n")
@@ -52,7 +53,10 @@ def clean_text(text: str) -> str:
     text = re.sub(r"^'[^']+':.*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"^(#{1,4})\s+title:\s*", r"\1 ", text, flags=re.MULTILINE)
     text = re.sub(
-        r"(?:^\|.+\|[ ]*\n){2,}", _table_to_prose, text, flags=re.MULTILINE,
+        r"(?:^\|.+\|[ ]*\n){2,}",
+        _table_to_prose,
+        text,
+        flags=re.MULTILINE,
     )
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -62,6 +66,7 @@ def clean_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Chunking
 # ---------------------------------------------------------------------------
+
 
 def _split_sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+(?=[A-Z\n])", text)
@@ -74,7 +79,17 @@ def _is_faq_title(title: str) -> bool:
         and (
             "?" in title
             or title.lower().startswith(
-                ("how ", "what ", "can ", "do ", "does ", "is ", "why ", "when ", "where ")
+                (
+                    "how ",
+                    "what ",
+                    "can ",
+                    "do ",
+                    "does ",
+                    "is ",
+                    "why ",
+                    "when ",
+                    "where ",
+                )
             )
         )
     )
@@ -197,6 +212,7 @@ def chunk_text(
 # Fetching llms-full.txt
 # ---------------------------------------------------------------------------
 
+
 def _split_llms_full(text: str) -> list[dict]:
     """Split an llms-full.txt document into per-page dicts."""
     raw_pages = re.split(r"\n\*{3}\s*\n", text)
@@ -211,12 +227,17 @@ def _split_llms_full(text: str) -> list[dict]:
         page_title = title_match.group(1).strip() if title_match else ""
 
         body = re.sub(
-            r"^---\s*\n.*?\n---\s*\n?", "", raw, flags=re.DOTALL | re.MULTILINE,
+            r"^---\s*\n.*?\n---\s*\n?",
+            "",
+            raw,
+            flags=re.DOTALL | re.MULTILINE,
         )
         body = re.sub(
             r"^(title|layout|hide-feedback|hide-nav-links|subtitle|description"
             r"|'[^']+'):.*$",
-            "", body, flags=re.MULTILINE,
+            "",
+            body,
+            flags=re.MULTILINE,
         )
         body = re.sub(r"^-{20,}\s*$", "", body, flags=re.MULTILINE)
         body = body.strip()
@@ -228,6 +249,7 @@ def _split_llms_full(text: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # KnowledgeBaseIndexer
 # ---------------------------------------------------------------------------
+
 
 class KnowledgeBaseIndexer:
     """Build and populate a ChromaDB collection for use with KnowledgeBaseTool.
@@ -366,7 +388,9 @@ class KnowledgeBaseIndexer:
         self._add_chunks(collection, all_chunks)
         logger.info(
             "Indexed %d chunks into '%s' at %s",
-            len(all_chunks), self._collection_name, self._path,
+            len(all_chunks),
+            self._collection_name,
+            self._path,
         )
         return len(all_chunks)
 
@@ -403,6 +427,8 @@ class KnowledgeBaseIndexer:
 
         logger.info(
             "Indexed %d texts into '%s' at %s",
-            len(texts), self._collection_name, self._path,
+            len(texts),
+            self._collection_name,
+            self._path,
         )
         return len(texts)

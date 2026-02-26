@@ -1,0 +1,169 @@
+declare const __brand: unique symbol;
+type Brand<T, B extends string> = T & { readonly [__brand]: B };
+
+/** Opaque identifier for messages — only created by `addMessage`. */
+export type MessageId = Brand<string, "MessageId">;
+
+/** Create a MessageId from a plain string (useful in tests). */
+export function createMessageId(s: string = crypto.randomUUID()): MessageId {
+  return s as MessageId;
+}
+
+export interface Message {
+  readonly id: MessageId;
+  readonly text: string;
+  readonly role: "user" | "assistant";
+  readonly type: "message" | "thinking";
+}
+
+export type MessageRole = Message["role"];
+export type MessageType = Message["type"];
+export type StatusClass = "listening" | "processing" | "speaking" | "";
+
+export type VoiceAgentErrorCode =
+  | "mic_denied"
+  | "connection_failed"
+  | "chat_error"
+  | "websocket_closed"
+  | "reconnect_failed";
+
+export interface VoiceAgentError {
+  readonly code: VoiceAgentErrorCode;
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+export interface VoiceAgentOptions {
+  baseUrl?: string;
+  debounceMs?: number;
+  autoGreet?: boolean;
+  bargeInMinChars?: number;
+  enableBargeIn?: boolean;
+  maxMessages?: number;
+  reconnect?: boolean;
+  maxReconnectAttempts?: number;
+  fetchTimeout?: number;
+  onError?: (error: VoiceAgentError) => void;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onBargeIn?: () => void;
+  onTurnStart?: (text: string) => void;
+  onTurnEnd?: (text: string) => void;
+}
+
+export interface VoiceAgentResult {
+  readonly messages: readonly Message[];
+  readonly error: VoiceAgentError | null;
+  readonly statusClass: StatusClass;
+  readonly isRecording: boolean;
+  readonly toggleRecording: () => void;
+  readonly sendMessage: (text: string) => Promise<void>;
+  readonly clearMessages: () => void;
+}
+
+export interface STTHandlers {
+  onMessage?: (msg: AAIMessage) => void;
+  onUnexpectedClose?: () => void;
+}
+
+export interface TTSStreamHandlers {
+  onReply?: (msg: ReplyMessage) => void;
+  onSpeaking?: () => void;
+  onDone?: () => void;
+}
+
+export interface ReplyMessage {
+  readonly type: "reply";
+  readonly text: string;
+  readonly sample_rate?: number;
+}
+
+export interface AudioMessage {
+  readonly type: "audio";
+  readonly data: string;
+}
+
+export interface DoneMessage {
+  readonly type: "done";
+}
+
+export type StreamMessage = ReplyMessage | AudioMessage | DoneMessage;
+
+export interface AAIMessage {
+  readonly type: string;
+  readonly transcript?: string;
+  readonly turn_is_formatted?: boolean;
+}
+
+export interface TokensResponse {
+  readonly wss_url: string;
+  readonly sample_rate: number;
+}
+
+export interface VoiceDeps {
+  readonly baseUrl: string;
+  readonly autoGreet: boolean;
+  readonly bargeInMinChars: number;
+  readonly enableBargeIn: boolean;
+  readonly maxMessages: number;
+  readonly reconnect: boolean;
+  readonly maxReconnectAttempts: number;
+  readonly fetchTimeout: number;
+  readonly sttConnect: (
+    url: string,
+    handlers?: STTHandlers,
+  ) => Promise<WebSocket>;
+  readonly startCapture: (sampleRate: number) => Promise<void>;
+  readonly sttDisconnect: () => void;
+  readonly sendClear: () => void;
+  readonly readStream: (
+    resp: Response,
+    handlers?: TTSStreamHandlers,
+  ) => Promise<void>;
+  readonly stopPlayback: () => void;
+  readonly speakingRef: { current: boolean };
+  readonly onError?: (error: VoiceAgentError) => void;
+  readonly onConnect?: () => void;
+  readonly onDisconnect?: () => void;
+  readonly onBargeIn?: () => void;
+  readonly onTurnStart?: (text: string) => void;
+  readonly onTurnEnd?: (text: string) => void;
+}
+
+export interface VoiceStoreState {
+  messages: Message[];
+  statusText: string;
+  statusClass: StatusClass;
+  isRecording: boolean;
+  error: VoiceAgentError | null;
+  _setDeps: (deps: VoiceDeps) => void;
+  _initDebounce: (ms: number) => void;
+  addMessage: (
+    text: string,
+    role: MessageRole,
+    type?: MessageType,
+  ) => MessageId;
+  removeMessage: (id: MessageId) => void;
+  clearMessages: () => void;
+  bargeIn: () => void;
+  sendTurnToAgent: () => Promise<void>;
+  sendMessage: (text: string) => Promise<void>;
+  handleAAIMessage: (msg: AAIMessage) => void;
+  greet: () => Promise<void>;
+  reconnectSTT: () => Promise<void>;
+  stopRecording: () => void;
+  startRecording: () => Promise<void>;
+  toggleRecording: () => void;
+}
+
+export interface PCMDecodeResult {
+  readonly int16: Int16Array;
+  readonly sampleCount: number;
+}
+
+/** Runtime type guard for NDJSON stream messages. */
+export function isStreamMessage(raw: unknown): raw is StreamMessage {
+  if (typeof raw !== "object" || raw === null) return false;
+  const obj = raw as { type?: unknown };
+  return obj.type === "reply" || obj.type === "audio" || obj.type === "done";
+}

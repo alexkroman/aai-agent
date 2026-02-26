@@ -23,9 +23,7 @@ def init(
     directory: str = typer.Argument(
         ".", help="Target directory (defaults to current directory)"
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Overwrite existing files"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
 ):
     """Scaffold a new voice agent project.
 
@@ -81,7 +79,9 @@ def start(
     host: str = typer.Option("", "--host", "-h", help="Bind host"),
     port: int = typer.Option(0, "--port", "-p", help="Bind port"),
     reload: bool = typer.Option(False, help="Enable auto-reload"),
-    prod: bool = typer.Option(False, "--prod", help="Production mode (0.0.0.0, no reload)"),
+    prod: bool = typer.Option(
+        False, "--prod", help="Production mode (0.0.0.0, no reload)"
+    ),
 ):
     """Start the voice agent server.
 
@@ -95,7 +95,9 @@ def start(
     import uvicorn
 
     # Auto-detect production environment
-    is_prod = prod or os.environ.get("FLY_APP_NAME") or os.environ.get("RAILWAY_ENVIRONMENT")
+    is_prod = (
+        prod or os.environ.get("FLY_APP_NAME") or os.environ.get("RAILWAY_ENVIRONMENT")
+    )
 
     if not host:
         host = "0.0.0.0" if is_prod else "localhost"
@@ -118,6 +120,7 @@ def start(
 # Deploy command
 # ---------------------------------------------------------------------------
 
+
 def _detect_project(cwd: Path) -> dict:
     """Detect the project structure to generate appropriate deploy files."""
     return {
@@ -125,6 +128,7 @@ def _detect_project(cwd: Path) -> dict:
         "has_requirements": (cwd / "requirements.txt").exists(),
         "has_uv_lock": (cwd / "uv.lock").exists(),
         "has_index_docs": (cwd / "index_docs.py").exists(),
+        "has_chroma_db": (cwd / "chroma_db").is_dir(),
         "has_static": (cwd / "static").is_dir(),
     }
 
@@ -145,13 +149,19 @@ def _generate_dockerfile(project: dict, port: int) -> str:
         "",
     ]
 
-    # Dependency install step — detect pyproject.toml vs requirements.txt
+    # Install CPU-only PyTorch first to avoid pulling ~4GB of CUDA libraries
+    lines += [
+        "# Install CPU-only PyTorch first (prevents ~4GB of CUDA libraries)",
+        "RUN uv pip install --system --no-cache \\",
+        "    torch --index-url https://download.pytorch.org/whl/cpu",
+        "",
+    ]
+
+    # Dependency install step
     if project["has_pyproject"]:
-        lock = " uv.lock" if project["has_uv_lock"] else ""
         lines += [
-            f"COPY pyproject.toml{lock} ./",
-            "RUN uv sync --frozen --no-dev" if project["has_uv_lock"]
-            else "RUN uv sync --no-dev",
+            "COPY pyproject.toml ./",
+            "RUN uv pip install --system --no-cache .",
             "",
         ]
     elif project["has_requirements"]:
@@ -171,11 +181,21 @@ def _generate_dockerfile(project: dict, port: int) -> str:
     lines.append("COPY . .")
     lines.append("")
 
-    # If index_docs.py exists, add the indexing step
+    # If index_docs.py exists, run it; otherwise use aai-agent index if chroma_db is .dockerignored
     if project["has_index_docs"]:
         lines += [
-            "# Build the knowledge base index (fetches public docs, no API keys needed)",
-            "RUN uv run python index_docs.py",
+            "# Build the knowledge base index",
+            "RUN python index_docs.py",
+            "",
+        ]
+    elif project.get("has_chroma_db"):
+        lines += [
+            "# Build the knowledge base index",
+            "# TODO: replace URL and collection name with your own",
+            "RUN aai-agent index \\",
+            "    --url https://example.com/docs/llms-full.txt \\",
+            "    --db ./chroma_db \\",
+            "    --collection knowledge_base",
             "",
         ]
 
@@ -184,7 +204,7 @@ def _generate_dockerfile(project: dict, port: int) -> str:
         "",
         f"ENV PORT={port}",
         "",
-        'CMD ["uv", "run", "aai-agent", "start", "--prod"]',
+        'CMD ["aai-agent", "start", "--prod"]',
         "",
     ]
 
@@ -207,10 +227,17 @@ primary_region = 'iad'
   min_machines_running = 1
   max_machines_running = 1
 
+[[http_service.checks]]
+  grace_period = "120s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
 [[vm]]
-  memory = '1gb'
+  memory = '2gb'
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2
 """
 
 
@@ -228,7 +255,9 @@ __pycache__/
 @app.command()
 def deploy(
     app_name: str = typer.Option(
-        "", "--app", "-a",
+        "",
+        "--app",
+        "-a",
         help="Fly.io app name (default: current directory name)",
     ),
     port: int = typer.Option(80, "--port", "-p", help="Server port"),
@@ -256,18 +285,14 @@ def deploy(
     project = _detect_project(cwd)
 
     # Generate and write files
-    (cwd / "Dockerfile").write_text(
-        _generate_dockerfile(project, port)
-    )
-    (cwd / "fly.toml").write_text(
-        _generate_fly_toml(app_name, port)
-    )
+    (cwd / "Dockerfile").write_text(_generate_dockerfile(project, port))
+    (cwd / "fly.toml").write_text(_generate_fly_toml(app_name, port))
     (cwd / ".dockerignore").write_text(_DOCKERIGNORE)
 
-    typer.echo(f"Generated deployment files for Fly.io:")
-    typer.echo(f"  Dockerfile")
+    typer.echo("Generated deployment files for Fly.io:")
+    typer.echo("  Dockerfile")
     typer.echo(f"  fly.toml (app: {app_name})")
-    typer.echo(f"  .dockerignore")
+    typer.echo("  .dockerignore")
     typer.echo()
     typer.echo("Next steps:")
     typer.echo("  flyctl auth login")
@@ -280,10 +305,14 @@ def deploy(
 # Index command
 # ---------------------------------------------------------------------------
 
+
 @app.command()
 def index(
     url: str = typer.Option(
-        ..., "--url", "-u", help="URL to fetch and index (plain text or llms-full.txt format)"
+        ...,
+        "--url",
+        "-u",
+        help="URL to fetch and index (plain text or llms-full.txt format)",
     ),
     db: str = typer.Option(
         "./chroma_db", "--db", "-d", help="Path to ChromaDB directory"
@@ -291,7 +320,9 @@ def index(
     collection: str = typer.Option(
         "knowledge_base", "--collection", "-c", help="Collection name"
     ),
-    chunk_size: int = typer.Option(800, "--chunk-size", help="Target characters per chunk"),
+    chunk_size: int = typer.Option(
+        800, "--chunk-size", help="Target characters per chunk"
+    ),
 ):
     """Fetch a URL and index its content into ChromaDB for KnowledgeBaseTool."""
     import logging

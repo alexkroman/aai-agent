@@ -28,7 +28,9 @@ DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
 )
 
 
-async def _stream_tts_response(tts: RimeTTS, text: str, *, steps: list[str] | None = None) -> AsyncIterator[str]:
+async def _stream_tts_response(
+    tts: RimeTTS, text: str, *, steps: list[str] | None = None
+) -> AsyncIterator[str]:
     """Generate NDJSON lines: reply, audio chunks, done."""
     reply = {"type": "reply", "text": text, "sample_rate": tts.config.sample_rate}
     if steps is not None:
@@ -37,10 +39,15 @@ async def _stream_tts_response(tts: RimeTTS, text: str, *, steps: list[str] | No
 
     try:
         async for chunk in tts.synthesize_stream(text):
-            yield json.dumps({
-                "type": "audio",
-                "data": base64.b64encode(chunk).decode(),
-            }) + "\n"
+            yield (
+                json.dumps(
+                    {
+                        "type": "audio",
+                        "data": base64.b64encode(chunk).decode(),
+                    }
+                )
+                + "\n"
+            )
     except asyncio.CancelledError:
         return
     except Exception:
@@ -96,8 +103,10 @@ def create_voice_router(
                 pass
         sid = secrets.token_hex(16)
         response.set_cookie(
-            COOKIE_NAME, signer.dumps(sid),
-            httponly=True, samesite="lax",
+            COOKIE_NAME,
+            signer.dumps(sid),
+            httponly=True,
+            samesite="lax",
         )
         return sid
 
@@ -123,7 +132,7 @@ def create_voice_router(
         sid = _session_id(request, response)
         agent = agent_manager.get_or_create(sid)
 
-        greeting_text = agent._greeting
+        greeting_text = agent.greeting
         if not greeting_text:
             return Response(status_code=204)
 
@@ -231,7 +240,7 @@ def create_voice_app(
         )
     """
     if agent_manager is None:
-        agent_manager = VoiceAgentManager(tools=tools or [])
+        agent_manager = VoiceAgentManager(tools=tools)  # type: ignore[arg-type]
 
     app = FastAPI()
 

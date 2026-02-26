@@ -38,11 +38,9 @@ def mock_agent():
     agent.create_streaming_token = AsyncMock(
         return_value=StreamingToken(wss_url="wss://example.com", sample_rate=16000)
     )
-    agent._greeting = "Hello!"
+    agent.greeting = "Hello!"
     agent.chat = AsyncMock(
-        return_value=VoiceResponse(
-            text="42", steps=["Using DuckDuckGoSearchTool"]
-        )
+        return_value=VoiceResponse(text="42", steps=["Using DuckDuckGoSearchTool"])
     )
     agent.cancel = AsyncMock()
 

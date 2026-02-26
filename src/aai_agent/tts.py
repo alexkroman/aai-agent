@@ -28,11 +28,12 @@ class RimeTTS:
         api_key: str,
         config: TTSConfig | None = None,
         cleaner: VoiceCleaner | None = None,
+        client: httpx.AsyncClient | None = None,
     ):
         self.api_key = api_key
         self.config = config or TTSConfig()
         self.cleaner = cleaner or VoiceCleaner()
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._client = client or httpx.AsyncClient(timeout=60.0)
 
     def _request_params(
         self, text: str, *, accept: str = "audio/wav"
@@ -90,3 +91,9 @@ class RimeTTS:
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+
+    async def __aenter__(self) -> RimeTTS:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()

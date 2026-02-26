@@ -7,7 +7,8 @@
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 8px 32px rgb(0 0 0 / 50%);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: #e0e0e0;
 }
 
@@ -39,8 +40,13 @@
   display: flex;
 }
 
-.aai-conversation::-webkit-scrollbar { width: 6px; }
-.aai-conversation::-webkit-scrollbar-track { background: transparent; }
+.aai-conversation::-webkit-scrollbar {
+  width: 6px;
+}
+
+.aai-conversation::-webkit-scrollbar-track {
+  background: transparent;
+}
 
 .aai-conversation::-webkit-scrollbar-thumb {
   background: #3a3a4a;
@@ -87,10 +93,21 @@
 }
 
 @keyframes aai-dots {
-  0%  { content: ""; }
-  25% { content: "."; }
-  50% { content: ".."; }
-  75% { content: "..."; }
+  0% {
+    content: "";
+  }
+
+  25% {
+    content: ".";
+  }
+
+  50% {
+    content: "..";
+  }
+
+  75% {
+    content: "...";
+  }
 }
 
 /* ── input area ────────────────────────────────────────────────────────── */
@@ -114,7 +131,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.3s, transform 0.15s;
+  transition:
+    background 0.3s,
+    transform 0.15s;
   position: relative;
 }
 
@@ -183,7 +202,9 @@
 }
 
 @keyframes aai-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Speaking: breathing glow */
@@ -214,6 +235,14 @@
   transition: color 0.3s;
 }
 
-.aai-status.aai-listening  { color: #e03131; }
-.aai-status.aai-processing { color: #f59f00; }
-.aai-status.aai-speaking   { color: #51cf66; }
+.aai-status.aai-listening {
+  color: #e03131;
+}
+
+.aai-status.aai-processing {
+  color: #f59f00;
+}
+
+.aai-status.aai-speaking {
+  color: #51cf66;
+}

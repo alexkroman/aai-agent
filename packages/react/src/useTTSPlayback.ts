@@ -1,20 +1,15 @@
 import { useRef, useCallback, useEffect } from "react";
+import { decodeBase64PCM } from "./pcm-decode";
 import { parseNDJSON } from "./ndjson";
-
-function decodeBase64PCMRaw(data) {
-  const bin = atob(data);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const sampleCount = (bin.length & ~1) >> 1;
-  return { int16: new Int16Array(bytes.buffer, 0, sampleCount), sampleCount };
-}
+import { isStreamMessage } from "./types";
+import type { TTSStreamHandlers } from "./types";
 
 /**
  * Hook that manages TTS audio playback from NDJSON streams.
  * Handles base64 PCM decoding and AudioContext buffer scheduling.
  */
 export function useTTSPlayback() {
-  const ttsContextRef = useRef(null);
+  const ttsContextRef = useRef<AudioContext | null>(null);
   const speakingRef = useRef(false);
 
   const stop = useCallback(() => {
@@ -26,15 +21,20 @@ export function useTTSPlayback() {
   }, []);
 
   const readStream = useCallback(
-    async (resp, { onReply, onSpeaking, onDone } = {}) => {
+    async (
+      resp: Response,
+      { onReply, onSpeaking, onDone }: TTSStreamHandlers = {},
+    ) => {
       let nextTime = 0;
       let sampleRate = 24000;
 
-      for await (const msg of parseNDJSON(resp)) {
-        if (msg.type === "reply") {
-          if (msg.sample_rate) sampleRate = msg.sample_rate;
-          if (onReply) onReply(msg);
-        } else if (msg.type === "audio") {
+      for await (const raw of parseNDJSON(resp)) {
+        if (!isStreamMessage(raw)) continue;
+
+        if (raw.type === "reply") {
+          if (raw.sample_rate) sampleRate = raw.sample_rate;
+          if (onReply) onReply(raw);
+        } else if (raw.type === "audio") {
           let ttsCtx = ttsContextRef.current;
           if (!ttsCtx || ttsCtx.state === "closed") {
             ttsCtx = new AudioContext({ sampleRate });
@@ -49,7 +49,7 @@ export function useTTSPlayback() {
             if (onSpeaking) onSpeaking();
           }
 
-          const { int16, sampleCount } = decodeBase64PCMRaw(msg.data);
+          const { int16, sampleCount } = decodeBase64PCM(raw.data);
           const buffer = ttsCtx.createBuffer(1, sampleCount, ttsCtx.sampleRate);
           const channel = buffer.getChannelData(0);
           for (let i = 0; i < sampleCount; i++) channel[i] = int16[i] / 32768;
@@ -61,7 +61,7 @@ export function useTTSPlayback() {
           const startTime = Math.max(ttsCtx.currentTime, nextTime);
           source.start(startTime);
           nextTime = startTime + buffer.duration;
-        } else if (msg.type === "done") {
+        } else if (raw.type === "done") {
           const ttsCtx = ttsContextRef.current;
           if (!ttsCtx || ttsCtx.state === "closed") continue;
           const endDelay = Math.max(0, nextTime - ttsCtx.currentTime);

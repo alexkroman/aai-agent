@@ -1,7 +1,9 @@
 """Tests for aai_agent.manager."""
 
-import time
+from unittest.mock import patch
 
+import pytest
+from cachetools import TTLCache
 
 from aai_agent.agent import VoiceAgent
 from aai_agent.manager import VoiceAgentManager
@@ -51,12 +53,17 @@ class TestRemove:
 
 class TestTTLExpiry:
     def test_expired_sessions_evicted(self, mock_env):
-        manager = VoiceAgentManager(ttl_seconds=0.1)
+        manager = VoiceAgentManager(ttl_seconds=60)
         manager.get_or_create("old-session")
         assert manager.active_sessions == 1
 
-        time.sleep(0.15)
-        assert manager.active_sessions == 0
+        # Advance the timer past the TTL without sleeping
+        with patch.object(
+            TTLCache,
+            "timer",
+            return_value=manager._sessions.timer() + 61,  # type: ignore[union-attr]
+        ):
+            assert manager.active_sessions == 0
 
     def test_ttl_zero_disables_expiry(self, mock_env):
         manager = VoiceAgentManager(ttl_seconds=0)
@@ -68,6 +75,12 @@ class TestTTLExpiry:
         manager = VoiceAgentManager(ttl_seconds=100)
         manager.get_or_create("session-1")
         assert manager.active_sessions == 1
+
+
+class TestManagerRejectsUnknownKwargs:
+    def test_typo_raises_immediately(self, mock_env):
+        with pytest.raises(TypeError):
+            VoiceAgentManager(max_stpes=5)  # type: ignore[call-arg]  # intentional typo
 
 
 class TestAgentKwargsForwarding:
@@ -84,4 +97,4 @@ class TestAgentKwargsForwarding:
     def test_custom_greeting_forwarded(self, mock_env):
         manager = VoiceAgentManager(greeting="Yo!")
         agent = manager.get_or_create("s1")
-        assert agent._greeting == "Yo!"
+        assert agent.greeting == "Yo!"

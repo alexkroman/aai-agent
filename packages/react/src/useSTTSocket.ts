@@ -1,34 +1,20 @@
 import { useRef, useCallback, useEffect } from "react";
 import { getPCMWorkletUrl } from "./pcm-worklet";
+import type { STTHandlers, AAIMessage } from "./types";
 
 /**
  * Hook that manages an AssemblyAI WebSocket STT connection and microphone
  * capture via an AudioWorklet.
- *
- * @returns {{
- *   connect:      (url: string, handlers?: {onMessage?, onUnexpectedClose?}) => Promise<WebSocket>,
- *   startCapture: (sampleRate: number) => Promise<void>,
- *   disconnect:   () => void,
- *   sendClear:    () => void,
- * }}
  */
 export function useSTTSocket() {
-  const socketRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const workletNodeRef = useRef(null);
-  const streamRef = useRef(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  /**
-   * Open a WebSocket connection to AssemblyAI.
-   * @param {string} url  WebSocket URL with auth token
-   * @param {object} [handlers]
-   * @param {(msg: object) => void} [handlers.onMessage]
-   * @param {() => void} [handlers.onUnexpectedClose]
-   * @returns {Promise<WebSocket>}
-   */
   const connect = useCallback(
-    (url, { onMessage, onUnexpectedClose } = {}) =>
-      new Promise((resolve, reject) => {
+    (url: string, { onMessage, onUnexpectedClose }: STTHandlers = {}) =>
+      new Promise<WebSocket>((resolve, reject) => {
         const ws = new WebSocket(url);
         ws.binaryType = "arraybuffer";
         ws.onopen = () => {
@@ -36,9 +22,9 @@ export function useSTTSocket() {
           resolve(ws);
         };
         ws.onerror = (e) => reject(e);
-        ws.onmessage = (evt) => {
+        ws.onmessage = (evt: MessageEvent<unknown>) => {
           if (typeof evt.data === "string" && onMessage) {
-            onMessage(JSON.parse(evt.data));
+            onMessage(JSON.parse(evt.data) as AAIMessage);
           }
         };
         ws.onclose = () => {
@@ -48,11 +34,7 @@ export function useSTTSocket() {
     [],
   );
 
-  /**
-   * Start microphone capture and pipe PCM audio to the WebSocket.
-   * @param {number} sampleRate  Audio sample rate (e.g. 16000)
-   */
-  const startCapture = useCallback(async (sampleRate) => {
+  const startCapture = useCallback(async (sampleRate: number) => {
     streamRef.current = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate,
@@ -63,11 +45,16 @@ export function useSTTSocket() {
     });
 
     audioContextRef.current = new AudioContext({ sampleRate });
-    const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
+    const source = audioContextRef.current.createMediaStreamSource(
+      streamRef.current,
+    );
 
     await audioContextRef.current.audioWorklet.addModule(getPCMWorkletUrl());
-    workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, "pcm-processor");
-    workletNodeRef.current.port.onmessage = (e) => {
+    workletNodeRef.current = new AudioWorkletNode(
+      audioContextRef.current,
+      "pcm-processor",
+    );
+    workletNodeRef.current.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(e.data);
       }
@@ -76,9 +63,6 @@ export function useSTTSocket() {
     workletNodeRef.current.connect(audioContextRef.current.destination);
   }, []);
 
-  /**
-   * Disconnect WebSocket and release all audio resources.
-   */
   const disconnect = useCallback(() => {
     if (socketRef.current) {
       socketRef.current.onclose = null;
@@ -102,9 +86,6 @@ export function useSTTSocket() {
     }
   }, []);
 
-  /**
-   * Send a "clear" command to discard buffered audio in AssemblyAI.
-   */
   const sendClear = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ operation: "clear" }));

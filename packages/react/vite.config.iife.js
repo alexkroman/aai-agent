@@ -12,7 +12,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     lib: {
-      entry: resolve(__dirname, "src/iife-entry.js"),
+      entry: resolve(__dirname, "src/iife-entry.ts"),
       formats: ["iife"],
       name: "AAIVoiceAgent",
       fileName: () => "aai-voice-agent.iife.js",

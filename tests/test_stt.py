@@ -29,19 +29,18 @@ class TestAssemblyAISTT:
 
     @pytest.mark.anyio
     async def test_create_token(self):
-        stt = AssemblyAISTT("test-key")
-
         mock_response = MagicMock()
         mock_response.json.return_value = {"token": "ephemeral-token"}
         mock_response.raise_for_status = MagicMock()
 
-        stt._client = MagicMock()
-        stt._client.get = AsyncMock(return_value=mock_response)
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        stt = AssemblyAISTT("test-key", client=mock_client)
 
         token = await stt.create_token()
 
         assert token == "ephemeral-token"
-        stt._client.get.assert_called_once_with(
+        mock_client.get.assert_called_once_with(
             TOKEN_URL,
             headers={"Authorization": "test-key"},
             params={"expires_in_seconds": 480},
@@ -49,9 +48,17 @@ class TestAssemblyAISTT:
 
     @pytest.mark.anyio
     async def test_aclose(self):
-        stt = AssemblyAISTT("test-key")
-        stt._client = MagicMock()
-        stt._client.aclose = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.aclose = AsyncMock()
+        stt = AssemblyAISTT("test-key", client=mock_client)
 
         await stt.aclose()
-        stt._client.aclose.assert_called_once()
+        mock_client.aclose.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_async_context_manager(self):
+        mock_client = MagicMock()
+        mock_client.aclose = AsyncMock()
+        async with AssemblyAISTT("test-key", client=mock_client) as stt:
+            assert stt.api_key == "test-key"
+        mock_client.aclose.assert_called_once()

@@ -1,5 +1,7 @@
 """AssemblyAI streaming STT connector."""
 
+from __future__ import annotations
+
 import httpx
 
 from .types import STTConfig
@@ -17,10 +19,15 @@ class AssemblyAISTT:
         config: STT configuration. Uses defaults if not provided.
     """
 
-    def __init__(self, api_key: str, config: STTConfig | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        config: STTConfig | None = None,
+        client: httpx.AsyncClient | None = None,
+    ):
         self.api_key = api_key
         self.config = config or STTConfig()
-        self._client = httpx.AsyncClient(timeout=30.0)
+        self._client = client or httpx.AsyncClient(timeout=30.0)
 
     async def create_token(self) -> str:
         """Create an ephemeral streaming token.
@@ -51,3 +58,9 @@ class AssemblyAISTT:
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+
+    async def __aenter__(self) -> AssemblyAISTT:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()

@@ -1,24 +1,21 @@
 /**
  * Async generator that yields parsed JSON objects from an NDJSON response stream.
- * Replaces manual chunk buffering / string splitting.
- *
- * @param {Response} resp  Fetch response with NDJSON body
- * @yields {object} Parsed JSON message
  */
-export async function* parseNDJSON(resp) {
+export async function* parseNDJSON(resp: Response): AsyncGenerator<unknown> {
+  if (!resp.body) return;
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
 
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     const lines = buf.split("\n");
-    buf = lines.pop();
+    buf = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.trim()) yield JSON.parse(line);
+      if (line.trim()) yield JSON.parse(line) as unknown;
     }
   }
-  if (buf.trim()) yield JSON.parse(buf);
+  if (buf.trim()) yield JSON.parse(buf) as unknown;
 }

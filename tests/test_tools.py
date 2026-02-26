@@ -26,6 +26,11 @@ class TestAskUserTool:
 
 
 class TestToolRegistry:
+    def test_registry_exported_from_package(self):
+        from aai_agent import TOOL_REGISTRY as exported
+
+        assert exported is TOOL_REGISTRY
+
     def test_registry_has_all_tools(self):
         assert "AskUserTool" in TOOL_REGISTRY
         assert "DuckDuckGoSearchTool" in TOOL_REGISTRY

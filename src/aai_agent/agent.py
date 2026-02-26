@@ -10,9 +10,14 @@ from collections.abc import Callable
 from urllib.parse import urlencode
 
 import anyio.to_thread
-from smolagents import LiteLLMModel, ToolCallingAgent
-from smolagents.agents import ActionStep, PlanningStep, TaskStep
-from smolagents.memory import MemoryStep
+from smolagents import LiteLLMModel, MultiStepAgent, ToolCallingAgent
+from smolagents.agents import (
+    ActionStep,
+    FinalAnswerPromptTemplate,
+    PlanningStep,
+    TaskStep,
+)
+from smolagents.memory import AgentMemory, MemoryStep
 from smolagents.tools import Tool
 
 from .stt import AssemblyAISTT
@@ -27,6 +32,17 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv() -> None:
+    """Load .env file if python-dotenv is installed. No-op otherwise."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
@@ -99,6 +115,16 @@ class VoiceAgent:
             Pass an empty string to disable. Defaults to VOICE_RULES.
         fallback_answer_prompt: Template used when the agent gets stuck.
             Defaults to FALLBACK_ANSWER_PROMPT.
+        agent_cls: The smolagents agent class to use. Defaults to
+            ``ToolCallingAgent``. Can be ``CodeAgent`` or any
+            ``MultiStepAgent`` subclass.
+        max_tool_threads: Maximum number of concurrent tool execution
+            threads. Defaults to 4.
+        include_ask_user: Whether to include the built-in ``AskUserTool``
+            that lets the agent ask clarifying questions. Defaults to True.
+        model_kwargs: Additional keyword arguments passed to
+            ``LiteLLMModel`` and forwarded to the LLM provider (e.g.
+            ``temperature``, ``top_p``, ``max_tokens``).
 
     Example::
 
@@ -132,13 +158,14 @@ class VoiceAgent:
         greeting: str = DEFAULT_GREETING,
         voice_rules: str | None = None,
         fallback_answer_prompt: FallbackAnswerPrompt | None = None,
+        stt: AssemblyAISTT | None = None,
+        tts: RimeTTS | None = None,
+        agent_cls: type[MultiStepAgent] | None = None,
+        max_tool_threads: int = 4,
+        include_ask_user: bool = True,
+        model_kwargs: dict | None = None,
     ):
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv()
-        except ImportError:
-            pass
+        _load_dotenv()
 
         assemblyai_api_key = assemblyai_api_key or os.environ.get("ASSEMBLYAI_API_KEY")
         if not assemblyai_api_key:
@@ -157,8 +184,8 @@ class VoiceAgent:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
 
-        self.stt = AssemblyAISTT(assemblyai_api_key, stt_config)
-        self.tts = RimeTTS(rime_api_key, tts_config)
+        self.stt = stt or AssemblyAISTT(assemblyai_api_key, stt_config)
+        self.tts = tts or RimeTTS(rime_api_key, tts_config)
 
         self._assemblyai_api_key = assemblyai_api_key
         self._model_id = model
@@ -169,35 +196,49 @@ class VoiceAgent:
         self._step_callbacks = step_callbacks or []
         self._voice_rules = VOICE_RULES if voice_rules is None else voice_rules
         self._fallback_answer_prompt = fallback_answer_prompt or FALLBACK_ANSWER_PROMPT
+        self._agent_cls = agent_cls or ToolCallingAgent
+        self._max_tool_threads = max_tool_threads
+        self._include_ask_user = include_ask_user
+        self._model_kwargs = model_kwargs or {}
 
         self._step_log = threading.local()
-        self._agent: ToolCallingAgent | None = None
+        self._agent: MultiStepAgent | None = None
         self._saved_memory_steps: list[TaskStep | ActionStep | PlanningStep] | None = (
             None
         )
         self._current_task: asyncio.Task | None = None
 
-    def _build_agent(self) -> ToolCallingAgent:
-        """Create the underlying smolagents ToolCallingAgent."""
-        # Always include AskUserTool so the agent can ask clarifying questions
-        tools = [AskUserTool(), *self._tools]
-        agent = ToolCallingAgent(
-            model=LiteLLMModel(
-                model_id=f"openai/{self._model_id}",
-                api_base=LLM_GATEWAY_BASE,
-                api_key=self._assemblyai_api_key,
-                compliant_tool_call=True,
-                flatten_messages_as_text=True,
-            ),
-            tools=tools,
-            max_steps=self._max_steps,
-            max_tool_threads=4,
-            instructions=self._instructions + self._voice_rules,
-            step_callbacks=[self._on_step, *self._step_callbacks],
+    def _build_agent(self) -> MultiStepAgent:
+        """Create the underlying smolagents agent."""
+        tools: list[Tool] = []
+        if self._include_ask_user:
+            tools.append(AskUserTool())
+        tools.extend(self._tools)
+
+        model = LiteLLMModel(
+            model_id=f"openai/{self._model_id}",
+            api_base=LLM_GATEWAY_BASE,
+            api_key=self._assemblyai_api_key,
+            flatten_messages_as_text=True,
+            **self._model_kwargs,
         )
-        agent.prompt_templates["final_answer"] = (
-            self._fallback_answer_prompt.model_dump()
-        )  # type: ignore[assignment]
+
+        # Build kwargs — max_tool_threads is only supported by ToolCallingAgent
+        agent_kwargs: dict = {
+            "model": model,
+            "tools": tools,
+            "max_steps": self._max_steps,
+            "instructions": self._instructions + self._voice_rules,
+            "step_callbacks": [self._on_step, *self._step_callbacks],
+        }
+        if issubclass(self._agent_cls, ToolCallingAgent):
+            agent_kwargs["max_tool_threads"] = self._max_tool_threads
+
+        agent = self._agent_cls(**agent_kwargs)
+        agent.prompt_templates["final_answer"] = FinalAnswerPromptTemplate(
+            pre_messages=self._fallback_answer_prompt.pre_messages,
+            post_messages=self._fallback_answer_prompt.post_messages,
+        )
         return agent
 
     def _invalidate_agent(self) -> None:
@@ -209,7 +250,7 @@ class VoiceAgent:
                 pass
         self._agent = None
 
-    async def _ensure_agent(self) -> ToolCallingAgent:
+    async def _ensure_agent(self) -> MultiStepAgent:
         if self._agent is None:
             self._agent = await anyio.to_thread.run_sync(self._build_agent)
             if self._saved_memory_steps is not None:
@@ -231,6 +272,43 @@ class VoiceAgent:
                     log.append(f"Using {tc.name}")
             elif step.model_output:
                 log.append(step.model_output[:100])
+
+    @property
+    def greeting(self) -> str:
+        """The greeting text spoken when the assistant first connects."""
+        return self._greeting
+
+    @property
+    def memory(self) -> AgentMemory | None:
+        """The agent's conversation memory, or None if the agent hasn't been built yet.
+
+        Returns the underlying smolagents ``AgentMemory`` object which contains
+        the full conversation history in ``memory.steps``.
+        """
+        if self._agent is not None:
+            return self._agent.memory
+        return None
+
+    async def aclose(self) -> None:
+        """Close the underlying STT and TTS HTTP clients."""
+        await self.stt.aclose()
+        await self.tts.aclose()
+
+    async def __aenter__(self) -> VoiceAgent:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    async def reset(self) -> None:
+        """Reset the agent's conversation memory.
+
+        Cancels any in-flight task and clears all history so the next
+        ``chat()`` call starts a fresh conversation.
+        """
+        await self.cancel()
+        self._saved_memory_steps = None
+        self._agent = None
 
     async def cancel(self) -> None:
         """Cancel any in-flight chat task for this agent."""
@@ -314,8 +392,9 @@ class VoiceAgent:
             response.audio = await self.tts.synthesize(response.text)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("TTS synthesis failed for text: %s", response.text[:100])
+            response.error = f"TTS synthesis failed: {exc}"
 
         return response
 
@@ -343,8 +422,9 @@ class VoiceAgent:
         response = VoiceResponse(text=self._greeting)
         try:
             response.audio = await self.tts.synthesize(self._greeting)
-        except Exception:
+        except Exception as exc:
             logger.exception("TTS synthesis failed for greeting")
+            response.error = f"TTS synthesis failed: {exc}"
         return response
 
     async def create_streaming_token(self) -> StreamingToken:

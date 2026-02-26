@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 
 from cachetools import TTLCache
+from smolagents import MultiStepAgent
+from smolagents.memory import MemoryStep
+from smolagents.tools import Tool
 
-from .agent import VoiceAgent
+from .agent import VoiceAgent, _load_dotenv
+from .types import FallbackAnswerPrompt, STTConfig, TTSConfig
 
 
 class VoiceAgentManager:
@@ -29,9 +33,27 @@ class VoiceAgentManager:
             ``RIME_API_KEY`` environment variable.
         ttl_seconds: Seconds of inactivity before a session is expired.
             Defaults to 3600 (1 hour). Set to 0 to disable expiry.
-        **agent_kwargs: Additional keyword arguments forwarded to
-            :class:`VoiceAgent` for each new session (e.g. ``model``,
-            ``tools``, ``instructions``, ``tts_config``).
+        model: LLM model ID forwarded to each :class:`VoiceAgent`.
+        tools: List of tools forwarded to each :class:`VoiceAgent`.
+        instructions: System prompt forwarded to each :class:`VoiceAgent`.
+        max_steps: Maximum agent reasoning steps forwarded to each
+            :class:`VoiceAgent`.
+        step_callbacks: Step callback functions forwarded to each
+            :class:`VoiceAgent`.
+        tts_config: TTS configuration forwarded to each :class:`VoiceAgent`.
+        stt_config: STT configuration forwarded to each :class:`VoiceAgent`.
+        greeting: Greeting text forwarded to each :class:`VoiceAgent`.
+        voice_rules: Voice rules forwarded to each :class:`VoiceAgent`.
+        fallback_answer_prompt: Fallback prompt forwarded to each
+            :class:`VoiceAgent`.
+        agent_cls: The smolagents agent class forwarded to each
+            :class:`VoiceAgent`.
+        max_tool_threads: Max tool threads forwarded to each
+            :class:`VoiceAgent`.
+        include_ask_user: Whether to include AskUserTool, forwarded to
+            each :class:`VoiceAgent`.
+        model_kwargs: LLM keyword arguments forwarded to each
+            :class:`VoiceAgent`.
 
     Example::
 
@@ -54,14 +76,22 @@ class VoiceAgentManager:
         rime_api_key: str | None = None,
         *,
         ttl_seconds: float = 3600,
-        **agent_kwargs,
+        model: str | None = None,
+        tools: list[Tool | str] | None = None,
+        instructions: str | None = None,
+        max_steps: int | None = None,
+        step_callbacks: list[Callable[[MemoryStep], None]] | None = None,
+        tts_config: TTSConfig | None = None,
+        stt_config: STTConfig | None = None,
+        greeting: str | None = None,
+        voice_rules: str | None = None,
+        fallback_answer_prompt: FallbackAnswerPrompt | None = None,
+        agent_cls: type[MultiStepAgent] | None = None,
+        max_tool_threads: int | None = None,
+        include_ask_user: bool | None = None,
+        model_kwargs: dict | None = None,
     ):
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv()
-        except ImportError:
-            pass
+        _load_dotenv()
 
         # Validate API keys eagerly so config errors surface at startup,
         # not on the first user request.
@@ -81,7 +111,37 @@ class VoiceAgentManager:
                 "RIME_API_KEY environment variable"
             )
 
-        self._agent_kwargs = agent_kwargs
+        # Build kwargs dict for VoiceAgent, only including explicitly set values
+        self._agent_kwargs: dict = {}
+        if model is not None:
+            self._agent_kwargs["model"] = model
+        if tools is not None:
+            self._agent_kwargs["tools"] = tools
+        if instructions is not None:
+            self._agent_kwargs["instructions"] = instructions
+        if max_steps is not None:
+            self._agent_kwargs["max_steps"] = max_steps
+        if step_callbacks is not None:
+            self._agent_kwargs["step_callbacks"] = step_callbacks
+        if tts_config is not None:
+            self._agent_kwargs["tts_config"] = tts_config
+        if stt_config is not None:
+            self._agent_kwargs["stt_config"] = stt_config
+        if greeting is not None:
+            self._agent_kwargs["greeting"] = greeting
+        if voice_rules is not None:
+            self._agent_kwargs["voice_rules"] = voice_rules
+        if fallback_answer_prompt is not None:
+            self._agent_kwargs["fallback_answer_prompt"] = fallback_answer_prompt
+        if agent_cls is not None:
+            self._agent_kwargs["agent_cls"] = agent_cls
+        if max_tool_threads is not None:
+            self._agent_kwargs["max_tool_threads"] = max_tool_threads
+        if include_ask_user is not None:
+            self._agent_kwargs["include_ask_user"] = include_ask_user
+        if model_kwargs is not None:
+            self._agent_kwargs["model_kwargs"] = model_kwargs
+
         self._lock = threading.Lock()
         self._sessions: MutableMapping[str, VoiceAgent]
         if ttl_seconds > 0:

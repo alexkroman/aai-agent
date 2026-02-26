@@ -7,6 +7,7 @@ Handles acronyms, numbers, currency, markdown artifacts, URLs, and more.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 # Pre-compiled regex patterns
 _RE_CODE_BLOCKS = re.compile(r"```[\s\S]*?```")
@@ -33,8 +34,6 @@ _RE_SPACES = re.compile(r"[ \t]+")
 _RE_NEWLINES = re.compile(r"\n{2,}")
 
 # Resolve num2words once at import time
-from collections.abc import Callable
-
 _num2words: Callable[..., str] | None
 try:
     from num2words import num2words as _num2words
@@ -152,8 +151,7 @@ class VoiceCleaner:
 
     # Pre-compile unit patterns
     _UNIT_PATTERNS = {
-        abbr: re.compile(rf"(\d)\s*{re.escape(abbr)}\b")
-        for abbr in _UNIT_MAP
+        abbr: re.compile(rf"(\d)\s*{re.escape(abbr)}\b") for abbr in _UNIT_MAP
     }
 
     def _expand_units(self, text: str) -> str:
@@ -200,8 +198,8 @@ class VoiceCleaner:
 
     def _expand_ordinals(self, text: str) -> str:
         def _replace(m: re.Match) -> str:
-            num = m.group(1)
-            return self._ORDINAL_MAP.get(num, m.group(0))
+            num = m.group(1) or ""
+            return self._ORDINAL_MAP.get(num, m.group(0) or "")
 
         return _RE_ORDINALS.sub(_replace, text)
 

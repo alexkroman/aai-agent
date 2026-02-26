@@ -55,6 +55,7 @@ class VoiceResponse(BaseModel):
     text: str
     audio: bytes | None = None
     steps: list[str] = Field(default_factory=list)
+    error: str | None = None
 
     @property
     def audio_base64(self) -> str | None:

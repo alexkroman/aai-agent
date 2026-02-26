@@ -28,11 +28,13 @@ class PCMProcessor extends AudioWorkletProcessor {
 registerProcessor("pcm-processor", PCMProcessor);
 `;
 
-let workletUrl = null;
+let workletUrl: string | null = null;
 
-export function getPCMWorkletUrl() {
+export function getPCMWorkletUrl(): string {
   if (!workletUrl) {
-    const blob = new Blob([PCM_WORKLET_SOURCE], { type: "application/javascript" });
+    const blob = new Blob([PCM_WORKLET_SOURCE], {
+      type: "application/javascript",
+    });
     workletUrl = URL.createObjectURL(blob);
   }
   return workletUrl;

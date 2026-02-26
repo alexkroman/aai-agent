@@ -127,7 +127,9 @@ class WebTool(Tool):
                 resp.raise_for_status()
                 return resp.json()
             except httpx.HTTPStatusError as exc:
-                last_error = f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}"
+                last_error = (
+                    f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}"
+                )
                 if exc.response.status_code < 500:
                     break  # don't retry client errors
             except httpx.ConnectError:

@@ -87,8 +87,18 @@ class TestSTTConfig:
             STTConfig(end_of_turn_confidence_threshold=1.1)
 
     def test_confidence_threshold_boundary_values(self):
-        assert STTConfig(end_of_turn_confidence_threshold=0).end_of_turn_confidence_threshold == 0
-        assert STTConfig(end_of_turn_confidence_threshold=1).end_of_turn_confidence_threshold == 1
+        assert (
+            STTConfig(
+                end_of_turn_confidence_threshold=0
+            ).end_of_turn_confidence_threshold
+            == 0
+        )
+        assert (
+            STTConfig(
+                end_of_turn_confidence_threshold=1
+            ).end_of_turn_confidence_threshold
+            == 1
+        )
 
 
 class TestFallbackAnswerPrompt:
@@ -130,6 +140,7 @@ class TestVoiceResponse:
         assert resp.text == "hello"
         assert resp.audio is None
         assert resp.steps == []
+        assert resp.error is None
         assert resp.audio_base64 is None
 
     def test_with_audio(self):
@@ -141,6 +152,11 @@ class TestVoiceResponse:
     def test_with_steps(self):
         resp = VoiceResponse(text="hello", steps=["Using DuckDuckGoSearchTool"])
         assert resp.steps == ["Using DuckDuckGoSearchTool"]
+
+    def test_with_error(self):
+        resp = VoiceResponse(text="hello", error="TTS synthesis failed: timeout")
+        assert resp.error == "TTS synthesis failed: timeout"
+        assert resp.audio is None
 
     def test_audio_base64_roundtrip(self):
         original = b"\x00\x01\x02\xff"

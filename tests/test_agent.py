@@ -19,16 +19,26 @@ def agent(mock_env):
     return VoiceAgent()
 
 
+@pytest.fixture
+def mock_inner_agent():
+    """A mock smolagents ToolCallingAgent for chat tests."""
+    return MagicMock()
+
+
 class TestVoiceAgentInit:
     def test_requires_assemblyai_key(self):
-        with patch.dict(os.environ, {}, clear=True), \
-             patch("dotenv.load_dotenv", return_value=False):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("aai_agent.agent._load_dotenv"),
+        ):
             with pytest.raises(ValueError, match="assemblyai_api_key"):
                 VoiceAgent()
 
     def test_requires_rime_key(self):
-        with patch.dict(os.environ, {"ASSEMBLYAI_API_KEY": "aai-key"}, clear=True), \
-             patch("dotenv.load_dotenv", return_value=False):
+        with (
+            patch.dict(os.environ, {"ASSEMBLYAI_API_KEY": "aai-key"}, clear=True),
+            patch("aai_agent.agent._load_dotenv"),
+        ):
             with pytest.raises(ValueError, match="rime_api_key"):
                 VoiceAgent()
 
@@ -60,15 +70,18 @@ class TestVoiceAgentInit:
         agent = VoiceAgent(model="custom-model")
         assert agent._model_id == "custom-model"
 
-    @pytest.mark.parametrize("greeting,expected", [
-        (None, DEFAULT_GREETING),
-        ("Hi!", "Hi!"),
-        ("", ""),
-    ])
+    @pytest.mark.parametrize(
+        "greeting,expected",
+        [
+            (None, DEFAULT_GREETING),
+            ("Hi!", "Hi!"),
+            ("", ""),
+        ],
+    )
     def test_greeting(self, mock_env, greeting, expected):
         kwargs = {} if greeting is None else {"greeting": greeting}
         agent = VoiceAgent(**kwargs)
-        assert agent._greeting == expected
+        assert agent.greeting == expected
 
     def test_default_max_steps(self, mock_env):
         agent = VoiceAgent()
@@ -89,11 +102,14 @@ class TestVoiceAgentInit:
         assert agent.tts.config.speaker == "aria"
         assert agent.stt.config.sample_rate == 8000
 
-    @pytest.mark.parametrize("voice_rules,expected", [
-        (None, VOICE_RULES),
-        ("Be brief.", "Be brief."),
-        ("", ""),
-    ])
+    @pytest.mark.parametrize(
+        "voice_rules,expected",
+        [
+            (None, VOICE_RULES),
+            ("Be brief.", "Be brief."),
+            ("", ""),
+        ],
+    )
     def test_voice_rules(self, mock_env, voice_rules, expected):
         kwargs = {} if voice_rules is None else {"voice_rules": voice_rules}
         agent = VoiceAgent(**kwargs)
@@ -101,6 +117,7 @@ class TestVoiceAgentInit:
 
     def test_tools_resolved_from_strings(self, mock_env):
         from smolagents import DuckDuckGoSearchTool
+
         agent = VoiceAgent(tools=["DuckDuckGoSearchTool"])
         assert len(agent._tools) == 1
         assert isinstance(agent._tools[0], DuckDuckGoSearchTool)
@@ -117,6 +134,52 @@ class TestVoiceAgentInit:
         tool_names = [t.name for t in built.tools.values()]
         assert tool_names.count("ask_user") == 1
 
+    def test_ask_user_tool_excluded(self, mock_env):
+        agent = VoiceAgent(include_ask_user=False)
+        built = agent._build_agent()
+        tool_names = [t.name for t in built.tools.values()]
+        assert "ask_user" not in tool_names
+
+    def test_custom_agent_cls(self, mock_env):
+        from smolagents import CodeAgent
+
+        agent = VoiceAgent(agent_cls=CodeAgent)
+        assert agent._agent_cls is CodeAgent
+
+    def test_default_agent_cls(self, mock_env):
+        from smolagents import ToolCallingAgent
+
+        agent = VoiceAgent()
+        assert agent._agent_cls is ToolCallingAgent
+
+    def test_custom_max_tool_threads(self, mock_env):
+        agent = VoiceAgent(max_tool_threads=8)
+        assert agent._max_tool_threads == 8
+
+    def test_default_max_tool_threads(self, mock_env):
+        agent = VoiceAgent()
+        assert agent._max_tool_threads == 4
+
+    def test_model_kwargs_stored(self, mock_env):
+        agent = VoiceAgent(model_kwargs={"temperature": 0.7, "top_p": 0.9})
+        assert agent._model_kwargs == {"temperature": 0.7, "top_p": 0.9}
+
+    def test_model_kwargs_default_empty(self, mock_env):
+        agent = VoiceAgent()
+        assert agent._model_kwargs == {}
+
+    def test_memory_none_before_build(self, mock_env):
+        agent = VoiceAgent()
+        assert agent.memory is None
+
+    def test_memory_available_after_build(self, mock_env):
+        agent = VoiceAgent()
+        agent._build_agent()
+        # _build_agent doesn't set _agent, so build and assign
+        agent._agent = agent._build_agent()
+        assert agent.memory is not None
+        assert hasattr(agent.memory, "steps")
+
 
 class TestVoiceAgentGreet:
     @pytest.mark.anyio
@@ -132,6 +195,7 @@ class TestVoiceAgentGreet:
         resp = await agent.greet()
         assert resp.text == DEFAULT_GREETING
         assert resp.audio is None
+        assert "TTS synthesis failed" in resp.error
 
     @pytest.mark.anyio
     async def test_greet_disabled(self, mock_env):
@@ -153,32 +217,29 @@ class TestVoiceAgentChat:
             await agent.chat("   ")
 
     @pytest.mark.anyio
-    async def test_chat_returns_voice_response(self, agent):
-        mock_agent = MagicMock()
-        mock_agent.run.return_value = "The answer is 42."
-        agent._agent = mock_agent
+    async def test_chat_returns_voice_response(self, agent, mock_inner_agent):
+        mock_inner_agent.run.return_value = "The answer is 42."
+        agent._ensure_agent = AsyncMock(return_value=mock_inner_agent)
 
         resp = await agent.chat("What is the answer?")
         assert isinstance(resp, VoiceResponse)
         assert resp.text == "The answer is 42."
         assert resp.audio is None
-        mock_agent.run.assert_called_once_with("What is the answer?", reset=False)
+        mock_inner_agent.run.assert_called_once_with("What is the answer?", reset=False)
 
     @pytest.mark.anyio
-    async def test_chat_with_reset(self, agent):
-        mock_agent = MagicMock()
-        mock_agent.run.return_value = "Fresh start."
-        agent._agent = mock_agent
+    async def test_chat_with_reset(self, agent, mock_inner_agent):
+        mock_inner_agent.run.return_value = "Fresh start."
+        agent._ensure_agent = AsyncMock(return_value=mock_inner_agent)
 
         resp = await agent.chat("Hello", reset=True)
-        mock_agent.run.assert_called_once_with("Hello", reset=True)
+        mock_inner_agent.run.assert_called_once_with("Hello", reset=True)
         assert resp.text == "Fresh start."
 
     @pytest.mark.anyio
-    async def test_voice_chat_includes_audio(self, agent):
-        mock_agent = MagicMock()
-        mock_agent.run.return_value = "Hello!"
-        agent._agent = mock_agent
+    async def test_voice_chat_includes_audio(self, agent, mock_inner_agent):
+        mock_inner_agent.run.return_value = "Hello!"
+        agent._ensure_agent = AsyncMock(return_value=mock_inner_agent)
         agent.tts.synthesize = AsyncMock(return_value=b"audio-bytes")
 
         resp = await agent.voice_chat("Hi")
@@ -187,15 +248,54 @@ class TestVoiceAgentChat:
         agent.tts.synthesize.assert_called_once_with("Hello!")
 
     @pytest.mark.anyio
-    async def test_voice_chat_tts_failure(self, agent):
-        mock_agent = MagicMock()
-        mock_agent.run.return_value = "Hello!"
-        agent._agent = mock_agent
+    async def test_voice_chat_tts_failure(self, agent, mock_inner_agent):
+        mock_inner_agent.run.return_value = "Hello!"
+        agent._ensure_agent = AsyncMock(return_value=mock_inner_agent)
         agent.tts.synthesize = AsyncMock(side_effect=Exception("TTS error"))
 
         resp = await agent.voice_chat("Hi")
         assert resp.text == "Hello!"
         assert resp.audio is None
+        assert "TTS synthesis failed" in resp.error
+
+    @pytest.mark.anyio
+    async def test_voice_chat_success_has_no_error(self, agent, mock_inner_agent):
+        mock_inner_agent.run.return_value = "Hello!"
+        agent._ensure_agent = AsyncMock(return_value=mock_inner_agent)
+        agent.tts.synthesize = AsyncMock(return_value=b"audio")
+
+        resp = await agent.voice_chat("Hi")
+        assert resp.error is None
+
+
+class TestVoiceAgentReset:
+    @pytest.mark.anyio
+    async def test_reset_clears_agent(self, agent):
+        agent._agent = MagicMock()
+        await agent.reset()
+        assert agent._agent is None
+
+    @pytest.mark.anyio
+    async def test_reset_clears_saved_memory(self, agent):
+        agent._saved_memory_steps = [MagicMock()]
+        await agent.reset()
+        assert agent._saved_memory_steps is None
+
+
+class TestVoiceAgentContextManager:
+    @pytest.mark.anyio
+    async def test_async_with(self, mock_env):
+        async with VoiceAgent() as agent:
+            assert isinstance(agent, VoiceAgent)
+        # aclose was called — clients are closed
+
+    @pytest.mark.anyio
+    async def test_aclose(self, agent):
+        agent.stt.aclose = AsyncMock()
+        agent.tts.aclose = AsyncMock()
+        await agent.aclose()
+        agent.stt.aclose.assert_called_once()
+        agent.tts.aclose.assert_called_once()
 
 
 class TestVoiceAgentSynthesize:
