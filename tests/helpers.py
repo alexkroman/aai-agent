@@ -1,6 +1,5 @@
 """Shared test helpers (importable by test modules)."""
 
-import json
 from unittest.mock import AsyncMock
 
 
@@ -18,21 +17,3 @@ def make_async_context_mock(**kwargs):
     for attr, value in kwargs.items():
         setattr(mock, attr, value)
     return mock
-
-
-def parse_ndjson(resp):
-    """Parse NDJSON response lines into a list of dicts."""
-    return [json.loads(line) for line in resp.text.strip().split("\n") if line.strip()]
-
-
-def assert_ndjson_stream(resp, *, text, steps=None, has_audio=True):
-    """Assert common NDJSON stream response structure."""
-    assert resp.status_code == 200
-    msgs = parse_ndjson(resp)
-    reply = next(m for m in msgs if m["type"] == "reply")
-    assert reply["text"] == text
-    if steps is not None:
-        assert reply["steps"] == steps
-    if has_audio:
-        assert any(m["type"] == "audio" for m in msgs)
-    assert any(m["type"] == "done" for m in msgs)

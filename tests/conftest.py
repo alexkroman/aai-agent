@@ -43,11 +43,4 @@ def mock_agent():
         return_value=VoiceResponse(text="42", steps=["Using DuckDuckGoSearchTool"])
     )
     agent.cancel = AsyncMock()
-
-    async def _fake_stream(text):
-        yield b"fake-wav-bytes"
-
-    agent.tts = MagicMock()
-    agent.tts.config.sample_rate = 24000
-    agent.tts.synthesize_stream = _fake_stream
     return agent

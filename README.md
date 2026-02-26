@@ -136,7 +136,6 @@ agent = VoiceAgent(
     stt_config=STTConfig(
         sample_rate=16000,
         speech_model="u3-pro",
-        end_of_turn_confidence_threshold=0.8,
     ),
 )
 ```

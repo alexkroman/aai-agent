@@ -240,7 +240,8 @@ STTConfig(
     speech_model="u3-pro",
     token_expires_in=480,
     format_turns=True,
-    end_of_turn_confidence_threshold=0.8,
+    min_end_of_turn_silence_when_confident=400,
+    max_turn_silence=1200,
 )
 ```
 

@@ -3,23 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeSerializer
+from starlette.websockets import WebSocketDisconnect
 
 from smolagents.tools import Tool
 
 from .manager import VoiceAgentManager
-from .tts import RimeTTS
+from .voice_cleaner import VoiceCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -29,33 +27,9 @@ DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",
 )
 
-
-async def _stream_tts_response(
-    tts: RimeTTS, text: str, *, steps: list[str] | None = None
-) -> AsyncIterator[str]:
-    """Generate NDJSON lines: reply, audio chunks, done."""
-    reply = {"type": "reply", "text": text, "sample_rate": tts.config.sample_rate}
-    if steps is not None:
-        reply["steps"] = steps
-    yield json.dumps(reply) + "\n"
-
-    try:
-        async for chunk in tts.synthesize_stream(text):
-            yield (
-                json.dumps(
-                    {
-                        "type": "audio",
-                        "data": base64.b64encode(chunk).decode(),
-                    }
-                )
-                + "\n"
-            )
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        logger.exception("TTS streaming failed")
-
-    yield json.dumps({"type": "done"}) + "\n"
+DEFAULT_TTS_WSS_URL = (
+    "wss://model-q844y7pw.api.baseten.co/environments/production/websocket"
+)
 
 
 def create_voice_router(
@@ -138,10 +112,7 @@ def create_voice_router(
         if not greeting_text:
             return Response(status_code=204)
 
-        return StreamingResponse(
-            _stream_tts_response(agent.tts, greeting_text),
-            media_type="application/x-ndjson",
-        )
+        return {"text": greeting_text}
 
     @router.post("/chat")
     async def chat(request: Request, response: Response):
@@ -172,11 +143,7 @@ def create_voice_router(
         except asyncio.CancelledError:
             return Response(status_code=499)
 
-        # Stream text reply immediately, then TTS audio chunks
-        return StreamingResponse(
-            _stream_tts_response(agent.tts, result.text, steps=result.steps),
-            media_type="application/x-ndjson",
-        )
+        return {"text": result.text, "steps": result.steps}
 
     @router.post("/cancel")
     async def cancel(request: Request, response: Response):
@@ -195,6 +162,114 @@ def create_voice_router(
         await _cancel_active(sid)
         agent_manager.remove(sid)
         return {"status": "reset"}
+
+    @router.websocket("/tts")
+    async def tts_proxy(ws: WebSocket):
+        """WebSocket proxy for Assembly TTS.
+
+        Keeps the TTS API key server-side.  The browser sends
+        ``{"text": "..."}`` and receives binary PCM audio frames
+        followed by ``{"type": "done"}``.  Send ``{"type": "cancel"}``
+        to abort an in-flight synthesis.
+        """
+        import websockets
+
+        api_key = os.environ.get("ASSEMBLY_TTS_API_KEY")
+        if not api_key:
+            await ws.close(code=1008, reason="TTS not configured")
+            return
+
+        tts_base = os.environ.get("ASSEMBLY_TTS_WSS_URL", DEFAULT_TTS_WSS_URL)
+        tts_headers = {"Authorization": f"Api-Key {api_key}"}
+        tts_voice = os.environ.get("ASSEMBLY_TTS_VOICE", "tara")
+        cleaner = VoiceCleaner()
+        relay_task: asyncio.Task | None = None
+
+        await ws.accept()
+
+        async def _relay(text: str) -> None:
+            """Connect to upstream Orpheus TTS and relay audio chunks.
+
+            Orpheus protocol:
+              1. Send JSON config (voice, max_tokens, buffer_size)
+              2. Send text word-by-word as individual string messages
+              3. Send ``__END__`` sentinel
+              4. Receive binary PCM audio frames until connection closes
+            """
+            try:
+                async with websockets.connect(
+                    tts_base, additional_headers=tts_headers
+                ) as upstream:
+                    # Send voice config
+                    await upstream.send(
+                        json.dumps(
+                            {
+                                "voice": tts_voice,
+                                "max_tokens": 2000,
+                                "buffer_size": 5,
+                            }
+                        )
+                    )
+                    # Send text word-by-word then sentinel
+                    for word in text.split():
+                        await upstream.send(word)
+                    await upstream.send("__END__")
+
+                    # Relay audio frames
+                    async for msg in upstream:
+                        if isinstance(msg, bytes):
+                            await ws.send_bytes(msg)
+                await ws.send_json({"type": "done"})
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("TTS relay error")
+                try:
+                    await ws.send_json(
+                        {"type": "error", "message": "TTS synthesis failed"}
+                    )
+                except Exception:
+                    pass
+
+        try:
+            while True:
+                data = await ws.receive_json()
+
+                # Handle cancel
+                if data.get("type") == "cancel":
+                    if relay_task and not relay_task.done():
+                        relay_task.cancel()
+                        try:
+                            await relay_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    continue
+
+                text = data.get("text", "").strip()
+                if not text:
+                    continue
+
+                # Cancel any in-flight synthesis before starting new one
+                if relay_task and not relay_task.done():
+                    relay_task.cancel()
+                    try:
+                        await relay_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                text = cleaner.normalize(text)
+                relay_task = asyncio.create_task(_relay(text))
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            logger.exception("TTS WebSocket error")
+        finally:
+            if relay_task and not relay_task.done():
+                relay_task.cancel()
+                try:
+                    await relay_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     return router
 

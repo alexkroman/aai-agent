@@ -140,10 +140,13 @@ describe("createVoiceStore", () => {
 
   it("sendMessage sets turnText and calls sendTurnToAgent", async () => {
     const store = createVoiceStore();
-    const deps = mockDeps({ readStream: vi.fn().mockResolvedValue(undefined) });
+    const deps = mockDeps();
     store.getState()._setDeps(deps);
 
-    const mockFetch = vi.fn().mockResolvedValue({ status: 200 });
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 200,
+      json: vi.fn().mockResolvedValue({ text: "response", steps: [] }),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     await store.getState().sendMessage("hello from text");

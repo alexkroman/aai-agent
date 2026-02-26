@@ -30,7 +30,8 @@ class STTConfig(BaseModel):
     wss_base: str = "wss://streaming.assemblyai.com/v3/ws"
     token_expires_in: int = Field(default=480, gt=0)
     format_turns: bool = True
-    end_of_turn_confidence_threshold: float = Field(default=0.8, ge=0, le=1)
+    min_end_of_turn_silence_when_confident: int = Field(default=400, ge=0)
+    max_turn_silence: int = Field(default=1200, ge=0)
 
 
 class FallbackAnswerPrompt(BaseModel):
@@ -43,10 +44,12 @@ class FallbackAnswerPrompt(BaseModel):
 
 
 class StreamingToken(BaseModel):
-    """Ephemeral token and WebSocket URL for browser-side STT."""
+    """Ephemeral token and WebSocket URL for browser-side STT, plus TTS config."""
 
     wss_url: str
     sample_rate: int = Field(gt=0)
+    tts_enabled: bool = False
+    tts_sample_rate: int = Field(default=24000, gt=0)
 
 
 class VoiceResponse(BaseModel):

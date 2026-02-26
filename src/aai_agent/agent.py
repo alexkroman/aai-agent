@@ -46,7 +46,6 @@ def _load_dotenv() -> None:
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
-
 class _SafeLiteLLMModel(LiteLLMModel):
     """LiteLLMModel subclass that sanitizes empty text content.
 
@@ -458,8 +457,12 @@ class VoiceAgent:
     async def create_streaming_token(self) -> StreamingToken:
         """Create an AssemblyAI streaming token and WebSocket URL for browser-side STT.
 
+        If the ``ASSEMBLY_TTS_API_KEY`` environment variable is set,
+        ``tts_enabled`` is ``True`` in the response, telling the browser
+        to connect to the server's ``/tts`` WebSocket proxy for audio.
+
         Returns:
-            StreamingToken with wss_url (ready-to-use WebSocket URL) and sample_rate.
+            StreamingToken with wss_url, sample_rate, and tts_enabled flag.
         """
         token = await self.stt.create_token()
         cfg = self.stt.config
@@ -469,10 +472,13 @@ class VoiceAgent:
                 "speech_model": cfg.speech_model,
                 "token": token,
                 "format_turns": str(cfg.format_turns).lower(),
-                "end_of_turn_confidence_threshold": cfg.end_of_turn_confidence_threshold,
+                "min_end_of_turn_silence_when_confident": cfg.min_end_of_turn_silence_when_confident,
+                "max_turn_silence": cfg.max_turn_silence,
             }
         )
+
         return StreamingToken(
             wss_url=f"{cfg.wss_base}?{params}",
             sample_rate=cfg.sample_rate,
+            tts_enabled=bool(os.environ.get("ASSEMBLY_TTS_API_KEY")),
         )

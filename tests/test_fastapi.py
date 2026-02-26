@@ -10,8 +10,6 @@ from aai_agent.fastapi import (
     create_voice_app,
 )
 
-from helpers import assert_ndjson_stream
-
 
 @pytest.fixture
 def client(manager, mock_agent):
@@ -59,17 +57,17 @@ class TestEndpoints:
         assert data["sample_rate"] == 16000
 
     def test_greet_endpoint(self, client):
-        assert_ndjson_stream(
-            client.post("/api/greet"),
-            text="Hello!",
-        )
+        resp = client.post("/api/greet")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["text"] == "Hello!"
 
     def test_chat_endpoint(self, client):
-        assert_ndjson_stream(
-            client.post("/api/chat", json={"message": "What is the answer?"}),
-            text="42",
-            steps=["Using DuckDuckGoSearchTool"],
-        )
+        resp = client.post("/api/chat", json={"message": "What is the answer?"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["text"] == "42"
+        assert data["steps"] == ["Using DuckDuckGoSearchTool"]
 
     def test_chat_empty_message(self, client):
         resp = client.post("/api/chat", json={"message": ""})

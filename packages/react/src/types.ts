@@ -72,28 +72,10 @@ export interface STTHandlers {
   onUnexpectedClose?: () => void;
 }
 
-export interface TTSStreamHandlers {
-  onReply?: (msg: ReplyMessage) => void;
+export interface TTSHandlers {
   onSpeaking?: () => void;
   onDone?: () => void;
 }
-
-export interface ReplyMessage {
-  readonly type: "reply";
-  readonly text: string;
-  readonly sample_rate?: number;
-}
-
-export interface AudioMessage {
-  readonly type: "audio";
-  readonly data: string;
-}
-
-export interface DoneMessage {
-  readonly type: "done";
-}
-
-export type StreamMessage = ReplyMessage | AudioMessage | DoneMessage;
 
 export interface AAIMessage {
   readonly type: string;
@@ -104,6 +86,8 @@ export interface AAIMessage {
 export interface TokensResponse {
   readonly wss_url: string;
   readonly sample_rate: number;
+  readonly tts_enabled: boolean;
+  readonly tts_sample_rate: number;
 }
 
 export interface VoiceDeps {
@@ -122,11 +106,10 @@ export interface VoiceDeps {
   readonly startCapture: (sampleRate: number) => Promise<void>;
   readonly sttDisconnect: () => void;
   readonly sendClear: () => void;
-  readonly readStream: (
-    resp: Response,
-    handlers?: TTSStreamHandlers,
-  ) => Promise<void>;
-  readonly stopPlayback: () => void;
+  readonly ttsConnect: (url: string, sampleRate?: number) => Promise<WebSocket>;
+  readonly ttsSpeak: (text: string, handlers?: TTSHandlers) => void;
+  readonly ttsStop: () => void;
+  readonly ttsDisconnect: () => void;
   readonly speakingRef: { current: boolean };
   readonly onError?: (error: VoiceAgentError) => void;
   readonly onConnect?: () => void;
@@ -168,11 +151,4 @@ export interface VoiceStoreState {
 export interface PCMDecodeResult {
   readonly int16: Int16Array;
   readonly sampleCount: number;
-}
-
-/** Runtime type guard for NDJSON stream messages. */
-export function isStreamMessage(raw: unknown): raw is StreamMessage {
-  if (typeof raw !== "object" || raw === null) return false;
-  const obj = raw as { type?: unknown };
-  return obj.type === "reply" || obj.type === "audio" || obj.type === "done";
 }

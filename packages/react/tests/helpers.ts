@@ -16,8 +16,10 @@ export function mockDeps(overrides: Partial<VoiceDeps> = {}): VoiceDeps {
     startCapture: vi.fn(),
     sttDisconnect: vi.fn(),
     sendClear: vi.fn(),
-    readStream: vi.fn(),
-    stopPlayback: vi.fn(),
+    ttsConnect: vi.fn(),
+    ttsSpeak: vi.fn(),
+    ttsStop: vi.fn(),
+    ttsDisconnect: vi.fn(),
     speakingRef: { current: false },
     ...overrides,
   };

@@ -60,7 +60,8 @@ class TestSTTConfig:
         assert cfg.wss_base == "wss://streaming.assemblyai.com/v3/ws"
         assert cfg.token_expires_in == 480
         assert cfg.format_turns is True
-        assert cfg.end_of_turn_confidence_threshold == 0.8
+        assert cfg.min_end_of_turn_silence_when_confident == 400
+        assert cfg.max_turn_silence == 1200
 
     def test_custom_values(self):
         cfg = STTConfig(sample_rate=8000, speech_model="nano")
@@ -79,26 +80,6 @@ class TestSTTConfig:
     def test_rejects_invalid_token_expires_in(self):
         with pytest.raises(ValidationError):
             STTConfig(token_expires_in=0)
-
-    def test_rejects_invalid_confidence_threshold(self):
-        with pytest.raises(ValidationError):
-            STTConfig(end_of_turn_confidence_threshold=-0.1)
-        with pytest.raises(ValidationError):
-            STTConfig(end_of_turn_confidence_threshold=1.1)
-
-    def test_confidence_threshold_boundary_values(self):
-        assert (
-            STTConfig(
-                end_of_turn_confidence_threshold=0
-            ).end_of_turn_confidence_threshold
-            == 0
-        )
-        assert (
-            STTConfig(
-                end_of_turn_confidence_threshold=1
-            ).end_of_turn_confidence_threshold
-            == 1
-        )
 
 
 class TestFallbackAnswerPrompt:
@@ -128,6 +109,17 @@ class TestStreamingToken:
         token = StreamingToken(wss_url="wss://example.com", sample_rate=16000)
         assert token.wss_url == "wss://example.com"
         assert token.sample_rate == 16000
+
+    def test_tts_defaults(self):
+        token = StreamingToken(wss_url="wss://example.com", sample_rate=16000)
+        assert token.tts_enabled is False
+        assert token.tts_sample_rate == 24000
+
+    def test_tts_enabled(self):
+        token = StreamingToken(
+            wss_url="wss://example.com", sample_rate=16000, tts_enabled=True
+        )
+        assert token.tts_enabled is True
 
     def test_rejects_invalid_sample_rate(self):
         with pytest.raises(ValidationError):

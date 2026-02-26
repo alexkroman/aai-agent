@@ -13,8 +13,7 @@ import type {
   VoiceAgentError,
   AAIMessage,
   TokensResponse,
-  ReplyMessage,
-  TTSStreamHandlers,
+  TTSHandlers,
 } from "./types";
 import type { DebouncedFn } from "./debounce";
 
@@ -68,10 +67,7 @@ export function createVoiceStore() {
       if (error) getDeps().onError?.(error);
     };
 
-    const streamHandlers = (
-      onReply: (msg: ReplyMessage) => void,
-    ): TTSStreamHandlers => ({
-      onReply,
+    const ttsHandlers = (): TTSHandlers => ({
       onSpeaking: () => get().setPhase("active", "speaking"),
       onDone: () => {
         if (get().phase === "active") get().setPhase("active", "listening");
@@ -123,7 +119,7 @@ export function createVoiceStore() {
           turnAbort.abort();
           turnAbort = null;
         }
-        d.stopPlayback();
+        d.ttsStop();
         d.sendClear();
         d.onBargeIn?.();
         fetch(`${d.baseUrl}/cancel`, { method: "POST" }).catch(() => {});
@@ -155,17 +151,17 @@ export function createVoiceStore() {
             signal: abort.signal,
           });
 
-          let replyText = "";
-          await d.readStream(
-            resp,
-            streamHandlers((msg) => {
-              removeMessage(thinkingId);
-              if (msg.text) {
-                replyText = msg.text;
-                addMessage(msg.text, "assistant");
-              }
-            }),
-          );
+          const data = (await resp.json()) as {
+            text?: string;
+            steps?: string[];
+          };
+          removeMessage(thinkingId);
+
+          const replyText = data.text || "";
+          if (replyText) {
+            addMessage(replyText, "assistant");
+            d.ttsSpeak(replyText, ttsHandlers());
+          }
           d.onTurnEnd?.(replyText);
         } catch (err) {
           removeMessage(thinkingId);
@@ -228,12 +224,12 @@ export function createVoiceStore() {
           });
           if (get().phase !== "active") return;
           if (resp.status === 204) return;
-          await d.readStream(
-            resp,
-            streamHandlers((msg) => {
-              if (msg.text) addMessage(msg.text, "assistant");
-            }),
-          );
+
+          const data = (await resp.json()) as { text?: string };
+          if (data.text) {
+            addMessage(data.text, "assistant");
+            d.ttsSpeak(data.text, ttsHandlers());
+          }
         } catch (err) {
           if (err instanceof Error && err.name !== "AbortError") {
             console.error("Greeting error:", err);
@@ -294,9 +290,10 @@ export function createVoiceStore() {
         turnAbort = null;
 
         debouncedSend?.cancel();
-        d.stopPlayback();
+        d.ttsStop();
         d.sendClear();
         d.sttDisconnect();
+        d.ttsDisconnect();
 
         get().setPhase("idle", "listening");
 
@@ -327,7 +324,8 @@ export function createVoiceStore() {
           const resp = await fetch(`${d.baseUrl}/tokens`, { signal });
           if (get().phase !== "connecting") return;
 
-          const { wss_url, sample_rate }: TokensResponse = await resp.json();
+          const { wss_url, sample_rate, tts_enabled, tts_sample_rate }:
+            TokensResponse = await resp.json();
 
           await d.sttConnect(wss_url, {
             onMessage: handleAAIMessage,
@@ -346,6 +344,19 @@ export function createVoiceStore() {
               }
             },
           });
+          if (get().phase !== "connecting") return;
+
+          // Connect TTS WebSocket if server has TTS configured
+          if (tts_enabled) {
+            try {
+              await d.ttsConnect(`${d.baseUrl}/tts`, tts_sample_rate);
+            } catch (err) {
+              console.warn(
+                "TTS connection failed, continuing without audio:",
+                err,
+              );
+            }
+          }
           if (get().phase !== "connecting") return;
 
           await d.startCapture(sample_rate);
@@ -416,7 +427,13 @@ export function useVoiceAgent({
     disconnect: sttDisconnect,
     sendClear,
   } = useSTTSocket();
-  const { readStream, stop: stopPlayback, speakingRef } = useTTSPlayback();
+  const {
+    connect: ttsConnect,
+    speak: ttsSpeak,
+    stop: ttsStop,
+    disconnect: ttsDisconnect,
+    speakingRef,
+  } = useTTSPlayback();
 
   // Keep external deps current every render
   useStore.getState()._setDeps({
@@ -432,8 +449,10 @@ export function useVoiceAgent({
     startCapture,
     sttDisconnect,
     sendClear,
-    readStream,
-    stopPlayback,
+    ttsConnect,
+    ttsSpeak,
+    ttsStop,
+    ttsDisconnect,
     speakingRef,
     onError,
     onConnect,
