@@ -183,6 +183,7 @@ This gives you:
 | `GET /api/tokens` | GET | AssemblyAI streaming token + WebSocket URL |
 | `POST /api/greet` | POST | Greeting text + audio |
 | `POST /api/chat` | POST | Send message, get reply + audio + steps |
+| `GET /health` | GET | Health check (returns `{"status": "ok"}`) |
 | `GET /` | GET | Static files (HTML, JS) |
 
 Options: `cors_origins`, `static_dir`, `session_secret`, `api_prefix` (default `"/api"`).
@@ -204,10 +205,10 @@ app.include_router(
     prefix="/api",
 )
 
-# Add your own routes
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# Add your own routes alongside the voice endpoints
+@app.get("/my-custom-route")
+def my_route():
+    return {"hello": "world"}
 ```
 
 ### Custom server (no helpers)
@@ -385,6 +386,100 @@ if (audio) {
 }
 ```
 
+## Knowledge base (RAG)
+
+Add semantic search over your own docs using ChromaDB.
+
+### 1. Install the knowledge extra
+
+```bash
+pip install aai-agent[knowledge]
+```
+
+### 2. Index your docs
+
+**CLI** — point at any URL (plain text or [llms-full.txt](https://llmstxt.org/) format):
+
+```bash
+aai-agent index --url https://www.assemblyai.com/docs/llms-full.txt --db ./chroma_db --collection my_docs
+```
+
+**Python** — for more control:
+
+```python
+from aai_agent import KnowledgeBaseIndexer
+
+indexer = KnowledgeBaseIndexer(
+    path="./chroma_db",
+    collection_name="my_docs",
+)
+
+# Index from a URL (auto-detects llms-full.txt page separators)
+indexer.index_url("https://example.com/docs/llms-full.txt")
+
+# Or index pre-chunked texts directly
+indexer.index_texts(["chunk 1", "chunk 2"], metadatas=[{"source": "faq"}] * 2)
+```
+
+### 3. Query with KnowledgeBaseTool
+
+```python
+from aai_agent import KnowledgeBaseTool, VoiceAgent
+
+docs = KnowledgeBaseTool(
+    name="search_docs",
+    description="Search the documentation for answers.",
+    path="./chroma_db",
+    collection_name="my_docs",
+)
+
+agent = VoiceAgent(tools=[docs])
+```
+
+The indexer handles text cleaning (strips HTML, markdown, converts tables to prose), sentence-aware chunking with overlap, and batched embedding. The `KnowledgeBaseTool` uses the same embedding model at query time for consistent retrieval.
+
+## Deployment
+
+### Generate Fly.io deployment files
+
+```bash
+aai-agent deploy
+```
+
+This detects your project structure and generates three files:
+
+- **Dockerfile** — installs deps with `uv`, copies source, runs `index_docs.py` if present
+- **fly.toml** — app config with auto-stop/auto-start machines
+- **.dockerignore** — excludes `.venv`, `.git`, `.env`, `chroma_db`
+
+Options:
+
+```bash
+aai-agent deploy --app my-app-name   # custom Fly.io app name (default: directory name)
+aai-agent deploy --port 3000         # custom port (default: 8000)
+aai-agent deploy --force             # overwrite existing files
+```
+
+### Deploy
+
+```bash
+flyctl auth login
+flyctl apps create my-app-name
+flyctl secrets set ASSEMBLYAI_API_KEY=... RIME_API_KEY=...
+flyctl deploy
+```
+
+### Production mode
+
+`aai-agent start --prod` binds to `0.0.0.0`, disables auto-reload, and reads `PORT` from the environment. It also auto-detects Fly.io and Railway environments:
+
+```bash
+aai-agent start --prod              # explicit
+# or just set FLY_APP_NAME / PORT   # auto-detected
+```
+
+The generated Dockerfile uses `aai-agent start --prod` as its CMD.
+
 ## Project structure
 
 ```
@@ -397,7 +492,8 @@ src/aai_agent/
   stt.py            # AssemblyAI streaming token client
   tts.py            # Rime TTS client
   tools.py          # Re-exported smolagents tools
-  cli.py            # `aai-agent init` CLI
+  indexer.py        # KnowledgeBaseIndexer — build ChromaDB collections
+  cli.py            # CLI: init, start, deploy, index
   _template/        # Scaffolding files for new projects
 
 packages/react/
@@ -419,6 +515,11 @@ pip install aai-agent
 # With FastAPI support
 pip install aai-agent[fastapi]
 
+# With RAG / knowledge base support
+pip install aai-agent[knowledge]
+
+# Everything
+pip install aai-agent[fastapi,knowledge]
 ```
 
 Requires Python 3.11+.

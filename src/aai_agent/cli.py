@@ -180,6 +180,8 @@ def _generate_dockerfile(project: dict, port: int) -> str:
     lines += [
         f"EXPOSE {port}",
         "",
+        f"ENV PORT={port}",
+        "",
         'CMD ["uv", "run", "aai-agent", "start", "--prod"]',
         "",
     ]
@@ -198,9 +200,10 @@ primary_region = 'iad'
 [http_service]
   internal_port = {port}
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = 'suspend'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
+  max_machines_running = 1
 
 [[vm]]
   memory = '1gb'
@@ -226,7 +229,7 @@ def deploy(
         "", "--app", "-a",
         help="Fly.io app name (default: current directory name)",
     ),
-    port: int = typer.Option(8000, "--port", "-p", help="Server port"),
+    port: int = typer.Option(80, "--port", "-p", help="Server port"),
     force: bool = typer.Option(
         False, "--force", "-f", help="Overwrite existing deploy files"
     ),
