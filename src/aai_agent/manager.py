@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import MutableMapping
 
@@ -55,8 +56,31 @@ class VoiceAgentManager:
         ttl_seconds: float = 3600,
         **agent_kwargs,
     ):
-        self._assemblyai_api_key = assemblyai_api_key
-        self._rime_api_key = rime_api_key
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv()
+        except ImportError:
+            pass
+
+        # Validate API keys eagerly so config errors surface at startup,
+        # not on the first user request.
+        self._assemblyai_api_key = assemblyai_api_key or os.environ.get(
+            "ASSEMBLYAI_API_KEY"
+        )
+        if not self._assemblyai_api_key:
+            raise ValueError(
+                "assemblyai_api_key must be provided or set via the "
+                "ASSEMBLYAI_API_KEY environment variable"
+            )
+
+        self._rime_api_key = rime_api_key or os.environ.get("RIME_API_KEY")
+        if not self._rime_api_key:
+            raise ValueError(
+                "rime_api_key must be provided or set via the "
+                "RIME_API_KEY environment variable"
+            )
+
         self._agent_kwargs = agent_kwargs
         self._lock = threading.Lock()
         self._sessions: MutableMapping[str, VoiceAgent]

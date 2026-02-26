@@ -53,6 +53,9 @@ class RimeTTS:
                 "samplingRate": self.config.sample_rate,
                 "speedAlpha": self.config.speed,
                 "max_tokens": self.config.max_tokens,
+                "repetitionPenalty": self.config.repetition_penalty,
+                "temperature": self.config.temperature,
+                "topP": self.config.top_p,
             },
         }
 

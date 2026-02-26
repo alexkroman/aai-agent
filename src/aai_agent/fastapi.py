@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import secrets
 from collections.abc import AsyncIterator
 
@@ -234,7 +235,17 @@ def create_voice_app(
 
     app = FastAPI()
 
-    origins = cors_origins if cors_origins is not None else list(DEFAULT_CORS_ORIGINS)
+    if cors_origins is not None:
+        origins = cors_origins
+    elif static_dir:
+        # Same-origin: static files served from same app, no CORS needed.
+        # Auto-detect Fly.io / Railway production URLs as extras.
+        origins: list[str] = []
+        fly_app = os.environ.get("FLY_APP_NAME")
+        if fly_app:
+            origins.append(f"https://{fly_app}.fly.dev")
+    else:
+        origins = list(DEFAULT_CORS_ORIGINS)
     if origins:
         app.add_middleware(
             CORSMiddleware,
@@ -243,6 +254,10 @@ def create_voice_app(
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
 
     app.include_router(
         create_voice_router(

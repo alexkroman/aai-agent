@@ -15,6 +15,9 @@ class TTSConfig(BaseModel):
     sample_rate: int = Field(default=24000, gt=0)
     speed: float = Field(default=1.15, gt=0)
     max_tokens: int = Field(default=1200, gt=0)
+    repetition_penalty: float = Field(default=1.5, gt=0)
+    temperature: float = Field(default=0.5, ge=0)
+    top_p: float = Field(default=1.0, ge=0, le=1)
 
 
 class STTConfig(BaseModel):

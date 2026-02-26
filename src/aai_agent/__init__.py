@@ -9,8 +9,10 @@ from .agent import (
 )
 from .manager import VoiceAgentManager
 from .stt import AssemblyAISTT
+from smolagents import tool
 from smolagents.tools import Tool
 
+from .indexer import KnowledgeBaseIndexer
 from .tools import KnowledgeBaseTool, WebTool
 from .tts import RimeTTS
 from .types import FallbackAnswerPrompt, STTConfig, StreamingToken, TTSConfig, VoiceResponse
@@ -31,6 +33,8 @@ __all__ = [
     "VoiceResponse",
     "VOICE_RULES",
     "Tool",
+    "tool",
+    "KnowledgeBaseIndexer",
     "KnowledgeBaseTool",
     "WebTool",
     "VoiceCleaner",

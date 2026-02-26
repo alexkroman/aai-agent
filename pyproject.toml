@@ -20,6 +20,7 @@ aai-agent = "aai_agent.cli:app"
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115.0", "itsdangerous>=2.0", "uvicorn[standard]>=0.41.0"]
+knowledge = ["chromadb>=1.0", "sentence-transformers>=2.0"]
 test = [
     "aai-agent[fastapi]",
     "pytest>=8.0",
