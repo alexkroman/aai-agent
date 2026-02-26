@@ -1,7 +1,7 @@
 """Text normalization for TTS output.
 
 Cleans LLM-generated text so it sounds natural when spoken by a TTS system.
-Handles acronyms, numbers, currency, markdown artifacts, URLs, and more.
+Handles numbers, currency, markdown artifacts, URLs, and more.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ _RE_PERCENTAGES = re.compile(r"(\d+(?:\.\d+)?)%")
 _RE_PHONE = re.compile(r"(\d{3})-(\d{3})-(\d{4})")
 _RE_ORDINALS = re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b")
 _RE_NUMBERS = re.compile(r"(?<![:\w])\b\d+(?:\.\d+)?\b(?![:\w])")
-_RE_ACRONYMS = re.compile(r"\b[A-Z]{2,}(?:'?s)?\b")
+
 _RE_SPACES = re.compile(r"[ \t]+")
 _RE_NEWLINES = re.compile(r"\n{2,}")
 
@@ -55,7 +55,6 @@ class VoiceCleaner:
 
     Automatically applied to all text before it reaches the TTS engine.
     Handles:
-    - Acronyms / initialisms (API → a. p. i.)
     - Numbers, ordinals, currency, percentages
     - Markdown stripping (bold, links, code, headers, lists)
     - URL removal
@@ -72,7 +71,7 @@ class VoiceCleaner:
         text = self._expand_ordinals(text)
         text = self._expand_units(text)
         text = self._expand_numbers(text)
-        text = self._expand_acronyms(text)
+
         text = self._clean_symbols(text)
         text = self._collapse_whitespace(text)
         return text.strip()
@@ -186,33 +185,6 @@ class VoiceCleaner:
                 return raw
 
         return _RE_NUMBERS.sub(_replace, text)
-
-    # ------------------------------------------------------------------
-    # Acronyms: API → a. p. i.
-    # ------------------------------------------------------------------
-    # Words that look like acronyms but should be left alone
-    _NOT_ACRONYMS = frozenset(
-        {
-            "AM",
-            "PM",
-            "OK",
-            "US",  # common words
-        }
-    )
-
-    def _expand_acronyms(self, text: str) -> str:
-        def _replace(m: re.Match) -> str:
-            word = m.group(0)
-            # Strip plural suffix, expand the acronym, then re-attach
-            suffix = ""
-            if word.endswith("'s") or (word.endswith("s") and word[-2].isupper()):
-                suffix = "s"
-                word = word.rstrip("s").rstrip("'")
-            if word in self._NOT_ACRONYMS:
-                return word + suffix
-            return ". ".join(word.lower()) + "." + suffix
-
-        return _RE_ACRONYMS.sub(_replace, text)
 
     # ------------------------------------------------------------------
     # Symbols and special characters

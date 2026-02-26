@@ -3,35 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import threading
-from collections.abc import Callable
+import uuid
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urlencode
 
-import anyio.to_thread
-from smolagents import LiteLLMModel, MultiStepAgent, ToolCallingAgent
-from smolagents.agents import (
-    ActionStep,
-    FinalAnswerPromptTemplate,
-    PlanningStep,
-    TaskStep,
+import httpx
+import logfire
+from pydantic_ai import Agent, ModelSettings, UsageLimits
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
 )
-from smolagents.memory import AgentMemory, MemoryStep
-from smolagents.tools import Tool
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from .stt import AssemblyAISTT
-from .tools import AskUserTool, resolve_tools
-from .tts import RimeTTS
+from .tools import ask_user
 from .types import (
     FallbackAnswerPrompt,
     STTConfig,
     StreamingToken,
-    TTSConfig,
     VoiceResponse,
 )
 
 logger = logging.getLogger(__name__)
+
+try:
+    logfire.configure(send_to_logfire="if-token-present", console=logfire.ConsoleOptions())
+    logfire.instrument_pydantic_ai()
+except Exception:
+    pass
 
 
 def _load_dotenv() -> None:
@@ -46,31 +52,91 @@ def _load_dotenv() -> None:
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
-class _SafeLiteLLMModel(LiteLLMModel):
-    """LiteLLMModel subclass that sanitizes empty text content.
+_FINISH_REASON_MAP = {"end_turn": "stop", "max_tokens": "length", "tool_use": "tool_calls"}
 
-    The LLM Gateway rejects messages with empty text content blocks
-    (e.g. when the model returns content="" alongside tool calls).
-    This wrapper replaces empty text with a placeholder before sending.
+
+class _PatchTransport(httpx.AsyncBaseTransport):
+    """Async HTTP transport that normalises non-standard LLM Gateway responses.
+
+    The AssemblyAI LLM Gateway proxies Anthropic models but returns responses
+    that don't fully conform to the OpenAI ChatCompletion schema (e.g.
+    ``finish_reason: "end_turn"``, null ``id``/``model``/``usage`` fields).
+
+    This transport wraps another transport, patches the JSON response body to
+    be OpenAI-compatible, and also sanitizes outgoing request bodies by
+    replacing empty text content with a placeholder (the gateway rejects
+    empty text blocks).
     """
 
-    def _prepare_completion_kwargs(self, messages, **kwargs):  # type: ignore[override]
-        completion_kwargs = super()._prepare_completion_kwargs(
-            messages=messages, **kwargs
+    def __init__(self, transport: httpx.AsyncBaseTransport):
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        # --- Sanitize outgoing request: replace empty text content ---
+        if request.content:
+            try:
+                body = json.loads(request.content)
+                for msg in body.get("messages", []):
+                    content = msg.get("content")
+                    if isinstance(content, str) and not content.strip():
+                        msg["content"] = "..."
+                    elif isinstance(content, list):
+                        for block in content:
+                            if (
+                                isinstance(block, dict)
+                                and block.get("type") == "text"
+                                and not (block.get("text") or "").strip()
+                            ):
+                                block["text"] = "..."
+                new_body = json.dumps(body).encode()
+                headers = dict(request.headers)
+                headers["content-length"] = str(len(new_body))
+                request = httpx.Request(
+                    method=request.method,
+                    url=request.url,
+                    headers=headers,
+                    content=new_body,
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
+        response = await self._transport.handle_async_request(request)
+
+        # --- Patch incoming response to be OpenAI-compatible ---
+        raw = await response.aread()
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return response
+
+        data.setdefault("id", f"chatcmpl-{uuid.uuid4().hex[:12]}")
+        data.setdefault("object", "chat.completion")
+        data.setdefault("model", "unknown")
+        if data.get("usage") is None:
+            data["usage"] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+        else:
+            data["usage"].setdefault("prompt_tokens", 0)
+            data["usage"].setdefault("completion_tokens", 0)
+            data["usage"].setdefault("total_tokens", 0)
+
+        for choice in data.get("choices", []):
+            choice.setdefault("index", 0)
+            fr = choice.get("finish_reason")
+            if fr in _FINISH_REASON_MAP:
+                choice["finish_reason"] = _FINISH_REASON_MAP[fr]
+            elif fr is None:
+                choice["finish_reason"] = "stop"
+
+        patched = json.dumps(data).encode()
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers,
+            content=patched,
         )
-        for msg in completion_kwargs.get("messages", []):
-            content = msg.get("content")
-            if isinstance(content, str) and not content.strip():
-                msg["content"] = "..."
-            elif isinstance(content, list):
-                for block in content:
-                    if (
-                        isinstance(block, dict)
-                        and block.get("type") == "text"
-                        and not (block.get("text") or "").strip()
-                    ):
-                        block["text"] = "..."
-        return completion_kwargs
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -92,7 +158,7 @@ If you need to list items, say "First," "Next," and "Finally."
 - If you don't have enough information, say so directly rather than guessing."""
 
 VOICE_RULES = (
-    "\n\nCRITICAL: When you call final_answer, your answer will be spoken aloud by a TTS system. "
+    "\n\nCRITICAL: When you produce your final answer, it will be spoken aloud by a TTS system. "
     "Write your answer exactly as you would say it out loud to a friend. "
     "One to two sentences max. No markdown, no bullet points, no numbered lists, no code. "
     "Sound like a human talking, not a document."
@@ -115,82 +181,73 @@ FALLBACK_ANSWER_PROMPT = FallbackAnswerPrompt(
 )
 
 
+def _extract_steps(messages: Sequence[ModelMessage]) -> list[str]:
+    """Extract human-readable step descriptions from pydantic-ai messages."""
+    steps: list[str] = []
+    for msg in messages:
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, ToolCallPart):
+                    steps.append(f"Using {part.tool_name}")
+    return steps
+
+
 class VoiceAgent:
-    """A voice-first AI agent backed by AssemblyAI STT, Rime TTS, and smolagents.
+    """A voice-first AI agent backed by AssemblyAI STT and pydantic-ai.
 
     API keys are resolved in this order:
 
-    1. Explicit arguments (``assemblyai_api_key`` / ``rime_api_key``).
-    2. Environment variables ``ASSEMBLYAI_API_KEY`` / ``RIME_API_KEY``.
+    1. Explicit argument (``assemblyai_api_key``).
+    2. Environment variable ``ASSEMBLYAI_API_KEY``.
 
     Args:
         assemblyai_api_key: AssemblyAI API key (used for STT and LLM Gateway).
             Falls back to the ``ASSEMBLYAI_API_KEY`` environment variable.
-        rime_api_key: Rime API key for TTS. Falls back to the
-            ``RIME_API_KEY`` environment variable.
         model: LLM model ID to use via the AssemblyAI LLM Gateway.
-        tools: List of tools the agent can use.
+        tools: List of tools the agent can use. Each tool should be a
+            callable or a ``pydantic_ai.Tool`` instance.
         instructions: System prompt / persona instructions. Defaults to
             DEFAULT_INSTRUCTIONS, a voice-optimized assistant prompt.
         max_steps: Maximum agent reasoning steps per query.
-        step_callbacks: Functions called after each agent step.
-        tts_config: Rime TTS configuration overrides.
+        model_settings: pydantic-ai ``ModelSettings`` for the LLM
+            (e.g. temperature, top_p, max_tokens).
         stt_config: AssemblyAI STT configuration overrides.
-        greeting: Text spoken when the assistant first connects. Set to
+        greeting: Text returned when the assistant first connects. Set to
             empty string to disable. Defaults to DEFAULT_GREETING.
         voice_rules: Appended to instructions to guide voice-friendly output.
             Pass an empty string to disable. Defaults to VOICE_RULES.
         fallback_answer_prompt: Template used when the agent gets stuck.
             Defaults to FALLBACK_ANSWER_PROMPT.
-        agent_cls: The smolagents agent class to use. Defaults to
-            ``ToolCallingAgent``. Can be ``CodeAgent`` or any
-            ``MultiStepAgent`` subclass.
-        max_tool_threads: Maximum number of concurrent tool execution
-            threads. Defaults to 4.
-        include_ask_user: Whether to include the built-in ``AskUserTool``
-            that lets the agent ask clarifying questions. Defaults to True.
-        model_kwargs: Additional keyword arguments passed to
-            ``LiteLLMModel`` and forwarded to the LLM provider (e.g.
-            ``temperature``, ``top_p``, ``max_tokens``).
+        include_ask_user: Whether to include the built-in ``ask_user``
+            tool that lets the agent ask clarifying questions. Defaults to True.
 
     Example::
 
         from aai_agent import VoiceAgent
-        from aai_agent.tools import DuckDuckGoSearchTool, VisitWebpageTool
 
-        # Keys are read from ASSEMBLYAI_API_KEY and RIME_API_KEY env vars
         agent = VoiceAgent(
-            tools=[DuckDuckGoSearchTool(), VisitWebpageTool()],
+            tools=[my_tool],
         )
 
         response = await agent.chat("What is AssemblyAI?")
         print(response.text)
-
-        response = await agent.voice_chat("What is AssemblyAI?")
-        # response.text + response.audio (WAV bytes)
     """
 
     def __init__(
         self,
         assemblyai_api_key: str | None = None,
-        rime_api_key: str | None = None,
         *,
         model: str = DEFAULT_MODEL,
-        tools: list[Tool | str] | None = None,
+        tools: list[Any] | None = None,
         instructions: str = DEFAULT_INSTRUCTIONS,
         max_steps: int = 3,
-        step_callbacks: list[Callable[[MemoryStep], None]] | None = None,
-        tts_config: TTSConfig | None = None,
+        model_settings: ModelSettings | None = None,
         stt_config: STTConfig | None = None,
         greeting: str = DEFAULT_GREETING,
         voice_rules: str | None = None,
         fallback_answer_prompt: FallbackAnswerPrompt | None = None,
         stt: AssemblyAISTT | None = None,
-        tts: RimeTTS | None = None,
-        agent_cls: type[MultiStepAgent] | None = None,
-        max_tool_threads: int = 4,
         include_ask_user: bool = True,
-        model_kwargs: dict | None = None,
     ):
         _load_dotenv()
 
@@ -201,116 +258,50 @@ class VoiceAgent:
                 "ASSEMBLYAI_API_KEY environment variable"
             )
 
-        rime_api_key = rime_api_key or os.environ.get("RIME_API_KEY")
-        if not rime_api_key:
-            raise ValueError(
-                "rime_api_key must be provided or set via the "
-                "RIME_API_KEY environment variable"
-            )
-
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
 
         self.stt = stt or AssemblyAISTT(assemblyai_api_key, stt_config)
-        self.tts = tts or RimeTTS(rime_api_key, tts_config)
 
         self._assemblyai_api_key = assemblyai_api_key
         self._model_id = model
-        self._tools = resolve_tools(tools) if tools else []
         self._instructions = instructions
         self._greeting = greeting
         self._max_steps = max_steps
-        self._step_callbacks = step_callbacks or []
+        self._model_settings = model_settings
         self._voice_rules = VOICE_RULES if voice_rules is None else voice_rules
         self._fallback_answer_prompt = fallback_answer_prompt or FALLBACK_ANSWER_PROMPT
-        self._agent_cls = agent_cls or ToolCallingAgent
-        self._max_tool_threads = max_tool_threads
-        self._include_ask_user = include_ask_user
-        self._model_kwargs = model_kwargs or {}
 
-        self._step_log = threading.local()
-        self._agent: MultiStepAgent | None = None
-        self._saved_memory_steps: list[TaskStep | ActionStep | PlanningStep] | None = (
-            None
+        # Build tools list — accepts plain callables and pydantic_ai.Tool instances
+        all_tools: list[Any] = []
+        if include_ask_user:
+            all_tools.append(ask_user)
+        if tools:
+            all_tools.extend(tools)
+
+        # Build the pydantic-ai Agent (stateless — conversation state is in message_history)
+        # _PatchTransport normalises LLM Gateway responses to the OpenAI schema.
+        self._http_client = httpx.AsyncClient(
+            transport=_PatchTransport(httpx.AsyncHTTPTransport()),
         )
+        llm_model = OpenAIChatModel(
+            model_name=self._model_id,
+            provider=OpenAIProvider(
+                base_url=LLM_GATEWAY_BASE,
+                api_key=assemblyai_api_key,
+                http_client=self._http_client,
+            ),
+        )
+        self._agent = Agent(
+            model=llm_model,
+            instructions=self._instructions + self._voice_rules,
+            tools=all_tools,  # type: ignore[arg-type]
+            model_settings=self._model_settings,
+        )
+
+        self._message_history: list[ModelMessage] = []
         self._current_task: asyncio.Task | None = None
-        # Protects _agent and _saved_memory_steps (accessed from both async and thread contexts)
-        self._agent_lock = threading.Lock()
-        # Protects _current_task (async-only)
         self._task_lock = asyncio.Lock()
-
-    def _build_agent(self) -> MultiStepAgent:
-        """Create the underlying smolagents agent."""
-        tools: list[Tool] = []
-        if self._include_ask_user:
-            tools.append(AskUserTool())
-        tools.extend(self._tools)
-
-        model = _SafeLiteLLMModel(
-            model_id=f"openai/{self._model_id}",
-            api_base=LLM_GATEWAY_BASE,
-            api_key=self._assemblyai_api_key,
-            flatten_messages_as_text=True,
-            **self._model_kwargs,
-        )
-
-        # Build kwargs — max_tool_threads is only supported by ToolCallingAgent
-        agent_kwargs: dict = {
-            "model": model,
-            "tools": tools,
-            "max_steps": self._max_steps,
-            "instructions": self._instructions + self._voice_rules,
-            "step_callbacks": [self._on_step, *self._step_callbacks],
-        }
-        if issubclass(self._agent_cls, ToolCallingAgent):
-            agent_kwargs["max_tool_threads"] = self._max_tool_threads
-
-        agent = self._agent_cls(**agent_kwargs)
-        agent.prompt_templates["final_answer"] = FinalAnswerPromptTemplate(
-            pre_messages=self._fallback_answer_prompt.pre_messages,
-            post_messages=self._fallback_answer_prompt.post_messages,
-        )
-        return agent
-
-    def _invalidate_agent(self) -> None:
-        """Mark the agent for rebuild, preserving conversation history."""
-        with self._agent_lock:
-            if self._agent is not None:
-                try:
-                    self._saved_memory_steps = list(self._agent.memory.steps)
-                except Exception:
-                    pass
-            self._agent = None
-
-    async def _ensure_agent(self) -> MultiStepAgent:
-        with self._agent_lock:
-            if self._agent is not None:
-                return self._agent
-        # Build agent outside the lock (slow operation)
-        new_agent = await anyio.to_thread.run_sync(self._build_agent)
-        with self._agent_lock:
-            # Double-check: another coroutine may have built it while we waited
-            if self._agent is None:
-                self._agent = new_agent
-                if self._saved_memory_steps is not None:
-                    self._agent.memory.steps = self._saved_memory_steps
-                    self._saved_memory_steps = None
-            return self._agent
-
-    def _on_step(self, step: MemoryStep) -> None:
-        """Collect step summaries into thread-local log."""
-        log = getattr(self._step_log, "steps", None)
-        if log is None:
-            return
-
-        if isinstance(step, PlanningStep) and step.plan:
-            log.append(f"Planning: {step.plan[:120]}")
-        elif isinstance(step, ActionStep) and not step.is_final_answer:
-            if step.tool_calls:
-                for tc in step.tool_calls:
-                    log.append(f"Using {tc.name}")
-            elif step.model_output:
-                log.append(step.model_output[:100])
 
     @property
     def greeting(self) -> str:
@@ -318,21 +309,14 @@ class VoiceAgent:
         return self._greeting
 
     @property
-    def memory(self) -> AgentMemory | None:
-        """The agent's conversation memory, or None if the agent hasn't been built yet.
-
-        Returns the underlying smolagents ``AgentMemory`` object which contains
-        the full conversation history in ``memory.steps``.
-        """
-        with self._agent_lock:
-            if self._agent is not None:
-                return self._agent.memory
-            return None
+    def memory(self) -> list[ModelMessage]:
+        """The agent's conversation message history."""
+        return self._message_history
 
     async def aclose(self) -> None:
-        """Close the underlying STT and TTS HTTP clients."""
+        """Close the underlying HTTP clients (STT and LLM)."""
         await self.stt.aclose()
-        await self.tts.aclose()
+        await self._http_client.aclose()
 
     async def __aenter__(self) -> VoiceAgent:
         return self
@@ -347,9 +331,7 @@ class VoiceAgent:
         ``chat()`` call starts a fresh conversation.
         """
         await self.cancel()
-        with self._agent_lock:
-            self._saved_memory_steps = None
-            self._agent = None
+        self._message_history = []
 
     async def cancel(self) -> None:
         """Cancel any in-flight chat task for this agent."""
@@ -380,96 +362,40 @@ class VoiceAgent:
         # Cancel any in-flight request before starting a new one
         await self.cancel()
 
-        agent = await self._ensure_agent()
-
-        def run():
-            self._step_log.steps = []
-            try:
-                result = agent.run(message, reset=reset)
-            except Exception as exc:
-                # smolagents raises UnboundLocalError when the agent is
-                # interrupted or fails to produce a final_answer.
-                # Rebuild the agent to clear corrupted state.
-                if isinstance(exc, UnboundLocalError):
-                    logger.warning("Agent state corrupted, rebuilding: %s", exc)
-                    self._invalidate_agent()
-                    steps = list(getattr(self._step_log, "steps", None) or [])
-                    self._step_log.steps = None
-                    return "Sorry, I got interrupted. Could you say that again?", steps
-                raise
-            steps = list(self._step_log.steps)
-            self._step_log.steps = None
-            return str(result), steps
-
-        async def _run_chat():
-            return await anyio.to_thread.run_sync(run, abandon_on_cancel=True)
+        if reset:
+            self._message_history = []
 
         async with self._task_lock:
             self._current_task = asyncio.current_task()
         try:
-            text, steps = await _run_chat()
+            result = await self._agent.run(
+                message,
+                message_history=self._message_history,
+                usage_limits=UsageLimits(request_limit=self._max_steps),
+            )
+            self._message_history = result.all_messages()
+            steps = _extract_steps(result.new_messages())
+            text = str(result.output)
         except asyncio.CancelledError:
             logger.info("Chat cancelled (barge-in)")
-            # Rebuild agent to clear any partial state, keep history
-            self._invalidate_agent()
             raise
+        except Exception:
+            logger.exception("Agent run failed")
+            text = "Sorry, something went wrong. Could you say that again?"
+            steps = []
         finally:
             async with self._task_lock:
                 self._current_task = None
 
         return VoiceResponse(text=text, steps=steps)
 
-    async def voice_chat(self, message: str, *, reset: bool = False) -> VoiceResponse:
-        """Send a text message and get a response with synthesized audio.
-
-        Args:
-            message: User's message.
-            reset: If True, reset the agent's conversation memory.
-
-        Returns:
-            VoiceResponse with text, WAV audio bytes, and steps.
-        """
-        response = await self.chat(message, reset=reset)
-
-        # If cancelled between chat and TTS, let it propagate
-        try:
-            response.audio = await self.tts.synthesize(response.text)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.exception("TTS synthesis failed for text: %s", response.text[:100])
-            response.error = f"TTS synthesis failed: {exc}"
-
-        return response
-
-    async def synthesize(self, text: str) -> bytes:
-        """Convert text to speech (convenience wrapper around self.tts).
-
-        Args:
-            text: Text to convert to speech.
-
-        Returns:
-            WAV audio bytes.
-        """
-        return await self.tts.synthesize(text)
-
     async def greet(self) -> VoiceResponse:
-        """Return the greeting message with synthesized audio.
+        """Return the greeting message.
 
         Returns:
-            VoiceResponse with greeting text and audio. If greeting is
-            empty or TTS fails, audio will be None.
+            VoiceResponse with greeting text.
         """
-        if not self._greeting:
-            return VoiceResponse(text="")
-
-        response = VoiceResponse(text=self._greeting)
-        try:
-            response.audio = await self.tts.synthesize(self._greeting)
-        except Exception as exc:
-            logger.exception("TTS synthesis failed for greeting")
-            response.error = f"TTS synthesis failed: {exc}"
-        return response
+        return VoiceResponse(text=self._greeting)
 
     async def create_streaming_token(self) -> StreamingToken:
         """Create an AssemblyAI streaming token and WebSocket URL for browser-side STT.

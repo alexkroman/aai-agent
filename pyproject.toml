@@ -1,7 +1,7 @@
 [project]
 name = "aai-agent"
 version = "0.1.0"
-description = "Voice agent SDK powered by AssemblyAI STT, Rime TTS, and smolagents"
+description = "Voice agent SDK powered by AssemblyAI STT and pydantic-ai"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
@@ -9,12 +9,12 @@ dependencies = [
     "cachetools>=5.0",
     "httpx>=0.28.1",
     "pydantic>=2.0",
+    "pydantic-ai>=0.2",
+    "markdownify>=0.14",
+    "logfire>=4.0",
     "python-dotenv>=1.2.1",
     "inflect>=7.0",
-    "ddgs>=9.10.0",
     "fastapi>=0.115.0",
-    "itsdangerous>=2.0",
-    "smolagents[litellm]>=1.24",
     "typer>=0.9.0",
     "uvicorn[standard]>=0.41.0",
     "websockets>=13.0",

@@ -20,7 +20,10 @@ def mock_env():
     """Patch environment with test API keys for the duration of the test."""
     with patch.dict(
         os.environ,
-        {"ASSEMBLYAI_API_KEY": "test-key", "RIME_API_KEY": "test-key"},
+        {
+            "ASSEMBLYAI_API_KEY": "test-key",
+            "ASSEMBLYAI_TTS_API_KEY": "test-tts-key",
+        },
     ):
         yield
 
@@ -40,7 +43,7 @@ def mock_agent():
     )
     agent.greeting = "Hello!"
     agent.chat = AsyncMock(
-        return_value=VoiceResponse(text="42", steps=["Using DuckDuckGoSearchTool"])
+        return_value=VoiceResponse(text="42", steps=["Using duckduckgo_search_tool"])
     )
     agent.cancel = AsyncMock()
     return agent

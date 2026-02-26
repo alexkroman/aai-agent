@@ -6,7 +6,6 @@ import type { Message, VoiceAgentResult } from "../src/types";
 
 // Mock useVoiceAgent so we can control its return values
 const mockToggleRecording = vi.fn();
-const mockSendMessage = vi.fn();
 const mockClearMessages = vi.fn();
 
 vi.mock("../src/useVoiceAgent", () => ({
@@ -16,7 +15,6 @@ vi.mock("../src/useVoiceAgent", () => ({
     phase: "idle",
     turnPhase: "listening",
     toggleRecording: mockToggleRecording,
-    sendMessage: mockSendMessage,
     clearMessages: mockClearMessages,
   })),
 }));
@@ -32,7 +30,6 @@ const defaultMock: VoiceAgentResult = {
   phase: "idle",
   turnPhase: "listening",
   toggleRecording: mockToggleRecording,
-  sendMessage: mockSendMessage,
   clearMessages: mockClearMessages,
 };
 
@@ -166,18 +163,14 @@ describe("VoiceWidget", () => {
     render(
       <VoiceWidget
         baseUrl="/api"
-        debounceMs={2000}
-        autoGreet={false}
-        bargeInMinChars={30}
+        maxMessages={50}
       />,
     );
 
     expect(mockedUseVoiceAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: "/api",
-        debounceMs: 2000,
-        autoGreet: false,
-        bargeInMinChars: 30,
+        maxMessages: 50,
       }),
     );
   });

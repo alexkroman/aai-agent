@@ -1,4 +1,9 @@
-"""aai-agent: A voice agent SDK powered by AssemblyAI, Rime, and smolagents."""
+"""aai-agent: A voice agent SDK powered by AssemblyAI and pydantic-ai."""
+
+from pydantic_ai import Tool as Tool
+from pydantic_ai.common_tools.duckduckgo import (
+    duckduckgo_search_tool as duckduckgo_search_tool,
+)
 
 from .agent import (
     DEFAULT_GREETING,
@@ -9,18 +14,14 @@ from .agent import (
 )
 from .manager import VoiceAgentManager
 from .stt import AssemblyAISTT
-from smolagents import CodeAgent, MultiStepAgent, ToolCallingAgent, tool
-from smolagents.tools import Tool
-
-from .tools import TOOL_REGISTRY
-from .tts import RimeTTS
 from .types import (
     FallbackAnswerPrompt,
     STTConfig,
     StreamingToken,
-    TTSConfig,
     VoiceResponse,
 )
+from .fastapi import create_voice_app, create_voice_router
+from .tools import visit_url_tool
 from .voice_cleaner import VoiceCleaner
 
 __all__ = [
@@ -28,20 +29,17 @@ __all__ = [
     "DEFAULT_INSTRUCTIONS",
     "FALLBACK_ANSWER_PROMPT",
     "FallbackAnswerPrompt",
+    "Tool",
     "VoiceAgent",
     "VoiceAgentManager",
     "AssemblyAISTT",
-    "RimeTTS",
     "STTConfig",
     "StreamingToken",
-    "TTSConfig",
     "VoiceResponse",
     "VOICE_RULES",
-    "CodeAgent",
-    "MultiStepAgent",
-    "Tool",
-    "ToolCallingAgent",
-    "tool",
-    "TOOL_REGISTRY",
     "VoiceCleaner",
+    "create_voice_app",
+    "create_voice_router",
+    "duckduckgo_search_tool",
+    "visit_url_tool",
 ]

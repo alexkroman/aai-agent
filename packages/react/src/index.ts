@@ -1,7 +1,6 @@
 import "./styles.css";
 export { useVoiceAgent } from "./useVoiceAgent";
-export { useSTTSocket } from "./useSTTSocket";
-export { useTTSPlayback } from "./useTTSPlayback";
+export { useSessionSocket } from "./useSessionSocket";
 export { VoiceWidget } from "./VoiceWidget";
 export { createMessageId, statusClassOf } from "./types";
 export type {
@@ -16,7 +15,5 @@ export type {
   VoiceAgentErrorCode,
   VoiceAgentOptions,
   VoiceAgentResult,
-  STTHandlers,
-  TTSHandlers,
-  AAIMessage,
 } from "./types";
+export type { SessionHandlers } from "./useSessionSocket";

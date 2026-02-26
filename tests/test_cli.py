@@ -26,7 +26,7 @@ class TestNew:
         assert env_file.exists()
         content = env_file.read_text()
         assert "ASSEMBLYAI_API_KEY" in content
-        assert "RIME_API_KEY" in content
+        assert "ASSEMBLYAI_TTS_API_KEY" in content
 
     def test_requirements_has_sdk_path(self, tmp_path):
         target = tmp_path / "proj"
@@ -66,7 +66,7 @@ class TestNew:
         content = (target / "server.py").read_text()
         assert "create_voice_app" in content
         assert "aai-agent start" in content
-        assert "@tool" in content
+        assert "def get_weather" in content
 
     def test_does_not_copy_pycache(self, tmp_path):
         target = tmp_path / "proj"

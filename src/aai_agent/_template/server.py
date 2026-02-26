@@ -6,11 +6,10 @@ Usage:
     aai-agent start
 """
 
-from aai_agent import tool
-from aai_agent.fastapi import create_voice_app
+from aai_agent import Tool, create_voice_app, duckduckgo_search_tool, visit_url_tool
 
 
-@tool
+@Tool
 def get_weather(city: str) -> str:
     """Get the current weather for a city.
 
@@ -21,5 +20,5 @@ def get_weather(city: str) -> str:
 
 
 app = create_voice_app(
-    tools=[get_weather],
+    tools=[get_weather, duckduckgo_search_tool(), visit_url_tool()],
 )

@@ -1,7 +1,5 @@
 """Tests for aai_agent.types."""
 
-import base64
-
 import pytest
 from pydantic import ValidationError
 
@@ -9,47 +7,8 @@ from aai_agent.types import (
     FallbackAnswerPrompt,
     STTConfig,
     StreamingToken,
-    TTSConfig,
     VoiceResponse,
 )
-
-
-class TestTTSConfig:
-    def test_defaults(self):
-        cfg = TTSConfig()
-        assert cfg.speaker == "lintel"
-        assert cfg.model == "arcana"
-        assert cfg.sample_rate == 24000
-        assert cfg.speed == 1.15
-        assert cfg.max_tokens == 1200
-
-    def test_custom_values(self):
-        cfg = TTSConfig(speaker="aria", model="v2", sample_rate=16000, speed=1.0)
-        assert cfg.speaker == "aria"
-        assert cfg.model == "v2"
-        assert cfg.sample_rate == 16000
-        assert cfg.speed == 1.0
-
-    def test_frozen(self):
-        cfg = TTSConfig()
-        with pytest.raises(ValidationError):
-            cfg.speaker = "other"
-
-    def test_rejects_invalid_sample_rate(self):
-        with pytest.raises(ValidationError):
-            TTSConfig(sample_rate=0)
-        with pytest.raises(ValidationError):
-            TTSConfig(sample_rate=-1)
-
-    def test_rejects_invalid_speed(self):
-        with pytest.raises(ValidationError):
-            TTSConfig(speed=0)
-        with pytest.raises(ValidationError):
-            TTSConfig(speed=-0.5)
-
-    def test_rejects_invalid_max_tokens(self):
-        with pytest.raises(ValidationError):
-            TTSConfig(max_tokens=0)
 
 
 class TestSTTConfig:
@@ -130,16 +89,8 @@ class TestVoiceResponse:
     def test_text_only(self):
         resp = VoiceResponse(text="hello")
         assert resp.text == "hello"
-        assert resp.audio is None
         assert resp.steps == []
         assert resp.error is None
-        assert resp.audio_base64 is None
-
-    def test_with_audio(self):
-        audio = b"fake-wav-data"
-        resp = VoiceResponse(text="hello", audio=audio)
-        assert resp.audio is audio
-        assert resp.audio_base64 == base64.b64encode(audio).decode()
 
     def test_with_steps(self):
         resp = VoiceResponse(text="hello", steps=["Using DuckDuckGoSearchTool"])
@@ -148,11 +99,3 @@ class TestVoiceResponse:
     def test_with_error(self):
         resp = VoiceResponse(text="hello", error="TTS synthesis failed: timeout")
         assert resp.error == "TTS synthesis failed: timeout"
-        assert resp.audio is None
-
-    def test_audio_base64_roundtrip(self):
-        original = b"\x00\x01\x02\xff"
-        resp = VoiceResponse(text="", audio=original)
-        assert resp.audio_base64 is not None
-        decoded = base64.b64decode(resp.audio_base64)
-        assert decoded == original

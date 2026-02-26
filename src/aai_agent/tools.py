@@ -1,84 +1,51 @@
-"""Re-exported smolagents tools for convenience."""
+"""Built-in tools for the voice agent."""
 
 from __future__ import annotations
 
-import logging
+import asyncio
 
-from smolagents import (
-    DuckDuckGoSearchTool,
-    PythonInterpreterTool,
-    VisitWebpageTool,
-    WikipediaSearchTool,
-)
-from smolagents.tools import Tool
+import httpx
+from pydantic_ai import Tool
 
-logger = logging.getLogger(__name__)
-
-__all__ = [
-    "AskUserTool",
-    "DuckDuckGoSearchTool",
-    "PythonInterpreterTool",
-    "VisitWebpageTool",
-    "WikipediaSearchTool",
-    "resolve_tools",
-]
+_VISIT_TIMEOUT = 15.0
+_MAX_CHARS = 8000
 
 
-class AskUserTool(Tool):
-    """Ask the user a clarifying question via voice.
-
-    Unlike smolagents' built-in UserInputTool (which calls input()),
-    this returns the question as the final answer so it gets spoken
-    aloud by TTS. The user's reply comes back as the next voice turn.
-    """
-
-    name = "ask_user"
-    description = (
-        "Ask the user a clarifying question. Use this when you need more "
-        "information to answer properly. The question will be spoken aloud."
-    )
-    inputs = {
-        "question": {
-            "type": "string",
-            "description": "The question to ask the user.",
-        }
-    }
-    output_type = "string"
-
-    def forward(self, question: str) -> str:
-        return question
+def ask_user(question: str) -> str:
+    """Ask the user a clarifying question. The question will be spoken aloud."""
+    return question
 
 
-TOOL_REGISTRY = {
-    "AskUserTool": AskUserTool,
-    "DuckDuckGoSearchTool": lambda: DuckDuckGoSearchTool(max_results=3),
-    "VisitWebpageTool": VisitWebpageTool,
-    "WikipediaSearchTool": WikipediaSearchTool,
-    "PythonInterpreterTool": PythonInterpreterTool,
-}
-
-
-def resolve_tools(tools: list[Tool | str]) -> list[Tool]:
-    """Resolve a mixed list of tool instances and string names into tool instances.
-
-    Strings are looked up in the built-in tool registry. Tool instances are
-    passed through unchanged.
+async def _visit_url(url: str) -> str:
+    """Fetch a web page and return its text content.
 
     Args:
-        tools: List of tool instances or string names (e.g. "DuckDuckGoSearchTool").
-
-    Returns:
-        List of instantiated tool objects.
+        url: The full URL to visit, e.g. "https://example.com".
     """
-    resolved: list[Tool] = []
-    for tool in tools:
-        if isinstance(tool, str):
-            factory = TOOL_REGISTRY.get(tool)
-            if factory is None:
-                raise ValueError(
-                    f"Unknown tool: {tool!r}. Available: {', '.join(TOOL_REGISTRY)}"
-                )
-            resolved.append(factory())
-        else:
-            resolved.append(tool)
-    return resolved
+    try:
+        from markdownify import markdownify
+    except ImportError:
+        markdownify = None  # type: ignore[assignment]
+
+    async with httpx.AsyncClient(
+        timeout=_VISIT_TIMEOUT, follow_redirects=True
+    ) as client:
+        resp = await client.get(url, headers={"User-Agent": "aai-agent/0.1"})
+        resp.raise_for_status()
+
+    content_type = resp.headers.get("content-type", "")
+    if "html" in content_type and markdownify is not None:
+        text = await asyncio.to_thread(
+            markdownify, resp.text, strip=["img", "script", "style"]
+        )
+    else:
+        text = resp.text
+
+    if len(text) > _MAX_CHARS:
+        text = text[:_MAX_CHARS] + "\n\n[truncated]"
+    return text
+
+
+def visit_url_tool() -> Tool:
+    """Create a tool that fetches and returns the text content of a web page."""
+    return Tool(_visit_url, name="visit_url")

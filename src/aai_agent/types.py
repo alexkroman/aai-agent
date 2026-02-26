@@ -1,23 +1,6 @@
 """Shared types for the aai-agent SDK."""
 
-import base64
-
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class TTSConfig(BaseModel):
-    """Configuration for Rime TTS."""
-
-    model_config = ConfigDict(frozen=True)
-
-    speaker: str = "lintel"
-    model: str = "arcana"
-    sample_rate: int = Field(default=24000, gt=0)
-    speed: float = Field(default=1.15, gt=0)
-    max_tokens: int = Field(default=1200, gt=0)
-    repetition_penalty: float = Field(default=1.5, gt=0)
-    temperature: float = Field(default=0.5, ge=0)
-    top_p: float = Field(default=1.0, ge=0, le=1)
 
 
 class STTConfig(BaseModel):
@@ -56,13 +39,5 @@ class VoiceResponse(BaseModel):
     """Response from a voice chat interaction."""
 
     text: str
-    audio: bytes | None = None
     steps: list[str] = Field(default_factory=list)
     error: str | None = None
-
-    @property
-    def audio_base64(self) -> str | None:
-        """Return audio as a base64-encoded string, or None."""
-        if self.audio is None:
-            return None
-        return base64.b64encode(self.audio).decode()

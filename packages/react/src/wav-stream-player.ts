@@ -97,7 +97,9 @@ export class WavStreamPlayer {
     if (!this.stream) return null;
     const requestId = crypto.randomUUID();
     this.stream.port.postMessage({ event: "interrupt", requestId });
-    let result: { trackId: string; offset: number; currentTime: number } | undefined;
+    let result:
+      | { trackId: string; offset: number; currentTime: number }
+      | undefined;
     while (!result) {
       result = this.trackSampleOffsets[requestId];
       if (!result) await new Promise((r) => setTimeout(r, 1));

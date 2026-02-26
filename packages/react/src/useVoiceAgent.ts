@@ -1,496 +1,301 @@
-import { useRef, useEffect } from "react";
-import { create } from "zustand";
-import { useShallow } from "zustand/react/shallow";
-import { debounce } from "./debounce";
-import { useSTTSocket } from "./useSTTSocket";
-import { useTTSPlayback } from "./useTTSPlayback";
+import { useCallback, useReducer, useRef } from "react";
+import { useSessionSocket } from "./useSessionSocket";
+import type { SessionHandlers } from "./useSessionSocket";
 import type {
-  VoiceStoreState,
-  VoiceDeps,
   VoiceAgentOptions,
   VoiceAgentResult,
   VoiceAgentError,
-  AAIMessage,
-  TokensResponse,
-  TTSHandlers,
+  Message,
+  MessageId,
+  MessageRole,
+  MessageType,
+  Phase,
+  TurnPhase,
 } from "./types";
 
-const DEFAULT_DEBOUNCE_MS = 1500;
-const DEFAULT_BARGE_IN_MIN_CHARS = 20;
-const DEFAULT_FETCH_TIMEOUT = 30_000;
-const DEFAULT_MAX_RECONNECT_ATTEMPTS = 3;
+// ── Reducer ──────────────────────────────────────────────────────────
+
+interface VoiceState {
+  phase: Phase;
+  turnPhase: TurnPhase;
+  messages: Message[];
+  error: VoiceAgentError | null;
+}
+
+type VoiceAction =
+  | { type: "SET_PHASE"; phase: Phase; turnPhase?: TurnPhase }
+  | { type: "ADD_MESSAGE"; message: Message; maxMessages: number }
+  | { type: "REMOVE_MESSAGE"; id: MessageId }
+  | { type: "CLEAR_MESSAGES" }
+  | { type: "SET_ERROR"; error: VoiceAgentError | null };
+
+const initialState: VoiceState = {
+  phase: "idle",
+  turnPhase: "listening",
+  messages: [],
+  error: null,
+};
+
+function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState {
+  switch (action.type) {
+    case "SET_PHASE":
+      return {
+        ...state,
+        phase: action.phase,
+        turnPhase: action.turnPhase ?? state.turnPhase,
+      };
+    case "ADD_MESSAGE": {
+      const messages = [...state.messages, action.message];
+      const max = action.maxMessages;
+      if (max > 0 && messages.length > max) {
+        return { ...state, messages: messages.slice(-max) };
+      }
+      return { ...state, messages };
+    }
+    case "REMOVE_MESSAGE":
+      return {
+        ...state,
+        messages: state.messages.filter((m) => m.id !== action.id),
+      };
+    case "CLEAR_MESSAGES":
+      return { ...state, messages: [] };
+    case "SET_ERROR":
+      return { ...state, error: action.error };
+  }
+}
+
+// ── Helper ────────────────────────────────────────────────────────────
+
+function newMessageId(): MessageId {
+  return crypto.randomUUID() as MessageId;
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────
 
 /**
- * Creates a zustand store that owns all voice-agent orchestration.
- *
- * Phase and turnPhase live in zustand as the single source of truth.
- * UI concerns like CSS classes are derived from these phases by consumers.
- *
- * Cancellation is handled by two AbortControllers:
- *   - _sessionAbort: created when connecting, aborted when returning to
- *     idle.  Every fetch in the session uses this signal, so stopping
- *     the session kills everything — no stale-finally races.
- *   - _turnAbort: created per greet/chat turn, aborted on barge-in.
- *     Lets us cancel one request without nuking the whole session.
+ * React hook that manages a full voice-agent session through a single
+ * multiplexed WebSocket. The server handles STT, turn detection, LLM,
+ * barge-in, and TTS. The browser is a thin audio I/O client.
  */
-export function createVoiceStore() {
-  return create<VoiceStoreState>((set, get) => {
-    function getDeps(): VoiceDeps {
-      const d = get()._deps;
-      if (!d)
-        throw new Error(
-          "Voice store used before dependencies were injected via _setDeps",
-        );
-      return d;
-    }
+export function useVoiceAgent({
+  baseUrl = "",
+  maxMessages = 0,
+  onError,
+  onConnect,
+  onDisconnect,
+  onTurnStart,
+  onTurnEnd,
+}: VoiceAgentOptions = {}): VoiceAgentResult {
+  const [state, dispatch] = useReducer(voiceReducer, initialState);
 
-    /** Create a turn-scoped AbortController chained to the session. */
-    function newTurnAbort(): AbortController {
-      const ac = new AbortController();
-      const sa = get()._sessionAbort;
-      sa?.signal.addEventListener("abort", () => ac.abort(), {
-        signal: ac.signal,
+  // Refs for values needed in callbacks (avoids stale closures)
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
+  const maxMessagesRef = useRef(maxMessages);
+  maxMessagesRef.current = maxMessages;
+
+  // Stable callback refs
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
+  const onDisconnectRef = useRef(onDisconnect);
+  onDisconnectRef.current = onDisconnect;
+  const onTurnStartRef = useRef(onTurnStart);
+  onTurnStartRef.current = onTurnStart;
+  const onTurnEndRef = useRef(onTurnEnd);
+  onTurnEndRef.current = onTurnEnd;
+
+  const {
+    connect: sessionConnect,
+    startCapture,
+    initPlayer,
+    disconnect: sessionDisconnect,
+    generationRef,
+  } = useSessionSocket();
+
+  // ── message helpers ────────────────────────────────────────────────
+  const addMessage = useCallback(
+    (
+      text: string,
+      role: MessageRole,
+      type: MessageType = "message",
+    ): MessageId => {
+      const id = newMessageId();
+      dispatch({
+        type: "ADD_MESSAGE",
+        message: { id, text, role, type },
+        maxMessages: maxMessagesRef.current,
       });
-      return ac;
-    }
+      return id;
+    },
+    [],
+  );
 
-    const setError = (error: VoiceAgentError | null) => {
-      set({ error });
-      if (error) getDeps().onError?.(error);
-    };
+  const removeMessage = useCallback((id: MessageId) => {
+    dispatch({ type: "REMOVE_MESSAGE", id });
+  }, []);
 
-    const ttsHandlers = (): TTSHandlers => ({
-      onSpeaking: () => get().setPhase("active", "speaking"),
-      onDone: () => {
-        if (get().phase === "active") get().setPhase("active", "listening");
-      },
-    });
+  const clearMessages = useCallback(() => {
+    dispatch({ type: "CLEAR_MESSAGES" });
+  }, []);
 
-    return {
-      // ── state ────────────────────────────────────────────────────────────
-      phase: "idle",
-      turnPhase: "listening",
-      messages: [],
-      error: null,
+  // ── phase helpers ──────────────────────────────────────────────────
+  const setPhase = useCallback((phase: Phase, turnPhase?: TurnPhase) => {
+    phaseRef.current = phase;
+    dispatch({ type: "SET_PHASE", phase, turnPhase });
+  }, []);
 
-      // ── internal state ─────────────────────────────────────────────────
-      _sessionAbort: null,
-      _turnAbort: null,
-      _turnText: "",
-      _debouncedSend: null,
-      _deps: null,
+  const setError = useCallback((error: VoiceAgentError | null) => {
+    dispatch({ type: "SET_ERROR", error });
+    if (error) onErrorRef.current?.(error);
+  }, []);
 
-      // ── dep injection (called every render) ──────────────────────────────
-      _setDeps: (d) => {
-        set({ _deps: d });
-      },
-      _initDebounce: (ms) => {
-        get()._debouncedSend?.cancel();
-        set({
-          _debouncedSend: debounce(() => get().sendTurnToAgent(), ms),
-        });
-      },
+  // ── stop ───────────────────────────────────────────────────────────
+  const stopRecording = useCallback(() => {
+    if (phaseRef.current === "idle") return;
+    sessionDisconnect();
+    setPhase("idle", "listening");
+    onDisconnectRef.current?.();
+  }, [sessionDisconnect, setPhase]);
 
-      // ── phase transitions ────────────────────────────────────────────────
-      setPhase: (p, tp) => {
-        set(tp ? { phase: p, turnPhase: tp } : { phase: p });
-      },
+  // ── start ──────────────────────────────────────────────────────────
+  const startRecording = useCallback(async () => {
+    if (phaseRef.current !== "idle") return;
 
-      // ── state helpers ────────────────────────────────────────────────────
-      addMessage: (text, role, type = "message") => {
-        const id = crypto.randomUUID() as import("./types").MessageId;
-        set((s) => {
-          const messages = [...s.messages, { id, text, role, type }];
-          const max = s._deps?.maxMessages ?? 0;
-          if (max > 0 && messages.length > max) {
-            return { messages: messages.slice(-max) };
-          }
-          return { messages };
-        });
-        return id;
-      },
-      removeMessage: (id) =>
-        set((s) => ({ messages: s.messages.filter((m) => m.id !== id) })),
-      clearMessages: () => set({ messages: [] }),
+    setPhase("connecting");
+    dispatch({ type: "SET_ERROR", error: null });
 
-      // ── orchestration actions ────────────────────────────────────────────
-      bargeIn: () => {
-        const d = getDeps();
-        const ta = get()._turnAbort;
-        if (ta) {
-          ta.abort();
-          set({ _turnAbort: null });
-        }
-        d.ttsStop();
-        d.sendClear();
-        d.onBargeIn?.();
-        fetch(`${d.baseUrl}/cancel`, { method: "POST" }).catch(() => {});
-      },
+    let thinkingId: MessageId | null = null;
 
-      sendTurnToAgent: async () => {
-        const d = getDeps();
-        const { addMessage, removeMessage, bargeIn, setPhase } = get();
-        const text = get()._turnText.trim();
-        set({ _turnText: "" });
-        if (!text) return;
+    // Capture the generation at connect time so async init steps
+    // (initPlayer, startCapture) can detect if disconnect was called.
+    const gen = generationRef.current;
 
-        if (get()._turnAbort) bargeIn();
-
-        d.onTurnStart?.(text);
-        addMessage(text, "user");
-
-        const thinkingId = addMessage("", "assistant", "thinking");
-        setPhase("active", "processing");
-
-        const abort = newTurnAbort();
-        set({ _turnAbort: abort });
-
+    const handlers: SessionHandlers = {
+      onReady: async (sampleRate, ttsSampleRate) => {
+        if (phaseRef.current !== "connecting") return;
         try {
-          const resp = await fetch(`${d.baseUrl}/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
-            signal: abort.signal,
-          });
-
-          const data = (await resp.json()) as {
-            text?: string;
-            steps?: string[];
-          };
-          removeMessage(thinkingId);
-
-          const replyText = data.text || "";
-          if (replyText) {
-            addMessage(replyText, "assistant");
-            d.ttsSpeak(replyText, ttsHandlers());
-          }
-          d.onTurnEnd?.(replyText);
-        } catch (err) {
-          removeMessage(thinkingId);
-          if (err instanceof Error && err.name !== "AbortError") {
-            const error: VoiceAgentError = {
-              code: "chat_error",
-              message: "Failed to get response from agent",
-              cause: err,
-            };
-            setError(error);
-            addMessage("Sorry, something went wrong.", "assistant");
-          }
-        } finally {
-          if (get()._turnAbort === abort) set({ _turnAbort: null });
-          if (get().phase === "active" && !d.speakingRef.current) {
-            setPhase("active", "listening");
-          }
-        }
-      },
-
-      sendMessage: async (text: string) => {
-        get()._debouncedSend?.cancel();
-        set({ _turnText: text });
-        await get().sendTurnToAgent();
-      },
-
-      handleAAIMessage: (msg: AAIMessage) => {
-        if (msg.type !== "Turn") return;
-        const text = msg.transcript?.trim();
-        if (!text) return;
-
-        const d = getDeps();
-        if (
-          d.enableBargeIn &&
-          d.speakingRef.current &&
-          text.length >= d.bargeInMinChars
-        ) {
-          get().bargeIn();
-          get().setPhase("active", "listening");
-        }
-
-        if (msg.turn_is_formatted) {
-          set({ _turnText: text });
-          get()._debouncedSend?.();
-        }
-      },
-
-      greet: async () => {
-        const d = getDeps();
-        const { addMessage, bargeIn } = get();
-
-        if (get()._turnAbort) bargeIn();
-        const abort = newTurnAbort();
-        set({ _turnAbort: abort });
-
-        try {
-          const resp = await fetch(`${d.baseUrl}/greet`, {
-            method: "POST",
-            signal: abort.signal,
-          });
-          if (get().phase !== "active") return;
-          if (resp.status === 204) return;
-
-          const data = (await resp.json()) as { text?: string };
-          if (data.text) {
-            addMessage(data.text, "assistant");
-            d.ttsSpeak(data.text, ttsHandlers());
-          }
-        } catch (err) {
-          if (err instanceof Error && err.name !== "AbortError") {
-            console.error("Greeting error:", err);
-          }
-        } finally {
-          if (get()._turnAbort === abort) set({ _turnAbort: null });
-        }
-      },
-
-      reconnectSTT: async () => {
-        const d = getDeps();
-        if (get().phase !== "active" || !d.reconnect) return;
-
-        for (let attempt = 1; attempt <= d.maxReconnectAttempts; attempt++) {
-          try {
-            await new Promise((r) =>
-              setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000)),
-            );
-            if (get().phase !== "active") return;
-
-            const resp = await fetch(`${d.baseUrl}/tokens`, {
-              signal: get()._sessionAbort?.signal,
-            });
-            const { wss_url }: TokensResponse = await resp.json();
-
-            await d.sttConnect(wss_url, {
-              onMessage: get().handleAAIMessage,
-              onUnexpectedClose: () => {
-                if (get().phase === "active") get().reconnectSTT();
-              },
-            });
-
-            get().setPhase("active", "listening");
-            return;
-          } catch (err) {
-            if (err instanceof Error && err.name === "AbortError") return;
-            console.warn(`STT reconnect attempt ${attempt} failed:`, err);
-          }
-        }
-
-        const error: VoiceAgentError = {
-          code: "reconnect_failed",
-          message: "Failed to reconnect to speech recognition",
-        };
-        setError(error);
-        get().stopRecording();
-      },
-
-      stopRecording: () => {
-        if (get().phase === "idle") return;
-        const d = getDeps();
-
-        // Abort the session — kills ALL in-flight fetches (connect, greet, chat)
-        const sa = get()._sessionAbort;
-        if (sa) {
-          sa.abort();
-          set({ _sessionAbort: null, _turnAbort: null });
-        } else {
-          set({ _turnAbort: null });
-        }
-
-        get()._debouncedSend?.cancel();
-        d.ttsStop();
-        d.sendClear();
-        d.sttDisconnect();
-        d.ttsDisconnect();
-
-        get().setPhase("idle", "listening");
-
-        d.onDisconnect?.();
-        fetch(`${d.baseUrl}/reset`, { method: "POST" }).catch(() => {});
-      },
-
-      startRecording: async () => {
-        if (get().phase !== "idle") return;
-
-        const d = getDeps();
-        const {
-          handleAAIMessage,
-          greet,
-          stopRecording,
-          reconnectSTT,
-          setPhase,
-        } = get();
-
-        // Create session-scoped abort — stopRecording kills it
-        const sa = new AbortController();
-        set({ _sessionAbort: sa });
-        const signal = sa.signal;
-
-        setPhase("connecting");
-        set({ error: null });
-
-        try {
-          const resp = await fetch(`${d.baseUrl}/tokens`, { signal });
-          if (get().phase !== "connecting") return;
-
-          const { wss_url, sample_rate, tts_enabled, tts_sample_rate }:
-            TokensResponse = await resp.json();
-
-          await d.sttConnect(wss_url, {
-            onMessage: handleAAIMessage,
-            onUnexpectedClose: () => {
-              if (get().phase === "active") {
-                if (d.reconnect) {
-                  reconnectSTT();
-                } else {
-                  const error: VoiceAgentError = {
-                    code: "websocket_closed",
-                    message:
-                      "Speech recognition connection closed unexpectedly",
-                  };
-                  setError(error);
-                }
-              }
-            },
-          });
-          if (get().phase !== "connecting") return;
-
-          // Connect TTS WebSocket if server has TTS configured
-          if (tts_enabled) {
-            try {
-              await d.ttsConnect(`${d.baseUrl}/tts`, tts_sample_rate);
-            } catch (err) {
-              console.warn(
-                "TTS connection failed, continuing without audio:",
-                err,
-              );
-            }
-          }
-          if (get().phase !== "connecting") return;
-
-          await d.startCapture(sample_rate);
-          if (get().phase !== "connecting") return;
-
-          set({ _turnText: "" });
+          await initPlayer(ttsSampleRate, gen);
+          await startCapture(sampleRate, gen);
+          // Check generation — if disconnect ran during the awaits above,
+          // the generation will have changed and we should bail out.
+          if (gen !== generationRef.current) return;
+          if (phaseRef.current !== "connecting") return;
           setPhase("active", "listening");
-
-          d.onConnect?.();
-          if (d.autoGreet) greet();
+          onConnectRef.current?.();
         } catch (err) {
-          if (get().phase !== "connecting") return;
+          // If session was torn down, don't report errors
+          if (gen !== generationRef.current) return;
 
           const isMicDenied =
             err instanceof DOMException &&
             (err.name === "NotAllowedError" ||
               err.name === "PermissionDeniedError");
 
-          const error: VoiceAgentError = {
+          setError({
             code: isMicDenied ? "mic_denied" : "connection_failed",
             message: isMicDenied
               ? "Microphone access denied"
               : "Failed to start voice session",
             cause: err,
-          };
-          setError(error);
-          console.error("Failed to start recording:", err);
+          });
           stopRecording();
         }
       },
-
-      toggleRecording: () => {
-        if (get().phase === "idle") get().startRecording();
-        else get().stopRecording();
+      onTurn: (text) => {
+        onTurnStartRef.current?.(text);
+        addMessage(text, "user");
+      },
+      onThinking: () => {
+        thinkingId = addMessage("", "assistant", "thinking");
+        setPhase("active", "processing");
+      },
+      onChat: (text) => {
+        if (thinkingId) {
+          removeMessage(thinkingId);
+          thinkingId = null;
+        }
+        if (text) {
+          addMessage(text, "assistant");
+        }
+        onTurnEndRef.current?.(text);
+      },
+      onGreeting: (text) => {
+        addMessage(text, "assistant");
+      },
+      onTTSDone: () => {
+        if (phaseRef.current === "active") {
+          setPhase("active", "listening");
+        }
+      },
+      onSpeaking: () => {
+        if (phaseRef.current === "active") {
+          setPhase("active", "speaking");
+        }
+      },
+      onError: (message) => {
+        if (thinkingId) {
+          removeMessage(thinkingId);
+          thinkingId = null;
+        }
+        setError({ code: "chat_error", message });
+      },
+      onCancelled: () => {
+        if (thinkingId) {
+          removeMessage(thinkingId);
+          thinkingId = null;
+        }
+        if (phaseRef.current === "active") {
+          setPhase("active", "listening");
+        }
+      },
+      onClose: () => {
+        // Server closed the WebSocket — reset to idle
+        if (phaseRef.current !== "idle") {
+          setPhase("idle", "listening");
+          onDisconnectRef.current?.();
+        }
       },
     };
-  });
-}
 
-/**
- * React hook that manages a full voice-agent session: microphone capture,
- * real-time STT via AssemblyAI WebSocket, agent chat, and TTS playback.
- */
-export function useVoiceAgent({
-  baseUrl = "",
-  debounceMs = DEFAULT_DEBOUNCE_MS,
-  autoGreet = true,
-  bargeInMinChars = DEFAULT_BARGE_IN_MIN_CHARS,
-  enableBargeIn = true,
-  maxMessages = 0,
-  reconnect = true,
-  maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
-  fetchTimeout = DEFAULT_FETCH_TIMEOUT,
-  onError,
-  onConnect,
-  onDisconnect,
-  onBargeIn,
-  onTurnStart,
-  onTurnEnd,
-}: VoiceAgentOptions = {}): VoiceAgentResult {
-  const useStoreRef = useRef<ReturnType<typeof createVoiceStore> | null>(null);
-  if (!useStoreRef.current) useStoreRef.current = createVoiceStore();
-  const useStore = useStoreRef.current;
-
-  const {
-    connect: sttConnect,
-    startCapture,
-    disconnect: sttDisconnect,
-    sendClear,
-  } = useSTTSocket();
-  const {
-    connect: ttsConnect,
-    speak: ttsSpeak,
-    stop: ttsStop,
-    disconnect: ttsDisconnect,
-    speakingRef,
-  } = useTTSPlayback();
-
-  // Keep external deps current every render
-  useStore.getState()._setDeps({
+    try {
+      const sessionUrl = `${baseUrl}/session`;
+      await sessionConnect(sessionUrl, handlers);
+    } catch (err) {
+      if ((phaseRef.current as Phase) !== "connecting") return;
+      setError({
+        code: "connection_failed",
+        message: "Failed to connect to voice session",
+        cause: err,
+      });
+      console.error("Failed to start recording:", err);
+      stopRecording();
+    }
+  }, [
     baseUrl,
-    autoGreet,
-    bargeInMinChars,
-    enableBargeIn,
-    maxMessages,
-    reconnect,
-    maxReconnectAttempts,
-    fetchTimeout,
-    sttConnect,
+    sessionConnect,
     startCapture,
-    sttDisconnect,
-    sendClear,
-    ttsConnect,
-    ttsSpeak,
-    ttsStop,
-    ttsDisconnect,
-    speakingRef,
-    onError,
-    onConnect,
-    onDisconnect,
-    onBargeIn,
-    onTurnStart,
-    onTurnEnd,
-  });
+    initPlayer,
+    generationRef,
+    stopRecording,
+    addMessage,
+    removeMessage,
+    setPhase,
+    setError,
+  ]);
 
-  useEffect(() => {
-    useStore.getState()._initDebounce(debounceMs);
-  }, [useStore, debounceMs]);
-
-  // Actions are stable references — select them once, not through useShallow
-  const { toggleRecording, sendMessage, clearMessages } = useStore.getState();
-
-  // Only reactive state goes through the selector
-  const { messages, error, phase, turnPhase } = useStore(
-    useShallow((s: VoiceStoreState) => ({
-      messages: s.messages,
-      error: s.error,
-      phase: s.phase,
-      turnPhase: s.turnPhase,
-    })),
-  );
+  const toggleRecording = useCallback(() => {
+    if (phaseRef.current === "idle") startRecording();
+    else stopRecording();
+  }, [startRecording, stopRecording]);
 
   return {
-    messages,
-    error,
-    phase,
-    turnPhase,
+    messages: state.messages,
+    error: state.error,
+    phase: state.phase,
+    turnPhase: state.turnPhase,
     toggleRecording,
-    sendMessage,
     clearMessages,
   };
 }
