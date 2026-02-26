@@ -16,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeSerializer
 
+from smolagents.tools import Tool
+
 from .manager import VoiceAgentManager
 from .tts import RimeTTS
 
@@ -199,7 +201,7 @@ def create_voice_router(
 
 def create_voice_app(
     *,
-    tools: list[str] | None = None,
+    tools: list[Tool | str] | None = None,
     agent_manager: VoiceAgentManager | None = None,
     cors_origins: list[str] | None = None,  # None = use defaults
     static_dir: str | None = "static",
@@ -232,15 +234,22 @@ def create_voice_app(
 
     Example::
 
+        from aai_agent import tool
         from aai_agent.fastapi import create_voice_app
 
-        app = create_voice_app(
-            tools=["DuckDuckGoSearchTool", "VisitWebpageTool"],
-            static_dir="static",
-        )
+        @tool
+        def get_weather(city: str) -> str:
+            \"\"\"Get the current weather for a city.
+
+            Args:
+                city: The city to get weather for.
+            \"\"\"
+            return f"72°F and sunny in {city}."
+
+        app = create_voice_app(tools=[get_weather])
     """
     if agent_manager is None:
-        agent_manager = VoiceAgentManager(tools=tools)  # type: ignore[arg-type]
+        agent_manager = VoiceAgentManager(tools=tools)
 
     app = FastAPI()
 

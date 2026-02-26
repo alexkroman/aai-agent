@@ -14,31 +14,42 @@ Everything is configured by passing arguments to `create_voice_app()` or by crea
 
 ### Add Tools
 
+Use the `@tool` decorator to create custom tools:
+
 ```python
-app = create_voice_app(
-    tools=["DuckDuckGoSearchTool", "VisitWebpageTool"],
-)
+from aai_agent import tool
+from aai_agent.fastapi import create_voice_app
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city.
+
+    Args:
+        city: The city to get weather for, e.g. "San Francisco".
+    """
+    return f"The weather in {city} is 72°F and sunny."
+
+app = create_voice_app(tools=[get_weather])
 ```
 
-Available built-in tools (pass as strings): `DuckDuckGoSearchTool`, `VisitWebpageTool`, `WikipediaSearchTool`, `PythonInterpreterTool`.
+You can also pass built-in tools by name: `"DuckDuckGoSearchTool"`, `"VisitWebpageTool"`, `"WikipediaSearchTool"`, `"PythonInterpreterTool"`.
 
 ### Create a Custom Tool
 
 ```python
-from smolagents.tools import Tool
+from aai_agent import tool
+from aai_agent.fastapi import create_voice_app
 
-class MyTool(Tool):
-    name = "my_tool"
-    description = "Describe what this tool does — the LLM reads this."
-    inputs = {
-        "query": {"type": "string", "description": "The search query."}
-    }
-    output_type = "string"
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city.
 
-    def forward(self, query: str) -> str:
-        return f"Result for {query}"
+    Args:
+        city: The city to get weather for, e.g. "San Francisco".
+    """
+    return f"The weather in {city} is 72°F and sunny."
 
-app = create_voice_app(tools=[MyTool()])
+app = create_voice_app(tools=[get_weather])
 ```
 
 ### Change Personality, Voice, Greeting, or Model

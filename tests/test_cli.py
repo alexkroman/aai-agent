@@ -66,6 +66,7 @@ class TestInit:
         content = (target / "server.py").read_text()
         assert "create_voice_app" in content
         assert "aai-agent start" in content
+        assert "@tool" in content
 
     def test_does_not_copy_pycache(self, tmp_path):
         target = tmp_path / "proj"

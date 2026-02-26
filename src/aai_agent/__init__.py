@@ -12,8 +12,7 @@ from .stt import AssemblyAISTT
 from smolagents import CodeAgent, MultiStepAgent, ToolCallingAgent, tool
 from smolagents.tools import Tool
 
-from .indexer import KnowledgeBaseIndexer
-from .tools import TOOL_REGISTRY, KnowledgeBaseTool, WebTool
+from .tools import TOOL_REGISTRY
 from .tts import RimeTTS
 from .types import (
     FallbackAnswerPrompt,
@@ -43,9 +42,6 @@ __all__ = [
     "Tool",
     "ToolCallingAgent",
     "tool",
-    "KnowledgeBaseIndexer",
-    "KnowledgeBaseTool",
     "TOOL_REGISTRY",
-    "WebTool",
     "VoiceCleaner",
 ]
