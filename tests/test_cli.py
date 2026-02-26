@@ -66,3 +66,18 @@ class TestInit:
         content = (target / "server.py").read_text()
         assert "create_voice_app" in content
         assert "aai-agent start" in content
+
+    def test_does_not_copy_pycache(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        assert not (target / "__pycache__").exists()
+
+    def test_does_not_copy_venv(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        assert not (target / ".venv").exists()
+
+    def test_does_not_copy_dotenv(self, tmp_path):
+        target = tmp_path / "proj"
+        runner.invoke(app, ["init", str(target)])
+        assert not (target / ".env").exists()

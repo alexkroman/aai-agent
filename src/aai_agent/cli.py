@@ -12,6 +12,9 @@ app = typer.Typer(
 
 TEMPLATE_DIR = Path(__file__).parent / "_template"
 
+# Files/dirs that should never be copied from the template directory.
+_TEMPLATE_IGNORE = {"__pycache__", ".venv", ".env"}
+
 
 @app.callback()
 def callback():
@@ -32,11 +35,13 @@ def init(
     """
     target = Path(directory).resolve()
 
+    template_items = [
+        item for item in TEMPLATE_DIR.iterdir() if item.name not in _TEMPLATE_IGNORE
+    ]
+
     if not force:
         existing = [
-            item.name
-            for item in TEMPLATE_DIR.iterdir()
-            if (target / item.name).exists()
+            item.name for item in template_items if (target / item.name).exists()
         ]
         if existing:
             typer.echo(f"Files already exist: {', '.join(existing)}")
@@ -45,7 +50,7 @@ def init(
 
     target.mkdir(parents=True, exist_ok=True)
 
-    for item in TEMPLATE_DIR.iterdir():
+    for item in template_items:
         dest = target / item.name
         if item.is_dir():
             shutil.copytree(item, dest, dirs_exist_ok=True)
