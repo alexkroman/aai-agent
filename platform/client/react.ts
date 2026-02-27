@@ -12,7 +12,7 @@ import {
 
 // Import React from the customer's bundle (peer dependency)
 // @ts-expect-error — React is provided by the customer, not bundled
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 
 export type { AgentState, Message, ToolDef };
 
@@ -31,6 +31,13 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
+
+  // Memoize config/tools so changes trigger reconnection
+  const configKey = useMemo(() => JSON.stringify(opts.config ?? {}), [opts.config]);
+  const toolNames = useMemo(
+    () => (opts.tools ? Object.keys(opts.tools).sort().join(",") : ""),
+    [opts.tools]
+  );
 
   // Update refs on every render so useEffect always has latest values
   configRef.current = opts.config;
@@ -71,7 +78,7 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
     return () => {
       session.disconnect();
     };
-  }, [opts.apiKey, opts.platformUrl]);
+  }, [opts.apiKey, opts.platformUrl, configKey, toolNames]);
 
   const cancel = useCallback(() => {
     sessionRef.current?.cancel();
