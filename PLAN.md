@@ -2,38 +2,44 @@
 
 ## Goal
 
-Replace the entire Python codebase with a TypeScript platform server. Customers
-write raw TypeScript — no SDK. The architecture uses two WebSocket connections,
-both terminating at the platform:
+Replace the entire Python codebase with a TypeScript platform server. The
+platform serves a client library (`client.js`) that handles all WebSocket,
+audio, and tool serialization logic. Customers write only their agent config
+and tool handlers — no boilerplate.
 
 ```
-┌──────────────┐         WS 1          ┌──────────────┐         WS 2          ┌──────────────┐
-│   Customer   │◄──────────────────────►│   Platform   │◄──────────────────────►│   Customer   │
-│   Frontend   │  audio + UI events     │   Server     │  config + tool events  │   Backend    │
-│  (browser)   │                        │  (Node.js)   │                        │  (Node.js)   │
-└──────────────┘                        └──────────────┘                        └──────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                      Browser                              │
+│                                                           │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  Customer code: config + tools (~25 lines)        │    │
+│  │  (single JS file or inline <script>)              │    │
+│  └──────────┬───────────────────────────────────────┘    │
+│             │ calls                                       │
+│  ┌──────────▼───────────────────────────────────────┐    │
+│  │  client.js (served by platform / CDN)             │    │
+│  │  WebSocket, PCM16 audio, tool serialization       │    │
+│  │  Default UI (or React hook for custom UI)         │    │
+│  └──────────┬───────────────────────────────────────┘    │
+│             │ Single WebSocket                            │
+└─────────────┼────────────────────────────────────────────┘
+              │
+       ┌──────┴───────┐
+       │   Platform    │
+       │  STT/LLM/TTS  │
+       │  Secret store  │
+       │  V8 sandbox    │◄── runs handlers with secrets + fetch injected
+       └───────────────┘
 ```
 
-- **WS 1**: Customer frontend ↔ Platform (direct). Audio (PCM16 binary frames)
-  and UI events (transcript, thinking, chat, tts_done, greeting, error).
-  Frontend connects directly to the platform using an `agentId` returned
-  by the `configured` response. Each frontend connection creates a new session.
-- **WS 2**: Customer backend ↔ Platform (persistent). Configuration, tool calls
-  (tagged with `sessionId`), tool results, and session lifecycle events.
-  One backend connection handles all sessions for that customer.
+No backend. No npm. No build tools (unless customer wants React).
+Tool handlers are serialized on every session start and executed on the
+platform in a V8 sandbox. The sandbox provides `ctx.secrets` (from platform
+secret store) and `ctx.fetch` (proxied HTTP, no CORS).
 
-**Key simplifications**:
-- The customer backend does NOT relay frontend traffic. The frontend connects
-  directly to the platform. No backend WebSocket server, no relay code.
-- The backend is a persistent service, not per-session. One WS connection
-  handles N concurrent frontend sessions via `sessionId`-tagged messages.
-- The `agentId` is safe to embed in the frontend — it identifies the agent
-  config, not a secret. The API key stays server-side.
-- The customer backend is a single ~60-line file with reconnection logic.
+**Most minimal voice agent**: one HTML file, ~30 lines, zero dependencies.
+**With custom React UI**: `agent.ts` + `App.tsx`, import hook from platform CDN.
 
-The customer frontend is purely UI + audio capture/playback. The customer backend
-configures the agent and handles tool execution. The platform owns everything in
-between: STT, LLM orchestration, TTS, session management.
 
 ---
 
@@ -42,58 +48,69 @@ between: STT, LLM orchestration, TTS, session management.
 ### Connection Flow
 
 ```
-Backend (runs once, persistent):
-1. Customer backend connects to platform via WS 2
-2. Customer backend sends "configure" message with instructions, tools, voice
-3. Platform acknowledges with "configured" + agentId
-4. Backend stays connected, handling tool calls for all sessions
-   (reconnects automatically with exponential backoff if disconnected)
-
-Frontend (per-user):
-5. Customer frontend connects to platform via WS 1 using agentId
-   (wss://platform.example.com/session?agent=AGENT_ID)
-6. Platform creates a new session, links it to the backend
-7. Platform connects to STT provider, sends "ready" to frontend
-8. Platform sends greeting to frontend (text + TTS audio)
-9. Platform sends "session_started" to backend with sessionId
+1. Browser opens WebSocket to platform (wss://platform.example.com/session?key=PUBLISHABLE_KEY)
+2. Browser sends "configure" message with config, tools (handlers serialized as strings)
+3. Platform creates V8 sandbox, loads handler code + injects secrets
+4. Platform connects to STT provider, sends "ready" to browser
+5. Platform sends greeting (text + TTS audio)
 
 Voice loop:
-10. Frontend sends mic audio (binary) → Platform relays to STT
-11. STT returns transcript → Platform sends to frontend
-12. STT returns final turn → Platform sends to LLM
-13. LLM requests tool call → Platform sends tool_call to backend (with sessionId)
-14. Backend executes tool, sends tool_result (with sessionId) → Platform feeds to LLM
-15. LLM produces response → Platform sends chat to frontend + starts TTS
-16. TTS audio streams to frontend (binary)
+6.  Browser sends mic audio (binary) → Platform relays to STT
+7.  STT returns transcript → Platform sends to browser
+8.  STT returns final turn → Platform sends to LLM
+9.  LLM requests tool call → Platform runs handler in V8 sandbox
+    (handler has access to ctx.secrets and ctx.fetch)
+10. Handler returns result → Platform feeds to LLM
+11. LLM produces response → Platform sends chat to browser + starts TTS
+12. TTS audio streams to browser (binary)
 ```
 
-### Deployment Model
+Key difference from traditional architectures: **there is no tool_call/tool_result
+round-trip to a backend**. The platform executes the handler code directly.
+Tool execution is single-digit milliseconds of overhead (V8 isolate startup)
+instead of a network round-trip.
+
+### Deployment
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  Customer Frontend  │     │      Platform        │     │  Customer Backend   │
-│  (Vercel, Netlify,  │────►│  (always running,    │◄────│  (Railway, Fly,     │
-│   S3+CF, any CDN)   │     │   managed by us)     │     │   Render, Docker)   │
-│                     │     │                      │     │                     │
-│  Static React app   │     │  Node.js WS server   │     │  Long-running       │
-│  No server needed   │     │                      │     │  WS client process  │
-└─────────────────────┘     └──────────────────────┘     └─────────────────────┘
+┌──────────────────────┐          ┌─────────────────────────────┐
+│  Customer App        │          │         Platform             │
+│  (any static host,   │          │   (managed by us)            │
+│   or just localhost)  │          │                              │
+│                      │          │  Serves: client.js, react.js │
+│  index.html          │◄─ JS ──│  (client library via CDN)     │
+│  (or React app)      │         │                               │
+│                      │── WS ──►│  STT, LLM, TTS               │
+│                      │         │  Secret store                 │
+│                      │         │  V8 sandbox for tools          │
+└──────────────────────┘          └──────────────────────────────┘
 ```
 
-- **Frontend**: Static files. Deploy anywhere (Vercel, Netlify, S3+CloudFront).
-  No server required. The `agentId` is baked into the build via env var.
-- **Backend**: A long-running process that maintains a persistent WebSocket to
-  the platform. Deploy on any service that supports long-running processes
-  (Railway, Fly.io, Render, a VM, Docker). NOT a serverless function — it
-  needs a persistent connection.
-- **Platform**: Managed by us. Customers never deploy this.
+- **Customer app**: Static files (even just one HTML file). Deploy anywhere.
+- **Platform**: Managed by us. Serves client library. Stores secrets. Runs tool handlers in sandbox.
 
-### WebSocket 1: Platform ↔ Customer Frontend
+### WebSocket Protocol (Browser ↔ Platform)
 
-The frontend only handles audio and display. No business logic.
+One WebSocket. Browser sends config + audio. Platform sends events + audio.
 
-**Frontend sends:**
+**Browser sends:**
 ```typescript
+// On connect — configure the agent for this session:
+{
+  type: "configure",
+  instructions: "You are a helpful weather assistant.",
+  greeting: "Hey! Ask me about the weather.",
+  voice: "jess",
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get current weather for a city",
+      parameters: { city: { type: "string", description: "City name" } },
+      handler: "async (args, ctx) => { ... }"   // serialized function string
+    }
+  ]
+}
+
 // Binary frames: PCM16 LE mic audio
 
 // JSON control messages:
@@ -101,7 +118,7 @@ The frontend only handles audio and display. No business logic.
 { type: "reset" }      // reset conversation
 ```
 
-**Platform sends to frontend:**
+**Platform sends to browser:**
 ```typescript
 // Binary frames: PCM16 LE TTS audio
 
@@ -117,50 +134,6 @@ The frontend only handles audio and display. No business logic.
 { type: "error", message: "something went wrong" }
 ```
 
-### WebSocket 2: Platform ↔ Customer Backend
-
-The backend configures the agent and handles tool execution.
-
-**Backend sends:**
-```typescript
-// Initial configuration (required, sent once after connecting):
-{
-  type: "configure",
-  instructions: "You are a helpful weather assistant.",
-  greeting: "Hey! Ask me about the weather.",
-  voice: "jess",
-  model: "claude-haiku-4-5-20251001",                  // optional, has default
-  voiceRules: "Keep responses to 1-2 sentences...",     // optional, has default
-  sttConfig: { ... },                                   // optional, has defaults
-  ttsConfig: { ... },                                   // optional, has defaults
-  tools: [
-    {
-      name: "get_weather",
-      description: "Get current weather for a city",
-      parameters: { city: "string" }                    // simplified format, platform converts to JSON Schema
-    }
-  ]
-}
-
-// Tool results (sent in response to tool_call):
-{
-  type: "tool_result",
-  callId: "abc123",
-  sessionId: "sess_xyz",                                 // must match the tool_call's sessionId
-  result: "72°F and sunny in San Francisco"
-}
-```
-
-**Platform sends to backend:**
-```typescript
-{ type: "configured", agentId: "agent_abc123", defaultUrl: "https://platform.example.com/a/agent_abc123" }  // agent ready
-{ type: "session_started", sessionId: "sess_xyz" }                                       // a frontend connected
-{ type: "tool_call", callId: "call_123", sessionId: "sess_xyz", name: "get_weather", args: { city: "SF" } }
-{ type: "tool_timeout", callId: "call_123", sessionId: "sess_xyz" }                      // 30s elapsed, platform gave up
-{ type: "session_ended", sessionId: "sess_xyz", reason: "disconnect" }                   // frontend disconnected
-{ type: "error", message: "LLM call failed", sessionId: "sess_xyz" }                     // session-scoped error
-```
-
 ---
 
 ## Platform Server (TypeScript/Node.js)
@@ -172,15 +145,20 @@ platform/
 ├── package.json
 ├── tsconfig.json
 ├── src/
-│   ├── index.ts              # Entry point, starts WS server
+│   ├── index.ts              # Entry point, starts HTTP + WS server
 │   ├── server.ts             # WebSocket server setup (ws library)
 │   ├── session.ts            # VoiceSession class — orchestrates one conversation
+│   ├── sandbox.ts            # V8 isolate manager for tool handler execution
 │   ├── stt.ts                # STT client (AssemblyAI WebSocket + token creation)
 │   ├── tts.ts                # TTS client (Orpheus WebSocket relay)
 │   ├── llm.ts                # LLM client (AssemblyAI LLM Gateway, OpenAI-compat)
 │   ├── voice-cleaner.ts      # Text normalization for TTS
 │   ├── types.ts              # All TypeScript interfaces and message types
 │   └── protocol.ts           # Message parsing, validation, simplified→JSON Schema conversion
+├── client/                   # Client library (served via HTTP)
+│   ├── core.ts               # Shared: WS protocol, tool serialization, audio
+│   ├── client.ts             # Vanilla JS: VoiceAgent.start() + default UI
+│   └── react.ts              # React hook: useVoiceAgent()
 ```
 
 ### Key Dependencies
@@ -190,24 +168,25 @@ platform/
   "dependencies": {
     "ws": "^8.0.0",
     "zod": "^3.0.0",
-    "undici": "^7.0.0"
+    "isolated-vm": "^5.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
     "@types/ws": "^8.0.0",
+    "esbuild": "^0.24.0",
     "vitest": "^3.0.0"
   }
 }
 ```
 
-- **`ws`** — WebSocket server and client. Handles both frontend connections
-  (WS 1) and outbound STT/TTS connections.
-- **`zod`** — Runtime validation of all incoming messages (configure, tool_result)
-  and config schemas.
-- **`undici`** — HTTP client for LLM Gateway calls and STT token creation.
-  Built into Node.js 18+.
+- **`ws`** — WebSocket server and client. Handles browser connections
+  and outbound STT/TTS connections.
+- **`zod`** — Runtime validation of incoming messages (configure, etc.)
+- **`isolated-vm`** — V8 isolate sandbox for running customer tool handlers
+  securely with memory/CPU limits. Same isolation model as Cloudflare Workers.
+- **`esbuild`** — Bundles `client/` into `client.js` and `react.js` for serving.
 - No framework (no Express, no Fastify). Just `ws` + `http.createServer` for
-  the health endpoint.
+  the health endpoint and client library serving.
 
 ### Core Class: `VoiceSession`
 
@@ -215,21 +194,21 @@ Each conversation is a `VoiceSession` instance that manages:
 
 ```typescript
 class VoiceSession {
-  private config: AgentConfig;        // from customer's "configure" message
-  private frontendWs: WebSocket;      // WS 1
-  private backendWs: WebSocket;       // WS 2
+  private config: AgentConfig;        // from browser's "configure" message
+  private browserWs: WebSocket;       // single WS to browser
+  private sandbox: V8Sandbox;         // isolated V8 context for tool handlers
   private sttWs: WebSocket | null;    // outbound to AssemblyAI
   private chatAbort: AbortController | null;
   private ttsAbort: AbortController | null;
 
   // Lifecycle
-  async start(): Promise<void>;       // connect STT, send ready + greeting
-  async stop(): Promise<void>;        // cleanup all connections
+  async start(): Promise<void>;       // create sandbox, connect STT, send ready + greeting
+  async stop(): Promise<void>;        // cleanup all connections + sandbox
 
-  // Frontend message handlers
-  private onFrontendAudio(data: Buffer): void;   // relay to STT
-  private onFrontendCancel(): Promise<void>;      // barge-in
-  private onFrontendReset(): Promise<void>;       // reset conversation
+  // Browser message handlers
+  private onBrowserAudio(data: Buffer): void;    // relay to STT
+  private onBrowserCancel(): Promise<void>;      // barge-in
+  private onBrowserReset(): Promise<void>;       // reset conversation
 
   // STT event handlers
   private onTranscript(text: string, isFinal: boolean): void;
@@ -238,7 +217,7 @@ class VoiceSession {
   // LLM + tool orchestration
   private handleTurn(text: string): Promise<void>;
   private callLLM(messages: Message[]): Promise<LLMResponse>;
-  private executeTool(name: string, args: object): Promise<string>;  // sends tool_call to backend WS, awaits tool_result
+  private executeTool(name: string, args: object): Promise<string>;  // runs handler in V8 sandbox
   private relayTTS(text: string): Promise<void>;
 
   // Voice cleaning
@@ -246,39 +225,39 @@ class VoiceSession {
 }
 ```
 
-### Tool Call Flow (Detail)
+### Tool Execution (Platform-Side V8 Sandbox)
 
-When the LLM returns a tool call, the platform sends it to the customer
-backend over WS 2 and awaits the result:
+When the LLM returns a tool call, the platform runs the handler directly
+in a V8 sandbox — no network round-trip to a backend:
 
 ```typescript
+// Platform-side execution (inside sandbox.ts):
 private async executeTool(name: string, args: object): Promise<string> {
-  const callId = crypto.randomUUID();
+  const tool = this.sandboxedHandlers.get(name);
+  if (!tool) return `Unknown tool: ${name}`;
 
-  // Send tool_call to customer backend (tagged with sessionId)
-  this.backendWs.send(JSON.stringify({
-    type: "tool_call",
-    callId,
-    sessionId: this.sessionId,
-    name,
-    args,
-  }));
-
-  // Wait for matching tool_result (with timeout)
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Tool timeout")), 30000);
-    this.pendingToolCalls.set(callId, (result: string) => {
-      clearTimeout(timeout);
-      resolve(result);
-    });
-  });
+  // Run handler in V8 isolate with injected context
+  const ctx = {
+    secrets: this.customerSecrets,   // from platform secret store
+    fetch: this.proxiedFetch,         // platform-proxied fetch (no CORS)
+  };
+  const result = await tool(args, ctx);
+  return typeof result === "string" ? result : JSON.stringify(result);
 }
 ```
+
+**Sandbox constraints** (same model as Cloudflare Workers):
+- Handlers have access to: `ctx.secrets`, `ctx.fetch`, `JSON`, `Math`, `Date`,
+  `URL`, `URLSearchParams`, `crypto`, `TextEncoder`/`TextDecoder`, `console`
+- No access to: filesystem, `process`, `require`, `import`, raw network
+- `ctx.fetch` is proxied through the platform — no CORS restrictions
+- `ctx.secrets` comes from the platform's secret store (dashboard/API)
+- Execution timeout: 30 seconds per tool call
 
 ### LLM Integration
 
 Call the AssemblyAI LLM Gateway (OpenAI-compatible) directly via HTTP.
-No SDK needed — just `fetch` or `undici`:
+No SDK needed — just `fetch`:
 
 ```typescript
 async function callLLM(
@@ -298,7 +277,7 @@ async function callLLM(
       tools: tools.map(t => ({ type: "function", function: t })),
     }),
   });
-  return patchResponse(await resp.json()); // normalize gateway quirks
+  return patchResponse(await resp.json());
 }
 ```
 
@@ -308,94 +287,78 @@ filling null id/model/usage fields).
 
 ---
 
-## Customer Code (TypeScript, No AssemblyAI SDK)
+## Customer Code
 
-Customers use whatever npm packages they want. We don't publish or maintain
-an SDK. **Claude Code only edits `agent.ts` (~30 lines) for the backend. The
-frontend is optional — the platform hosts a default UI.**
+The platform serves `client.js` from its server (and eventually CDN).
+This library contains all WebSocket, audio, and tool serialization logic.
+Customers never write or manage this code — they just load it.
 
-### Key simplifications
+### Option 1: Vanilla JS — Single HTML File (Zero Dependencies)
 
-- `agent.ts` is pure business logic — config + tools, nothing else
-- `run.ts` handles all WebSocket plumbing — Claude Code never reads or edits it
-- Handlers return any JSON-serializable value (string, object, array) —
-  `run.ts` auto-stringifies non-strings
-- Frontend is optional — platform serves a default UI at `defaultUrl`
-- For custom UIs, Claude Code edits `App.tsx` (React hook does all the work)
-- `agentId` is safe to embed in frontend builds (not a secret)
-
-### Project structure
+The most minimal voice agent possible. No npm, no build tools, no React.
 
 ```
-customer-backend/
-├── agent.ts               ← CLAUDE CODE EDITS THIS: config + tools (~30 lines)
-├── run.ts                 ← Boilerplate: WS connection, tool dispatch (never edit)
+voice-agent/
+└── index.html     ← THE ONLY FILE (~30 lines)
+```
+
+```html
+<!DOCTYPE html>
+<html>
+<head><title>Voice Agent</title></head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { VoiceAgent } from "https://platform.example.com/client.js";
+
+    VoiceAgent.start({
+      element: "#app",
+      apiKey: "pk_your_publishable_key",
+      instructions: "You are a helpful order tracking assistant. Be concise.",
+      greeting: "Hi! I can help you check your order status.",
+      voice: "jess",
+      tools: {
+        check_order: {
+          description: "Look up order status by order ID",
+          parameters: { order_id: { type: "string", description: "Order ID" } },
+          handler: async (args, ctx) => {
+            const resp = await ctx.fetch(
+              `https://api.example.com/orders/${args.order_id}`,
+              { headers: { Authorization: `Bearer ${ctx.secrets.ORDERS_API_KEY}` } }
+            );
+            return await resp.json();
+          },
+        },
+      },
+    });
+  </script>
+</body>
+</html>
+```
+
+That's it. Open the file in a browser. No `npm install`. No build step.
+
+### Option 2: React — Custom UI (Vite Project)
+
+For customers who want custom UI. The React hook is loaded from the platform.
+
+```
+voice-agent/
+├── src/
+│   ├── agent.ts   ← Config + tools (~25 lines)
+│   └── App.tsx    ← Custom UI (~35 lines)
+├── index.html
 ├── package.json
-├── tsconfig.json
-└── CLAUDE.md
-
-customer-frontend/           ← OPTIONAL (platform has default UI)
-├── App.tsx                ← CLAUDE CODE EDITS THIS: UI components
-├── hooks/
-│   └── useVoiceAgent.ts   ← Hook: WS state machine + message handling
-├── lib/
-│   └── audio.ts           ← PCM capture via AudioWorklet, playback buffer
-├── package.json
-└── tsconfig.json
+├── CLAUDE.md
+└── .env
 ```
 
-### CLAUDE.md (guides Claude Code)
-
-```markdown
-# Voice Agent Backend
-
-Only edit `agent.ts`. Never edit `run.ts`.
-
-## agent.ts structure
-- `config`: instructions (system prompt), greeting, voice
-- `tools`: object mapping tool names to { description, parameters, handler }
-
-## Adding a tool
-Add an entry to the `tools` object in `agent.ts`. Each tool has:
-- `description`: what the tool does (the LLM reads this)
-- `parameters`: { paramName: { type: "string", description: "..." } }
-- `handler`: async function → return any value (strings, objects, arrays)
-
-## Changing the agent's behavior
-Edit `config.instructions` in `agent.ts`.
-
-## Changing the UI (optional)
-Edit `App.tsx` in customer-frontend/. Or skip — the platform has a default UI.
-```
-
-### Backend dependencies
-
-```json
-{
-  "dependencies": {
-    "ws": "^8.0.0"
-  }
-}
-```
-
-One dependency. No zod, no schema converters, no SDK.
-
----
-
-### `agent.ts` — the only file Claude Code edits (~30 lines)
-
-Pure business logic. No imports, no WebSocket code, no boilerplate.
-Claude Code reads 30 lines, knows exactly what to add.
-
-**Parameters use a simplified format** — `{ city: "string" }` instead of
-JSON Schema or zod. The platform converts this to proper JSON Schema before
-sending to the LLM. See "Simplified parameter format" below for details.
-
-**Handlers return any value** — strings, objects, arrays. `run.ts`
-auto-stringifies non-strings before sending to the platform.
+**`agent.ts`** — config + tools:
 
 ```typescript
 // agent.ts — Agent config and tools. This is the only file you edit.
+
+type Ctx = { secrets: Record<string, string>; fetch: typeof fetch };
 
 export const config = {
   instructions: "You are a helpful weather assistant. Be concise.",
@@ -407,43 +370,122 @@ export const tools = {
   get_weather: {
     description: "Get current weather for a city",
     parameters: { city: { type: "string", description: "City name" } },
-    handler: async (args: { city: string }) => {
-      const resp = await fetch(
-        `https://api.weather.com/current?city=${encodeURIComponent(args.city)}`
+    handler: async (args: { city: string }, ctx: Ctx) => {
+      const resp = await ctx.fetch(
+        `https://api.weather.com/current?city=${encodeURIComponent(args.city)}`,
+        { headers: { "X-Api-Key": ctx.secrets.WEATHER_API_KEY } }
       );
-      return await resp.json(); // return object — auto-stringified
+      return await resp.json();
     },
   },
 };
 ```
 
-### `run.ts` — boilerplate (Claude Code never reads or edits this)
+**`App.tsx`** — custom UI:
 
-Handles WebSocket connection, reconnection, tool dispatch, serialization.
-Imports `config` and `tools` from `agent.ts`. Generated once per project.
-`npm start` runs `run.ts`, which imports `agent.ts`.
+```tsx
+// App.tsx — UI component. This is the only frontend file you edit.
+import { useVoiceAgent } from "https://platform.example.com/react.js";
+import { config, tools } from "./agent";
+
+export default function App() {
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent({
+    apiKey: import.meta.env.VITE_API_KEY,
+    config,
+    tools,
+  });
+
+  return (
+    <div className="voice-agent">
+      <div className="status">{state}</div>
+
+      <div className="messages">
+        {messages.map((m, i) => (
+          <div key={i} className={`message ${m.role}`}>
+            <span>{m.text}</span>
+            {m.steps?.map((s, j) => <span key={j} className="step">{s}</span>)}
+          </div>
+        ))}
+        {transcript && <div className="message user partial">{transcript}</div>}
+      </div>
+
+      <div className="controls">
+        <button onClick={cancel} disabled={state !== "speaking"}>Stop</button>
+        <button onClick={reset}>New Conversation</button>
+      </div>
+    </div>
+  );
+}
+```
+
+**Dependencies** — just React:
+
+```json
+{
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
+```
+
+**CLAUDE.md** (guides Claude Code):
+
+```markdown
+# Voice Agent
+
+Only edit `src/agent.ts` and `src/App.tsx`.
+
+## Adding a tool
+Edit `src/agent.ts`, add an entry to the `tools` object:
+- `description`: what the tool does (the LLM reads this)
+- `parameters`: { paramName: { type: "string", description: "..." } }
+- `handler`: async function receiving (args, ctx)
+  - ctx.secrets: key-value store from platform dashboard
+  - ctx.fetch: HTTP fetch with no CORS restrictions
+  - Return any value (string, object, array)
+  - Must be self-contained — no imports, no closures
+
+## Changing the agent's behavior
+Edit `config` in `src/agent.ts`.
+
+## Changing the UI
+Edit `src/App.tsx`.
+```
+
+---
+
+### Handler constraints
+
+Handlers must be self-contained (serialized via `.toString()`):
+- **Use** `ctx.fetch` (not bare `fetch`) — platform proxies, no CORS
+- **Use** `ctx.secrets.KEY` for API keys — never hardcode secrets
+- **No imports** — only sandbox globals: JSON, Math, Date, URL, console, crypto
+- **Return any value** — strings, objects, arrays (auto-stringified for LLM)
+- **30-second timeout** — platform cancels after 30s
 
 ### Adding a new tool (what Claude Code generates)
 
-Claude Code adds one entry to the `tools` object in `agent.ts`. Nothing else:
-
 ```typescript
-  book_appointment: {
-    description: "Book an appointment on the user's calendar",
+  schedule_callback: {
+    description: "Schedule a callback for the customer",
     parameters: {
-      date: { type: "string", description: "Date in YYYY-MM-DD format" },
-      time: { type: "string", description: "Time in HH:MM format" },
-      service: { type: "string?", description: "Type of appointment" },
+      phone: { type: "string", description: "Phone number" },
+      time: { type: "string?", description: "Preferred time, e.g. '2pm'" },
     },
-    handler: async (args: { date: string; time: string; service?: string }) => {
-      const result = await calendarApi.book(args);
-      return { booked: true, date: args.date, time: args.time }; // return object
+    handler: async (args, ctx) => {
+      const resp = await ctx.fetch("https://api.example.com/callbacks", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.secrets.API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ phone: args.phone, time: args.time ?? "next available" }),
+      });
+      return await resp.json();
     },
   },
 ```
-
-One entry. Simplified schema, handler, type annotation — all in one place.
-Handler returns any value.
 
 ### Simplified parameter format (platform converts to JSON Schema)
 
@@ -476,302 +518,57 @@ The platform auto-detects which format is being used per-tool.
 
 ---
 
-## Customer Frontend (Optional — React + TypeScript)
+## Platform-Served Client Library
 
-The platform hosts a default voice UI at the `defaultUrl` returned in the
-`configured` response. Customers who just want voice + tools don't need a
-frontend at all — they deploy `agent.ts` and share the platform's default URL.
+The platform serves two JavaScript bundles:
 
-For custom UIs, create a React app with the `useVoiceAgent` hook:
+### `client.js` — Vanilla JS (no framework)
 
-### Frontend dependencies
+Loaded via `<script type="module">` or ES import. Contains:
+- `VoiceAgent.start(opts)` — renders default UI into `opts.element`, manages
+  WebSocket connection, audio capture/playback, tool serialization
+- Handles all audio via AudioWorklet (PCM16 encoding) and AudioContext (playback)
+- Serializes tool handlers via `.toString()` and sends to platform on connect
+- Manages state machine: connecting → ready → listening → thinking → speaking
 
-```json
-{
-  "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  }
-}
-```
+### `react.js` — React hook
 
-### `App.tsx` — the only frontend file Claude Code edits
+Loaded via ES import. Contains:
+- `useVoiceAgent(opts)` — React hook returning `{ state, messages, transcript, cancel, reset }`
+- Same WebSocket + audio logic as `client.js`, packaged as a React hook
+- Uses React as a peer dependency (customer provides React)
 
-The frontend connects directly to the platform using `agentId`. The `agentId`
-is stable (derived from the customer's API key) so it can be baked into the
-frontend build via an environment variable. No runtime handoff needed.
+Both bundles contain the same core logic (WebSocket protocol, PCM16 audio
+capture via AudioWorklet, buffered playback with flush-on-barge-in). The
+platform builds them from the same source during its build step.
 
-```tsx
-// App.tsx — UI component. This is the only frontend file you edit.
-import { useVoiceAgent } from "./hooks/useVoiceAgent";
-
-const PLATFORM_URL = import.meta.env.VITE_PLATFORM_URL ?? "wss://platform.example.com";
-const AGENT_ID = import.meta.env.VITE_AGENT_ID ?? "your-agent-id";
-
-function App() {
-  const { state, messages, transcript, cancel, reset } = useVoiceAgent(PLATFORM_URL, AGENT_ID);
-
-  return (
-    <div className="voice-agent">
-      <div className="status">{state}</div>
-
-      <div className="messages">
-        {messages.map((m, i) => (
-          <div key={i} className={`message ${m.role}`}>
-            <span>{m.text}</span>
-            {m.steps?.map((s, j) => <span key={j} className="step">{s}</span>)}
-          </div>
-        ))}
-        {transcript && <div className="message user partial">{transcript}</div>}
-      </div>
-
-      <div className="controls">
-        <button onClick={cancel} disabled={state !== "speaking"}>Stop</button>
-        <button onClick={reset}>New Conversation</button>
-      </div>
-    </div>
-  );
-}
-```
+**Versioning**: Bundles are served with content-hash URLs for caching:
+`https://platform.example.com/client.abc123.js`. The bare URL
+`/client.js` redirects to the latest version.
 
 ---
 
-### `hooks/useVoiceAgent.ts` — generated once, includes audio
+### Summary: what Claude Code touches
 
-```typescript
-// hooks/useVoiceAgent.ts — Voice agent hook with built-in audio handling.
-import { useEffect, useRef, useState, useCallback } from "react";
-import { startMicCapture, createAudioPlayer } from "../lib/audio";
+**Vanilla JS** (simplest):
+| File | Purpose |
+|---|---|
+| `index.html` | Everything — config, tools, UI mount (~30 lines) |
 
-export type AgentState = "connecting" | "ready" | "listening" | "thinking" | "speaking";
+**React** (custom UI):
+| File | Purpose |
+|---|---|
+| `src/agent.ts` | Config + tools (~25 lines) |
+| `src/App.tsx` | Custom UI (~35 lines) |
 
-export interface Message {
-  role: "user" | "assistant";
-  text: string;
-  steps?: string[];
-}
-
-export function useVoiceAgent(platformUrl: string, agentId: string) {
-  const wsRef = useRef<WebSocket | null>(null);
-  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
-  const micCleanupRef = useRef<(() => void) | null>(null);
-  const [state, setState] = useState<AgentState>("connecting");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [transcript, setTranscript] = useState("");
-
-  useEffect(() => {
-    const ws = new WebSocket(`${platformUrl}/session?agent=${agentId}`);
-    wsRef.current = ws;
-    ws.binaryType = "arraybuffer";
-
-    ws.onopen = () => setState("ready");
-
-    ws.onmessage = (event) => {
-      // Binary frame = TTS audio
-      if (event.data instanceof ArrayBuffer) {
-        playerRef.current?.enqueue(event.data);
-        return;
-      }
-
-      const msg = JSON.parse(event.data);
-      switch (msg.type) {
-        case "ready": {
-          const player = createAudioPlayer(msg.ttsSampleRate ?? 24000);
-          playerRef.current = player;
-          startMicCapture(ws, msg.sampleRate ?? 16000).then((cleanup) => {
-            micCleanupRef.current = cleanup;
-          });
-          setState("listening");
-          break;
-        }
-        case "greeting":
-          setMessages((m) => [...m, { role: "assistant", text: msg.text }]);
-          setState("speaking");
-          break;
-        case "transcript":
-          setTranscript(msg.text);
-          // FIX: use functional update to avoid stale closure over `state`
-          setState((prev) => (prev !== "thinking" ? "listening" : prev));
-          break;
-        case "turn":
-          setMessages((m) => [...m, { role: "user", text: msg.text }]);
-          setTranscript("");
-          break;
-        case "thinking":
-          setState("thinking");
-          break;
-        case "chat":
-          setMessages((m) => [...m, { role: "assistant", text: msg.text, steps: msg.steps }]);
-          setState("speaking");
-          break;
-        case "tts_done":
-          setState("listening");
-          break;
-        case "cancelled":
-          playerRef.current?.flush();
-          setState("listening");
-          break;
-        case "error":
-          console.error("Agent error:", msg.message);
-          break;
-      }
-    };
-
-    ws.onclose = () => setState("connecting");
-
-    return () => {
-      micCleanupRef.current?.();
-      playerRef.current?.close();
-      ws.close();
-    };
-  }, [platformUrl, agentId]);
-
-  const cancel = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: "cancel" }));
-    playerRef.current?.flush();
-  }, []);
-
-  const reset = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: "reset" }));
-    playerRef.current?.flush();
-    setMessages([]);
-    setTranscript("");
-  }, []);
-
-  return { state, messages, transcript, cancel, reset };
-}
-```
-
----
-
-### `lib/audio.ts` — audio utilities (generated once)
-
-```typescript
-// lib/audio.ts — PCM16 mic capture + audio playback. Do not edit.
-
-/**
- * Capture mic audio as PCM16 LE and send binary frames over WebSocket.
- * Uses AudioWorklet (not deprecated ScriptProcessorNode).
- * Returns a cleanup function to stop capture.
- */
-export async function startMicCapture(
-  ws: WebSocket,
-  sampleRate: number,
-): Promise<() => void> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { sampleRate, echoCancellation: true, noiseSuppression: true },
-  });
-
-  const ctx = new AudioContext({ sampleRate });
-  const source = ctx.createMediaStreamSource(stream);
-
-  // Register AudioWorklet for PCM16 encoding
-  const workletCode = `
-    class PCM16Processor extends AudioWorkletProcessor {
-      process(inputs) {
-        const input = inputs[0][0];
-        if (input) {
-          const int16 = new Int16Array(input.length);
-          for (let i = 0; i < input.length; i++) {
-            int16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
-          }
-          this.port.postMessage(int16.buffer, [int16.buffer]);
-        }
-        return true;
-      }
-    }
-    registerProcessor("pcm16", PCM16Processor);
-  `;
-  const blob = new Blob([workletCode], { type: "application/javascript" });
-  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
-
-  const worklet = new AudioWorkletNode(ctx, "pcm16");
-  worklet.port.onmessage = (e) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(e.data);
-    }
-  };
-  source.connect(worklet);
-  worklet.connect(ctx.destination);
-
-  return () => {
-    stream.getTracks().forEach((t) => t.stop());
-    ctx.close();
-  };
-}
-
-/**
- * Audio player that buffers PCM16 LE chunks and plays them sequentially.
- */
-export function createAudioPlayer(sampleRate: number) {
-  // FIX: `let` not `const` — flush() must recreate the context
-  let ctx = new AudioContext({ sampleRate });
-  let nextTime = 0;
-
-  return {
-    enqueue(pcm16Buffer: ArrayBuffer) {
-      if (ctx.state === "closed") return;
-
-      const int16 = new Int16Array(pcm16Buffer);
-      const float32 = new Float32Array(int16.length);
-      for (let i = 0; i < int16.length; i++) {
-        float32[i] = int16[i] / 32768;
-      }
-
-      const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate);
-      audioBuffer.getChannelData(0).set(float32);
-
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-
-      const now = ctx.currentTime;
-      const startTime = Math.max(now, nextTime);
-      source.start(startTime);
-      nextTime = startTime + audioBuffer.duration;
-    },
-    flush() {
-      // FIX: close old context AND recreate so enqueue() still works after barge-in
-      ctx.close().catch(() => {});
-      ctx = new AudioContext({ sampleRate });
-      nextTime = 0;
-    },
-    close() {
-      ctx.close().catch(() => {});
-    },
-  };
-}
-```
-
----
-
-### Summary: what Claude Code touches vs. what it doesn't
-
-**Backend** (required):
-| File | Claude Code edits? | Purpose |
-|---|---|---|
-| `agent.ts` | **Yes — always** | Config + tools (~30 lines of pure business logic) |
-| `run.ts` | Never | WS connection, reconnection, tool dispatch |
-| `CLAUDE.md` | Never | Instructions for Claude Code |
-
-**Frontend** (optional — platform has default UI):
-| File | Claude Code edits? | Purpose |
-|---|---|---|
-| `App.tsx` | **Yes — for UI changes** | React component |
-| `hooks/useVoiceAgent.ts` | Never | WS state machine, message handling |
-| `lib/audio.ts` | Never | Mic capture (AudioWorklet), playback |
+**What Claude Code never writes**: WebSocket code, audio code, tool
+serialization. All of that lives in `client.js`/`react.js` served by the platform.
 
 **What Claude Code sees when it opens `agent.ts`:**
 ```
-30 lines. Two objects: config and tools.
+25 lines. Two objects: config and tools.
 No imports. No WebSocket code. No boilerplate.
 ```
-
-**Minimum viable voice agent** (what Claude Code produces for "build me a voice agent"):
-1. Write `agent.ts` (~30 lines) — config + tools
-2. `npm run dev` — agent connects to platform
-3. Share the `defaultUrl` — platform hosts the UI
-4. Done. No frontend code needed.
 
 ---
 
@@ -787,10 +584,10 @@ No imports. No WebSocket code. No boilerplate.
 | `stt.py` (55 lines) | `stt.ts` | Token creation via `fetch`. WebSocket client via `ws`. |
 | `voice_cleaner.py` (146 lines) | `voice-cleaner.ts` | Regex + `number-to-words` npm. Most direct port. |
 | `types.py` (26 lines) | `types.ts` | TypeScript interfaces + zod schemas. |
-| `tools.py` (47 lines) | Removed | Tools are customer-side now, not platform-side. |
-| `cli.py` (161 lines) | Removed | No scaffolding CLI. Customers write raw TS. |
-| `_template/server.py` (25 lines) | Removed | Replaced by customer backend example above. |
-| `_template/static/*` | Removed | Replaced by customer frontend example above. |
+| `tools.py` (47 lines) | Removed | Tools are customer-defined, run in V8 sandbox. |
+| `cli.py` (161 lines) | Removed | No scaffolding CLI. Customers write minimal JS. |
+| `_template/server.py` (25 lines) | Removed | No customer backend. |
+| `_template/static/*` | `client.js` + `react.js` | Platform-served client library. |
 | `__init__.py` (41 lines) | Removed | No SDK package. |
 
 ### What Gets Deleted
@@ -799,9 +596,8 @@ Everything in `src/aai_agent/`. The Python package ceases to exist.
 
 ### What Gets Created
 
-The `platform/` directory with the TypeScript server, plus example
-`customer-backend/` and `customer-frontend/` directories showing how
-customers integrate.
+The `platform/` directory with the TypeScript server (including client library
+build), plus `examples/` showing both vanilla and React usage.
 
 ---
 
@@ -810,107 +606,76 @@ customers integrate.
 ### Phase 1: Platform Core
 1. Set up `platform/` with `package.json`, `tsconfig.json`, `vitest`
 2. Implement `types.ts` — all message interfaces + zod schemas
-3. Implement `protocol.ts` — message parsing and validation
+3. Implement `protocol.ts` — message parsing, validation, simplified→JSON Schema conversion
 4. Implement `stt.ts` — AssemblyAI token creation + WebSocket client
 5. Implement `llm.ts` — LLM Gateway HTTP client with response patching
 6. Implement `tts.ts` — Orpheus TTS WebSocket relay
 7. Implement `voice-cleaner.ts` — port text normalization from Python
-8. Implement `session.ts` — `VoiceSession` class (core orchestration)
-9. Implement `server.ts` — WebSocket server, session management, routing
-10. Implement `index.ts` — entry point
+8. Implement `sandbox.ts` — V8 isolate manager for tool handler execution
+9. Implement `session.ts` — `VoiceSession` class (core orchestration)
+10. Implement `server.ts` — WebSocket server, session management, routing
+11. Implement `index.ts` — entry point
 
-### Phase 2: Customer Examples
-11. Create `customer-backend/` example with tool handling
-12. Create `customer-frontend/` example with audio capture/playback
+### Phase 2: Client Library
+12. Implement `client-core.ts` — shared WebSocket protocol, tool serialization, audio (AudioWorklet + playback)
+13. Implement `client.ts` — vanilla JS entry: `VoiceAgent.start()` with default UI
+14. Implement `client-react.ts` — React hook: `useVoiceAgent()`
+15. Build pipeline: bundle `client.js` and `react.js` for serving via platform HTTP
+16. Serve client bundles from platform's HTTP server with content-hash caching
 
-### Phase 3: Testing & Validation
-13. Unit tests for protocol, voice-cleaner, LLM response patching
-14. Integration test: backend connects → configures → frontend connects → full voice loop
-15. Verify same behavior as current Python implementation
+### Phase 3: Examples
+17. Create `examples/vanilla/` — single `index.html`
+18. Create `examples/react/` — Vite project with `agent.ts` + `App.tsx`
+
+### Phase 4: Testing & Validation
+19. Unit tests for protocol, voice-cleaner, LLM response patching, sandbox
+20. Integration test: browser connects → configures with tools → full voice loop → tool execution in sandbox
+21. Verify same behavior as current Python implementation
 
 ---
 
 ## Deployment Guide (Customer Code)
 
-### Backend deployment
+Customer code is a static site. No backend, no server, no process to manage.
 
-The backend is a long-running Node.js process. It maintains a persistent
-WebSocket connection to the platform. It is NOT suitable for serverless
-(Lambda, Vercel Functions, Cloudflare Workers) because those have short
-execution timeouts and no persistent connections.
+**Vanilla JS** — just host the HTML file:
 
-**Recommended platforms** (all support long-running processes):
+| Method | How |
+|---|---|
+| Open in browser | `open index.html` (for development) |
+| Any static host | Upload `index.html` |
+| Vercel | `vercel` |
+| Netlify | `netlify deploy --prod` |
+| GitHub Pages | Push to GitHub |
 
-| Platform | Deploy command | Notes |
-|---|---|---|
-| Railway | `railway up` | Auto-detects Node.js, runs `npm start` |
-| Fly.io | `fly launch && fly deploy` | Needs Dockerfile or `fly.toml` |
-| Render | Push to GitHub, connect repo | Auto-detects Node.js |
-| Docker | `docker build && docker run` | Works anywhere |
-| Any VM | `npm install && npm start` | Use PM2 or systemd for process management |
+**React** — standard Vite static site:
 
-**Environment variables** (set in deployment platform):
+| Method | How |
+|---|---|
+| Local dev | `npm run dev` |
+| Build | `npm run build` → static files in `dist/` |
+| Deploy | `vercel`, `netlify deploy --prod`, or upload `dist/` anywhere |
+
+**Environment variables** (React only, baked in at build time):
 ```
-PLATFORM_URL=wss://platform.assemblyai.com/agent
-API_KEY=your-assemblyai-api-key
-```
-
-**Dockerfile** (optional, for platforms that need one):
-```dockerfile
-FROM node:22-slim
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-COPY agent.ts tsconfig.json ./
-CMD ["npx", "tsx", "agent.ts"]
+VITE_API_KEY=pk_your_publishable_key
 ```
 
-### Frontend deployment
-
-The frontend is a static React app. No server needed. Deploy anywhere:
-
-| Platform | Deploy command | Notes |
-|---|---|---|
-| Vercel | `vercel` or push to GitHub | Zero config for Vite projects |
-| Netlify | `netlify deploy --prod` | Zero config for Vite projects |
-| Cloudflare Pages | Push to GitHub | Zero config |
-| S3 + CloudFront | `aws s3 sync dist/ s3://bucket` | Need CloudFront for HTTPS |
-| GitHub Pages | Push to GitHub | Free |
-
-**Build:**
-```bash
-VITE_PLATFORM_URL=wss://platform.assemblyai.com \
-VITE_AGENT_ID=your-agent-id \
-npm run build
-# Output in dist/ — deploy these static files
-```
-
-**Key point**: `VITE_AGENT_ID` is baked into the build at compile time (Vite
-replaces `import.meta.env.VITE_*` at build). It's safe to expose — it
-identifies the agent config, not a secret. The API key stays server-side.
+The `pk_*` publishable key is safe to embed in client code (like Stripe's
+publishable key). It identifies the customer account. Secrets stay in the
+platform's secret store, injected into handlers at runtime via `ctx.secrets`.
 
 ### Claude Code deployability
 
-The customer code is designed to be trivially deployable by Claude Code:
+**Vanilla JS** — Claude Code produces one file and it's done.
+No deployment step needed beyond hosting the HTML file.
 
-**Backend** — Claude Code can:
+**React** — Claude Code can:
 1. Edit `agent.ts` (add tools, change config)
-2. Run `npm install` and `npm run dev` to test locally
-3. Deploy with one command: `railway up` or `fly deploy`
+2. Edit `App.tsx` (change UI)
+3. `npm run dev` to test locally
+4. `npm run build && vercel` to deploy
 
-**Frontend** — Claude Code can:
-1. Edit `App.tsx` (change UI)
-2. Run `npm run dev` to test locally
-3. Build with `npm run build`
-4. Deploy with one command: `vercel` or `netlify deploy --prod`
-
-**No moving parts**: there's no database, no build pipeline configuration,
-no infrastructure-as-code. The backend is a single `.ts` file that runs as
-a process. The frontend is a standard Vite React app.
-
-**What could go wrong** (and mitigations):
-- Backend needs a persistent process host — CLAUDE.md explicitly warns
-  "NOT a serverless function"
-- Frontend needs env vars at build time — `.env.example` shows what's needed
-- `agentId` must be known before frontend build — it's stable per API key,
-  so set it once and forget
+**No moving parts**: no backend, no database, no build pipeline configuration,
+no infrastructure-as-code. The hardest deployment is a Vite static site.
+The easiest is a single HTML file.
