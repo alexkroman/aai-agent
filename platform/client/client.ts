@@ -177,16 +177,7 @@ export const VoiceAgent = {
         const cancelBtn = container.querySelector('[data-action="cancel"]');
         const resetBtn = container.querySelector('[data-action="reset"]');
         cancelBtn?.addEventListener("click", () => session.cancel());
-        resetBtn?.addEventListener("click", () => {
-          session.reset();
-          messages.length = 0;
-          transcript = "";
-          error = "";
-          lastRenderedMessageCount = 0;
-          const msgDiv = container.querySelector('[data-role="messages"]');
-          if (msgDiv) msgDiv.innerHTML = "";
-          updateError(container as HTMLElement, "");
-        });
+        resetBtn?.addEventListener("click", () => session.reset());
       }
       // Targeted updates
       updateState(container as HTMLElement, state);
@@ -226,18 +217,23 @@ export const VoiceAgent = {
       },
     });
 
+    session.on("reset", () => {
+      messages.length = 0;
+      transcript = "";
+      error = "";
+      lastRenderedMessageCount = 0;
+      if (started) {
+        const msgDiv = container.querySelector('[data-role="messages"]');
+        if (msgDiv) msgDiv.innerHTML = "";
+        updateError(container as HTMLElement, "");
+      }
+    });
+
     render();
 
     return {
       cancel: () => session.cancel(),
-      reset: () => {
-        session.reset();
-        messages.length = 0;
-        transcript = "";
-        lastRenderedMessageCount = 0;
-        const msgDiv = container.querySelector('[data-role="messages"]');
-        if (msgDiv) msgDiv.innerHTML = "";
-      },
+      reset: () => session.reset(),
       disconnect: () => session.disconnect(),
     };
   },

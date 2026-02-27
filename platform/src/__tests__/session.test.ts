@@ -475,6 +475,55 @@ describe("VoiceSession", () => {
       const msgs = getJsonMessages(browserWs);
       expect(msgs[0]).toMatchObject({ type: "reset" });
     });
+
+    it("clears STT buffer on reset", async () => {
+      const { deps, mocks } = createTestDeps();
+      const session = new VoiceSession("sess-1", browserWs as any, DEFAULT_AGENT_CONFIG, deps);
+      await session.start();
+
+      await session.onReset();
+
+      expect(mocks.sttHandle.clear).toHaveBeenCalledOnce();
+    });
+
+    it("re-sends greeting and starts TTS after reset", async () => {
+      const { deps, mocks, getSttEvents } = createTestDeps();
+      mocks.callLLM.mockResolvedValueOnce(llmResponse("Hi!"));
+
+      const session = new VoiceSession("sess-1", browserWs as any, DEFAULT_AGENT_CONFIG, deps);
+      await session.start();
+
+      getSttEvents().onTurn("Hello");
+      await session.turnPromise;
+
+      browserWs.sent.length = 0;
+      mocks.ttsClient.synthesize.mockClear();
+
+      await session.onReset();
+
+      const msgs = getJsonMessages(browserWs);
+      expect(msgs[0]).toMatchObject({ type: "reset" });
+      expect(msgs[1]).toMatchObject({ type: "greeting", text: "Hello!" });
+      expect(mocks.ttsClient.synthesize).toHaveBeenCalledOnce();
+      expect(mocks.ttsClient.synthesize.mock.calls[0][0]).toBe("Hello!");
+    });
+
+    it("skips greeting replay when greeting is empty", async () => {
+      const { deps, mocks } = createTestDeps();
+      const config = { ...DEFAULT_AGENT_CONFIG, greeting: "" };
+      const session = new VoiceSession("sess-1", browserWs as any, config, deps);
+      await session.start();
+
+      browserWs.sent.length = 0;
+      mocks.ttsClient.synthesize.mockClear();
+
+      await session.onReset();
+
+      const msgs = getJsonMessages(browserWs);
+      expect(msgs[0]).toMatchObject({ type: "reset" });
+      expect(msgs.some((m) => m.type === "greeting")).toBe(false);
+      expect(mocks.ttsClient.synthesize).not.toHaveBeenCalled();
+    });
   });
 
   describe("stop", () => {

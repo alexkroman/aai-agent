@@ -118,6 +118,7 @@ export interface ConfigureMessage {
   instructions: string;
   greeting: string;
   voice: string;
+  prompt?: string;
   tools: {
     name: string;
     description: string;

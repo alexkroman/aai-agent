@@ -10,6 +10,7 @@ export interface SessionEventMap {
   error: SessionError;
   connected: void;
   disconnected: { intentional: boolean };
+  reset: void;
 }
 
 type Handler<T> = T extends void ? () => void : (data: T) => void;

@@ -49,6 +49,7 @@ export interface AgentOptions {
   instructions?: string;
   greeting?: string;
   voice?: string;
+  prompt?: string;
   tools?: Record<string, ToolDef>;
 }
 

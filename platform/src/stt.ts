@@ -60,6 +60,9 @@ function connectSttWs(
     min_end_of_turn_silence_when_confident: String(config.minEndOfTurnSilenceWhenConfident),
     max_turn_silence: String(config.maxTurnSilence),
   });
+  if (config.prompt) {
+    params.set("prompt", config.prompt);
+  }
 
   const ws = new WebSocket(`${config.wssBase}?${params}`);
 

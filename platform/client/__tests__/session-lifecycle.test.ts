@@ -23,6 +23,59 @@ describe("VoiceSession — cancel", () => {
     });
     expect(cancelMsg).toBeDefined();
   });
+
+  it("drops binary audio frames after cancel until CANCELLED arrives", async () => {
+    const { session, stateChanges } = createSession();
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Set up audio player
+    lastWs().simulateMessage({
+      type: "ready",
+      sampleRate: 16000,
+      ttsSampleRate: 24000,
+    });
+    await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+    // Move to speaking
+    lastWs().simulateMessage({ type: "greeting", text: "Hi" });
+    expect(stateChanges).toContain("speaking");
+
+    // Cancel
+    session.cancel();
+
+    // Binary frames after cancel should be dropped
+    const audioData = new Int16Array([100, 200, 300]).buffer;
+    lastWs().simulateBinary(audioData);
+
+    // CANCELLED arrives — should re-enable audio
+    lastWs().simulateMessage({ type: "cancelled" });
+
+    // Binary frames after CANCELLED should be enqueued
+    lastWs().simulateBinary(audioData);
+  });
+
+  it("transitions to listening immediately on cancel", async () => {
+    const { session, stateChanges } = createSession();
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    lastWs().simulateMessage({
+      type: "ready",
+      sampleRate: 16000,
+      ttsSampleRate: 24000,
+    });
+    await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+    // Move to speaking
+    lastWs().simulateMessage({ type: "greeting", text: "Hi" });
+    expect(stateChanges).toContain("speaking");
+
+    // Cancel should immediately transition to listening
+    session.cancel();
+    const lastState = stateChanges[stateChanges.length - 1];
+    expect(lastState).toBe("listening");
+  });
 });
 
 describe("VoiceSession — reset", () => {
@@ -238,5 +291,35 @@ describe("VoiceSession — heartbeat", () => {
     expect(ws.readyState).toBe(1); // Still open
 
     vi.useRealTimers();
+  });
+});
+
+describe("VoiceSession — disconnect during audio setup", () => {
+  beforeEach(() => {
+    resetWsInstances();
+    vi.clearAllMocks();
+  });
+
+  it("does not assign player/mic if disconnected during audio setup", async () => {
+    const { session, stateChanges } = createSession();
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Simulate READY message — this starts async audio setup
+    lastWs().simulateMessage({
+      type: "ready",
+      sampleRate: 16000,
+      ttsSampleRate: 24000,
+    });
+
+    // Disconnect immediately before audio setup completes
+    session.disconnect();
+
+    // Let the audio setup promise resolve
+    await new Promise((r) => setTimeout(r, 50));
+
+    // State should not have gone to "listening" after disconnect
+    const statesAfterDisconnect = stateChanges.slice(stateChanges.indexOf("connecting", 1));
+    expect(statesAfterDisconnect).not.toContain("listening");
   });
 });

@@ -74,6 +74,13 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
     );
 
     sessionRef.current = session;
+
+    session.on("reset", () => {
+      setMessages([]);
+      setTranscript("");
+      setError("");
+    });
+
     try {
       session.connect();
     } catch (err: any) {
@@ -92,9 +99,6 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
 
   const reset = useCallback(() => {
     sessionRef.current?.reset();
-    setMessages([]);
-    setTranscript("");
-    setError("");
   }, []);
 
   return { state, messages, transcript, error, cancel, reset };

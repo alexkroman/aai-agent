@@ -186,4 +186,27 @@ describe("VoiceSession — message handling", () => {
     const audioData = new Int16Array([100, 200, 300]).buffer;
     lastWs().simulateBinary(audioData);
   });
+
+  it("handles 'reset' message — emits reset event and flushes player", async () => {
+    const { session, stateChanges } = createSession();
+    let resetFired = false;
+    session.on("reset", () => {
+      resetFired = true;
+    });
+
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Set up audio player
+    lastWs().simulateMessage({
+      type: "ready",
+      sampleRate: 16000,
+      ttsSampleRate: 24000,
+    });
+    await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+    lastWs().simulateMessage({ type: "reset" });
+
+    expect(resetFired).toBe(true);
+  });
 });

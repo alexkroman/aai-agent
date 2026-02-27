@@ -43,6 +43,10 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   private reconnector = new ReconnectStrategy();
   private intentionalDisconnect = false;
 
+  // Cancel/reset synchronization
+  private cancelling = false;
+  private connectionId = 0;
+
   // Heartbeat
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pongReceived = true;
@@ -77,6 +81,8 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
 
   connect(): void {
     this.intentionalDisconnect = false;
+    this.cancelling = false;
+    this.connectionId++;
     const platformUrl = toWebSocketUrl(
       this.options.platformUrl ?? "wss://platform.example.com"
     );
@@ -97,6 +103,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
       const instructions = this.options.instructions ?? "";
       const greeting = this.options.greeting ?? "";
       const voice = this.options.voice ?? DEFAULT_VOICE;
+      const prompt = this.options.prompt;
 
       // Serialize tools and send configure message
       const tools = this.options.tools
@@ -109,6 +116,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
           instructions,
           greeting,
           voice,
+          ...(prompt ? { prompt } : {}),
           tools,
         })
       );
@@ -135,7 +143,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
 
   private handleServerMessage(event: MessageEvent): void {
     if (event.data instanceof ArrayBuffer) {
-      this.player?.enqueue(event.data);
+      if (!this.cancelling) {
+        this.player?.enqueue(event.data);
+      }
       return;
     }
 
@@ -145,14 +155,22 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     switch (msg.type) {
       case CLIENT_MSG.READY: {
         this.reconnector.reset();
+        const connId = this.connectionId;
         Promise.all([
           createAudioPlayer(msg.ttsSampleRate ?? 24000),
           startMicCapture(this.ws!, msg.sampleRate ?? 16000),
         ]).then(([player, micCleanup]) => {
+          if (connId !== this.connectionId) {
+            // Connection changed while audio was setting up — discard
+            player.close();
+            micCleanup();
+            return;
+          }
           this.player = player;
           this.micCleanup = micCleanup;
           this.changeState("listening");
         }).catch((err) => {
+          if (connId !== this.connectionId) return;
           console.error("Audio setup failed:", err);
           this.emit(
             "error",
@@ -191,8 +209,14 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         this.changeState("listening");
         break;
       case CLIENT_MSG.CANCELLED:
+        this.cancelling = false;
         this.player?.flush();
         this.changeState("listening");
+        break;
+      case CLIENT_MSG.RESET:
+        this.cancelling = false;
+        this.player?.flush();
+        this.emit("reset");
         break;
       case CLIENT_MSG.PONG:
         this.pongReceived = true;
@@ -262,21 +286,25 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   }
 
   cancel(): void {
+    this.cancelling = true;
+    this.player?.flush();
+    this.changeState("listening");
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: CLIENT_MSG.CANCEL }));
     }
-    this.player?.flush();
   }
 
   reset(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "reset" }));
+      this.ws.send(JSON.stringify({ type: CLIENT_MSG.RESET }));
     }
     this.player?.flush();
   }
 
   disconnect(): void {
     this.intentionalDisconnect = true;
+    this.cancelling = false;
+    this.connectionId++;
     this.stopPing();
     this.reconnector.cancel();
     this.cleanupAudio();

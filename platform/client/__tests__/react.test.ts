@@ -121,7 +121,7 @@ describe("useVoiceAgent", () => {
     expect(cancelMsg).toBeDefined();
   });
 
-  it("reset clears messages, transcript, and error", async () => {
+  it("reset clears messages, transcript, and error on server RESET", async () => {
     const { result } = renderHook(() =>
       useVoiceAgent({ apiKey: "pk_test", platformUrl: "ws://localhost:3000" })
     );
@@ -135,6 +135,14 @@ describe("useVoiceAgent", () => {
 
     act(() => {
       result.current.reset();
+    });
+
+    // Messages not cleared yet — waiting for server RESET ack
+    expect(result.current.messages.length).toBe(1);
+
+    // Simulate server RESET acknowledgment
+    act(() => {
+      lastWs().simulateMessage({ type: "reset" });
     });
 
     expect(result.current.messages).toEqual([]);

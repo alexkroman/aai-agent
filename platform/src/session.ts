@@ -17,6 +17,7 @@ import {
   VOICE_RULES,
   type AgentConfig,
   type ChatMessage,
+  type LLMResponse,
   type ToolSchema,
 } from "./types.js";
 
@@ -60,6 +61,10 @@ export class VoiceSession {
       ...deps,
       config: {
         ...deps.config,
+        sttConfig: {
+          ...deps.config.sttConfig,
+          ...(agentConfig.prompt ? { prompt: agentConfig.prompt } : {}),
+        },
         ttsConfig: {
           ...deps.config.ttsConfig,
           ...(agentConfig.voice ? { voice: agentConfig.voice } : {}),
@@ -181,9 +186,17 @@ export class VoiceSession {
    */
   async onReset(): Promise<void> {
     this.cancelInflight();
+    this.stt?.clear();
     // Keep system message, clear conversation
     this.messages = this.messages.slice(0, 1);
     this.trySendJson({ type: MSG.RESET });
+
+    // Re-send greeting (same logic as start())
+    const greeting = this.agentConfig.greeting ?? DEFAULT_GREETING;
+    if (greeting) {
+      this.trySendJson({ type: MSG.GREETING, text: greeting });
+      this.ttsRelay(greeting);
+    }
   }
 
   /**
@@ -210,6 +223,18 @@ export class VoiceSession {
     this.ttsAbort = null;
   }
 
+  private logLlmResponse(response: LLMResponse): void {
+    const choice = response.choices[0];
+    this.logger.info(
+      { finishReason: choice?.finish_reason, toolCalls: choice?.message?.tool_calls?.length ?? 0 },
+      "LLM response"
+    );
+    this.logger.debug(
+      { content: choice?.message?.content, toolCalls: choice?.message?.tool_calls },
+      "LLM response detail"
+    );
+  }
+
   /**
    * Handle a completed turn from STT: run LLM + tools + TTS.
    */
@@ -227,6 +252,12 @@ export class VoiceSession {
       // Add user message
       this.messages.push({ role: "user", content: text });
 
+      this.logger.info(
+        { messageCount: this.messages.length, toolCount: this.toolSchemas.length },
+        "calling LLM"
+      );
+      this.logger.debug({ messages: this.messages, model: this.deps.config.model }, "LLM request");
+
       // LLM tool loop (max 3 iterations)
       let response = await this.deps.callLLM(
         this.messages,
@@ -236,6 +267,7 @@ export class VoiceSession {
         abort.signal,
         this.deps.config.llmGatewayBase
       );
+      this.logLlmResponse(response);
 
       const steps: string[] = [];
       let iterations = 0;
@@ -260,6 +292,11 @@ export class VoiceSession {
             steps.push(`Using ${tc.function.name}`);
           }
 
+          this.logger.info(
+            { tools: msg.tool_calls.map((tc) => tc.function.name), iteration: iterations + 1 },
+            "executing tools"
+          );
+
           const toolResults = await Promise.allSettled(
             msg.tool_calls.map(async (tc) => {
               let args: Record<string, unknown>;
@@ -274,7 +311,13 @@ export class VoiceSession {
               }
               const validationError = validateToolArgs(tc.function.name, args, this.toolSchemas);
               if (validationError) return validationError;
-              return this.deps.sandbox.execute(tc.function.name, args);
+              this.logger.debug({ tool: tc.function.name, args }, "tool call");
+              const result = await this.deps.sandbox.execute(tc.function.name, args);
+              this.logger.debug(
+                { tool: tc.function.name, resultLength: result.length },
+                "tool result"
+              );
+              return result;
             })
           );
 
@@ -290,6 +333,15 @@ export class VoiceSession {
 
           if (abort.signal.aborted) break;
 
+          this.logger.info(
+            { messageCount: this.messages.length, iteration: iterations + 1 },
+            "re-calling LLM with tool results"
+          );
+          this.logger.debug(
+            { messages: this.messages, model: this.deps.config.model },
+            "LLM request"
+          );
+
           // Call LLM again with tool results
           response = await this.deps.callLLM(
             this.messages,
@@ -299,11 +351,14 @@ export class VoiceSession {
             abort.signal,
             this.deps.config.llmGatewayBase
           );
+          this.logLlmResponse(response);
           iterations++;
         } else {
           // No tool calls — we have the final response
           const responseText = msg.content ?? "Sorry, I couldn't generate a response.";
           this.messages.push({ role: "assistant", content: responseText });
+
+          this.logger.info({ responseLength: responseText.length, steps }, "turn complete");
 
           this.trySendJson({
             type: MSG.CHAT,

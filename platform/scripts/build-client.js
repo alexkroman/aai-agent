@@ -3,28 +3,19 @@
 // Copies example HTML files into dist/ for serving via dev:serve.
 
 import { build } from "esbuild";
-import { mkdirSync, cpSync, copyFileSync, existsSync } from "fs";
-import { execSync } from "child_process";
+import { mkdirSync, cpSync, copyFileSync } from "fs";
 
 mkdirSync("dist", { recursive: true });
 
 // Copy example apps into dist/ so the server can serve them
-cpSync("../examples/vanilla", "dist/vanilla", { recursive: true });
-console.log("Copied examples/vanilla → dist/vanilla/");
+cpSync("../examples/travel-concierge", "dist/travel-concierge", { recursive: true });
+console.log("Copied examples/travel-concierge → dist/travel-concierge/");
 
-cpSync("../examples/vanilla-calculator", "dist/vanilla-calculator", { recursive: true });
-console.log("Copied examples/vanilla-calculator → dist/vanilla-calculator/");
+cpSync("../examples/math-buddy", "dist/math-buddy", { recursive: true });
+console.log("Copied examples/math-buddy → dist/math-buddy/");
 
-// Build React example into dist/react/
-const reactDir = "../examples/react";
-if (!existsSync(`${reactDir}/node_modules`)) {
-  execSync("npm install", { cwd: reactDir, stdio: "inherit" });
-}
-execSync("npx vite build --outDir ../../platform/dist/react", {
-  cwd: reactDir,
-  stdio: "inherit",
-});
-console.log("Built examples/react → dist/react/");
+cpSync("../examples/techstore-support", "dist/techstore-support", { recursive: true });
+console.log("Copied examples/techstore-support → dist/techstore-support/");
 
 // Copy root index page from examples/
 copyFileSync("../examples/index.html", "dist/index.html");

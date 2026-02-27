@@ -20,6 +20,8 @@ export interface STTConfig {
   minEndOfTurnSilenceWhenConfident: number;
   /** Maximum silence (ms) before ending a turn. */
   maxTurnSilence: number;
+  /** Optional transcription prompt to guide STT (supported by u3-pro). */
+  prompt?: string;
 }
 
 export const DEFAULT_STT_CONFIG: STTConfig = {
@@ -138,6 +140,8 @@ export interface AgentConfig {
   voice: string;
   /** Tool definitions with serialized handlers. */
   tools: ToolDef[];
+  /** Optional transcription prompt to guide STT. */
+  prompt?: string;
 }
 
 // ── Zod Schemas for incoming messages ──────────────────────────────
@@ -154,6 +158,7 @@ export const ConfigureMessageSchema = z.object({
   instructions: z.string().optional(),
   greeting: z.string().optional(),
   voice: z.string().optional(),
+  prompt: z.string().optional(),
   tools: z
     .array(
       z.object({

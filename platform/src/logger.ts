@@ -14,9 +14,7 @@ export function createLogger(name: string, meta?: Record<string, string>): pino.
     name,
     level: process.env.LOG_LEVEL ?? "info",
     ...(meta ? { base: { ...meta } } : { base: undefined }),
-    ...(isDev
-      ? { transport: { target: "pino-pretty", options: { colorize: true } } }
-      : {}),
+    ...(isDev ? { transport: { target: "pino-pretty", options: { colorize: true } } } : {}),
   });
 }
 
