@@ -264,16 +264,55 @@ filling null id/model/usage fields).
 
 ---
 
-## Customer Backend (TypeScript, No AssemblyAI SDK)
+## Customer Code (TypeScript, No AssemblyAI SDK)
 
-Customers use whatever npm packages they want — zod, ws, etc. We don't publish
-or maintain an SDK. The constraint is: no `npm install @assemblyai/voice-agent`.
+Customers use whatever npm packages they want. We don't publish or maintain
+an SDK. The boilerplate (WebSocket plumbing, audio capture, message routing)
+lives in utility files that are generated once per project. **Claude Code only
+ever needs to edit two files: `agent.ts` (tools + config) and `App.tsx` (UI).**
 
-The key DX insight is using **zod** so each tool is defined in one place —
-schema, types, and handler together. No sync issues between three separate
-definitions.
+### Project structure
 
-### Customer dependencies
+```
+customer-backend/
+├── agent.ts               ← CLAUDE CODE EDITS THIS: config + tools
+├── server.ts              ← Entry point (3 lines, never changes)
+├── lib/
+│   └── voice-agent.ts     ← Boilerplate: WS connection, routing, relay
+├── package.json
+├── tsconfig.json
+└── CLAUDE.md
+
+customer-frontend/
+├── App.tsx                ← CLAUDE CODE EDITS THIS: UI components
+├── hooks/
+│   └── useVoiceAgent.ts   ← Hook: WS state machine + message handling
+├── lib/
+│   └── audio.ts           ← PCM capture via AudioWorklet, playback buffer
+├── package.json
+└── tsconfig.json
+```
+
+### CLAUDE.md (guides Claude Code)
+
+```markdown
+# Voice Agent
+
+## Adding a tool
+Edit `agent.ts` and add an entry to the `tools` object. Each tool has:
+- `description`: what the tool does (the LLM sees this)
+- `parameters`: zod schema for the arguments
+- `handler`: async function that returns a string
+
+## Changing the agent's behavior
+Edit the `config` object in `agent.ts`: instructions, greeting, voice.
+
+## Changing the UI
+Edit `App.tsx`. The `useVoiceAgent` hook provides: state, messages,
+transcript, cancel(), reset().
+```
+
+### Backend dependencies
 
 ```json
 {
@@ -285,179 +324,229 @@ definitions.
 }
 ```
 
-### Full example
+---
+
+### `agent.ts` — the only file Claude Code edits
 
 ```typescript
-// customer-backend/server.ts
-import { WebSocket, WebSocketServer } from "ws";
+// agent.ts — Agent config and tools. This is the only file you edit.
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { defineTool } from "./lib/voice-agent";
 
-const PLATFORM_URL = "wss://platform.example.com/agent";
-const FRONTEND_PORT = 8080;
+// ── Agent configuration ─────────────────────────────────────────────
 
-// ── Define tools ────────────────────────────────────────────────────
-// Each tool is ONE object: schema + handler together. Zod gives you
-// runtime validation, TypeScript types, and JSON Schema generation.
+export const config = {
+  instructions: "You are a helpful weather assistant. Be concise.",
+  greeting: "Hey! Ask me about the weather anywhere in the world.",
+  voice: "jess",
+};
 
-const tools = {
-  get_weather: {
+// ── Tools ───────────────────────────────────────────────────────────
+// Each tool: description + zod schema + handler. That's it.
+// Handler args are auto-typed from the zod schema — no manual types needed.
+
+export const tools = {
+  get_weather: defineTool({
     description: "Get current weather for a city",
     parameters: z.object({
       city: z.string().describe("City name, e.g. San Francisco"),
     }),
-    handler: async (args: { city: string }) => {
+    handler: async (args) => {
+      // args is auto-typed as { city: string }
       const resp = await fetch(`https://api.weather.com/current?city=${args.city}`);
       const data = await resp.json();
       return `${data.temp}°F and ${data.conditions} in ${args.city}`;
     },
-  },
+  }),
 
-  search_web: {
+  search_web: defineTool({
     description: "Search the web for information",
     parameters: z.object({
       query: z.string().describe("Search query"),
     }),
-    handler: async (args: { query: string }) => {
+    handler: async (args) => {
       const resp = await fetch(`https://api.duckduckgo.com/?q=${args.query}&format=json`);
       const data = await resp.json();
       return data.AbstractText || "No results found.";
     },
-  },
+  }),
 };
-
-// ── Convert tools to wire format ────────────────────────────────────
-// zodToJsonSchema generates the JSON Schema the LLM needs.
-// This runs once at startup — not per request.
-
-function toolSchemas() {
-  return Object.entries(tools).map(([name, tool]) => ({
-    name,
-    description: tool.description,
-    parameters: zodToJsonSchema(tool.parameters),
-  }));
-}
-
-// ── Handle a tool call from the platform ────────────────────────────
-
-async function handleToolCall(name: string, args: unknown): Promise<string> {
-  const tool = tools[name as keyof typeof tools];
-  if (!tool) return `Unknown tool: ${name}`;
-
-  // Validate args against the zod schema
-  const parsed = tool.parameters.safeParse(args);
-  if (!parsed.success) return `Invalid args: ${parsed.error.message}`;
-
-  return tool.handler(parsed.data);
-}
-
-// ── Connect to platform ─────────────────────────────────────────────
-
-const platform = new WebSocket(PLATFORM_URL, {
-  headers: { Authorization: `Bearer ${process.env.API_KEY}` },
-});
-
-platform.on("open", () => {
-  platform.send(JSON.stringify({
-    type: "configure",
-    instructions: "You are a helpful weather assistant. Be concise.",
-    greeting: "Hey! Ask me about the weather anywhere in the world.",
-    voice: "jess",
-    tools: toolSchemas(),
-  }));
-});
-
-platform.on("message", async (raw) => {
-  const msg = JSON.parse(raw.toString());
-
-  if (msg.type === "tool_call") {
-    const result = await handleToolCall(msg.name, msg.args);
-    platform.send(JSON.stringify({
-      type: "tool_result",
-      callId: msg.callId,
-      result,
-    }));
-  }
-
-  if (msg.type === "configured") {
-    console.log(`Session ready. Frontend token: ${msg.token}`);
-    startFrontendRelay(msg.token);
-  }
-});
-
-// ── Frontend relay ──────────────────────────────────────────────────
-// Proxies WS frames between browser and platform. The backend sits in
-// the middle so it can intercept tool_call messages while passing
-// everything else (audio, transcripts, UI events) straight through.
-
-function startFrontendRelay(token: string) {
-  const wss = new WebSocketServer({ port: FRONTEND_PORT });
-  wss.on("connection", (browserWs) => {
-    platform.send(JSON.stringify({ type: "frontend_connect", token }));
-
-    browserWs.on("message", (data, isBinary) => {
-      platform.send(data, { binary: isBinary });
-    });
-    platform.on("message", (data, isBinary) => {
-      if (browserWs.readyState === WebSocket.OPEN) {
-        browserWs.send(data, { binary: isBinary });
-      }
-    });
-  });
-}
 ```
 
-### Adding a new tool (what Claude Code would generate)
+### Adding a new tool (what Claude Code generates)
 
-To add a tool, Claude Code adds one entry to the `tools` object:
+Claude Code adds one entry to `tools` in `agent.ts`. Nothing else changes:
 
 ```typescript
-// Just add to the tools object — schema, types, and handler in one place
-const tools = {
-  // ... existing tools ...
-
-  book_appointment: {
+  book_appointment: defineTool({
     description: "Book an appointment on the user's calendar",
     parameters: z.object({
       date: z.string().describe("Date in YYYY-MM-DD format"),
       time: z.string().describe("Time in HH:MM format"),
       service: z.string().describe("Type of appointment").optional(),
     }),
-    handler: async (args: { date: string; time: string; service?: string }) => {
-      // call calendar API...
+    handler: async (args) => {
+      // args auto-typed as { date: string; time: string; service?: string }
+      const result = await calendarApi.book(args);
       return `Booked ${args.service ?? "appointment"} for ${args.date} at ${args.time}`;
     },
-  },
-};
+  }),
 ```
 
-One place. Schema, validation, types, handler — all together. `toolSchemas()`
-and `handleToolCall()` pick it up automatically.
+One entry. Schema, validation, types, handler — all in one place. The
+boilerplate in `lib/voice-agent.ts` picks it up automatically.
 
-**Why zod?**
-- Most popular TS validation library (~25M weekly npm downloads)
-- Customers likely already use it
-- `z.string().describe()` adds parameter descriptions the LLM can see
-- `.optional()` generates correct `required` in JSON Schema
-- `.safeParse()` validates args from the platform WebSocket at runtime
-- Types are inferred — no manual `args: { city: string }` needed if you use `z.infer`
-- `zod-to-json-schema` is a single function call
+---
 
-**Key points:**
-- No AssemblyAI SDK. Customer uses `ws` + `zod` (both standard ecosystem deps).
-- Tools defined in one place — no schema/handler sync issues.
-- Adding a tool = add one entry to the `tools` object.
-- Args are validated at runtime before the handler runs.
-- Frontend relay is a simple bidirectional proxy.
+### `server.ts` — entry point (never changes)
+
+```typescript
+// server.ts — Entry point. Never needs editing.
+import { config, tools } from "./agent";
+import { startAgent } from "./lib/voice-agent";
+
+startAgent({
+  platformUrl: process.env.PLATFORM_URL ?? "wss://platform.example.com/agent",
+  apiKey: process.env.API_KEY!,
+  frontendPort: Number(process.env.PORT ?? 8080),
+  config,
+  tools,
+});
+```
+
+---
+
+### `lib/voice-agent.ts` — boilerplate (generated once, never touched)
+
+This file handles all WebSocket plumbing. Claude Code generates it once when
+scaffolding the project, then never edits it.
+
+```typescript
+// lib/voice-agent.ts — WebSocket plumbing. Do not edit.
+import { WebSocket, WebSocketServer } from "ws";
+import { z, ZodObject, ZodRawShape } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+
+// ── Tool type helper ────────────────────────────────────────────────
+// defineTool() is a 1-line identity function that gives TypeScript the
+// generic inference it needs to auto-type handler args from the zod schema.
+
+interface ToolDef<T extends ZodObject<ZodRawShape>> {
+  description: string;
+  parameters: T;
+  handler: (args: z.infer<T>) => Promise<string>;
+}
+
+export function defineTool<T extends ZodObject<ZodRawShape>>(tool: ToolDef<T>): ToolDef<T> {
+  return tool;
+}
+
+// ── Agent runner ────────────────────────────────────────────────────
+
+interface AgentOptions {
+  platformUrl: string;
+  apiKey: string;
+  frontendPort: number;
+  config: { instructions: string; greeting?: string; voice?: string };
+  tools: Record<string, ToolDef<any>>;
+}
+
+export function startAgent(options: AgentOptions) {
+  const { platformUrl, apiKey, frontendPort, config, tools } = options;
+
+  // Convert zod schemas to JSON Schema for the platform
+  const toolSchemas = Object.entries(tools).map(([name, tool]) => ({
+    name,
+    description: tool.description,
+    parameters: zodToJsonSchema(tool.parameters),
+  }));
+
+  // Handle tool calls — validate args, run handler
+  async function handleToolCall(name: string, args: unknown): Promise<string> {
+    const tool = tools[name];
+    if (!tool) return `Unknown tool: ${name}`;
+    const parsed = tool.parameters.safeParse(args);
+    if (!parsed.success) return `Invalid args: ${parsed.error.message}`;
+    return tool.handler(parsed.data);
+  }
+
+  // Connect to platform
+  const platform = new WebSocket(platformUrl, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  platform.on("open", () => {
+    platform.send(JSON.stringify({
+      type: "configure",
+      ...config,
+      tools: toolSchemas,
+    }));
+  });
+
+  platform.on("message", async (raw) => {
+    const msg = JSON.parse(raw.toString());
+
+    if (msg.type === "tool_call") {
+      const result = await handleToolCall(msg.name, msg.args);
+      platform.send(JSON.stringify({
+        type: "tool_result",
+        callId: msg.callId,
+        result,
+      }));
+    }
+
+    if (msg.type === "configured") {
+      console.log(`Agent ready. Session: ${msg.sessionId}`);
+      startFrontendRelay(platform, msg.token, frontendPort);
+    }
+
+    if (msg.type === "error") {
+      console.error(`Platform error: ${msg.message}`);
+    }
+  });
+
+  platform.on("error", (err) => console.error("Platform connection error:", err));
+  platform.on("close", () => console.log("Platform connection closed"));
+}
+
+// ── Frontend relay ──────────────────────────────────────────────────
+
+function startFrontendRelay(platform: WebSocket, token: string, port: number) {
+  const wss = new WebSocketServer({ port });
+  console.log(`Frontend WebSocket server listening on port ${port}`);
+
+  wss.on("connection", (browserWs) => {
+    platform.send(JSON.stringify({ type: "frontend_connect", token }));
+
+    browserWs.on("message", (data, isBinary) => {
+      if (platform.readyState === WebSocket.OPEN) {
+        platform.send(data, { binary: isBinary });
+      }
+    });
+
+    platform.on("message", (data, isBinary) => {
+      // Forward everything except tool_call (handled above)
+      if (!isBinary) {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === "tool_call" || msg.type === "configured") return;
+        } catch {}
+      }
+      if (browserWs.readyState === WebSocket.OPEN) {
+        browserWs.send(data, { binary: isBinary });
+      }
+    });
+
+    browserWs.on("close", () => console.log("Frontend disconnected"));
+  });
+}
+```
 
 ---
 
 ## Customer Frontend (React + TypeScript)
 
-Customers will most likely use React. The frontend is purely UI + audio — no
-business logic. Here's a minimal example using standard React patterns:
-
-### Customer dependencies
+### Frontend dependencies
 
 ```json
 {
@@ -468,15 +557,50 @@ business logic. Here's a minimal example using standard React patterns:
 }
 ```
 
-### Hooks (customer writes or Claude Code generates)
+### `App.tsx` — the only file Claude Code edits
+
+```tsx
+// App.tsx — UI component. This is the only frontend file you edit.
+import { useVoiceAgent } from "./hooks/useVoiceAgent";
+
+function App() {
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent("ws://localhost:8080");
+
+  return (
+    <div className="voice-agent">
+      <div className="status">{state}</div>
+
+      <div className="messages">
+        {messages.map((m, i) => (
+          <div key={i} className={`message ${m.role}`}>
+            <span>{m.text}</span>
+            {m.steps?.map((s, j) => <span key={j} className="step">{s}</span>)}
+          </div>
+        ))}
+        {transcript && <div className="message user partial">{transcript}</div>}
+      </div>
+
+      <div className="controls">
+        <button onClick={cancel} disabled={state !== "speaking"}>Stop</button>
+        <button onClick={reset}>New Conversation</button>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### `hooks/useVoiceAgent.ts` — generated once, includes audio
 
 ```typescript
-// hooks/useVoiceAgent.ts
+// hooks/useVoiceAgent.ts — Voice agent hook with built-in audio handling.
 import { useEffect, useRef, useState, useCallback } from "react";
+import { startMicCapture, createAudioPlayer } from "../lib/audio";
 
-type AgentState = "connecting" | "ready" | "listening" | "thinking" | "speaking";
+export type AgentState = "connecting" | "ready" | "listening" | "thinking" | "speaking";
 
-interface Message {
+export interface Message {
   role: "user" | "assistant";
   text: string;
   steps?: string[];
@@ -484,7 +608,8 @@ interface Message {
 
 export function useVoiceAgent(url: string) {
   const wsRef = useRef<WebSocket | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  const micCleanupRef = useRef<(() => void) | null>(null);
   const [state, setState] = useState<AgentState>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
   const [transcript, setTranscript] = useState("");
@@ -493,24 +618,36 @@ export function useVoiceAgent(url: string) {
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onmessage = async (event) => {
-      if (event.data instanceof Blob) {
-        playAudio(await event.data.arrayBuffer());
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => setState("ready");
+
+    ws.onmessage = (event) => {
+      // Binary frame = TTS audio
+      if (event.data instanceof ArrayBuffer) {
+        playerRef.current?.enqueue(event.data);
         return;
       }
+
       const msg = JSON.parse(event.data);
       switch (msg.type) {
-        case "ready":
-          setState("ready");
-          startMic(ws, msg.sampleRate);
+        case "ready": {
+          // Start mic capture, start audio player
+          const player = createAudioPlayer(msg.ttsSampleRate ?? 24000);
+          playerRef.current = player;
+          startMicCapture(ws, msg.sampleRate ?? 16000).then((cleanup) => {
+            micCleanupRef.current = cleanup;
+          });
+          setState("listening");
           break;
+        }
         case "greeting":
           setMessages((m) => [...m, { role: "assistant", text: msg.text }]);
           setState("speaking");
           break;
         case "transcript":
           setTranscript(msg.text);
-          setState("listening");
+          if (state !== "thinking") setState("listening");
           break;
         case "turn":
           setMessages((m) => [...m, { role: "user", text: msg.text }]);
@@ -526,56 +663,162 @@ export function useVoiceAgent(url: string) {
         case "tts_done":
           setState("listening");
           break;
+        case "cancelled":
+          playerRef.current?.flush();
+          setState("listening");
+          break;
+        case "error":
+          console.error("Agent error:", msg.message);
+          break;
       }
     };
 
-    return () => ws.close();
+    ws.onclose = () => setState("connecting");
+
+    return () => {
+      micCleanupRef.current?.();
+      playerRef.current?.close();
+      ws.close();
+    };
   }, [url]);
 
   const cancel = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "cancel" }));
+    playerRef.current?.flush();
   }, []);
 
   const reset = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "reset" }));
+    playerRef.current?.flush();
     setMessages([]);
+    setTranscript("");
   }, []);
 
   return { state, messages, transcript, cancel, reset };
 }
 ```
 
-### Usage in a component
+---
 
-```tsx
-// App.tsx
-import { useVoiceAgent } from "./hooks/useVoiceAgent";
+### `lib/audio.ts` — audio utilities (generated once)
 
-function App() {
-  const { state, messages, transcript, cancel, reset } = useVoiceAgent("ws://localhost:8080");
+```typescript
+// lib/audio.ts — PCM16 mic capture + audio playback. Do not edit.
 
-  return (
-    <div>
-      <div>{state}</div>
-      {messages.map((m, i) => (
-        <div key={i} className={m.role}>{m.text}</div>
-      ))}
-      {transcript && <div className="transcript">{transcript}</div>}
-      <button onClick={cancel}>Cancel</button>
-      <button onClick={reset}>Reset</button>
-    </div>
-  );
+/**
+ * Capture mic audio as PCM16 LE and send binary frames over WebSocket.
+ * Uses AudioWorklet (not deprecated ScriptProcessorNode).
+ * Returns a cleanup function to stop capture.
+ */
+export async function startMicCapture(
+  ws: WebSocket,
+  sampleRate: number,
+): Promise<() => void> {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { sampleRate, echoCancellation: true, noiseSuppression: true },
+  });
+
+  const ctx = new AudioContext({ sampleRate });
+  const source = ctx.createMediaStreamSource(stream);
+
+  // Register AudioWorklet for PCM16 encoding
+  const workletCode = `
+    class PCM16Processor extends AudioWorkletProcessor {
+      process(inputs) {
+        const input = inputs[0][0];
+        if (input) {
+          const int16 = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            int16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+          }
+          this.port.postMessage(int16.buffer, [int16.buffer]);
+        }
+        return true;
+      }
+    }
+    registerProcessor("pcm16", PCM16Processor);
+  `;
+  const blob = new Blob([workletCode], { type: "application/javascript" });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+
+  const worklet = new AudioWorkletNode(ctx, "pcm16");
+  worklet.port.onmessage = (e) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(e.data);
+    }
+  };
+  source.connect(worklet);
+  worklet.connect(ctx.destination);
+
+  return () => {
+    stream.getTracks().forEach((t) => t.stop());
+    ctx.close();
+  };
+}
+
+/**
+ * Audio player that buffers PCM16 LE chunks and plays them sequentially.
+ */
+export function createAudioPlayer(sampleRate: number) {
+  const ctx = new AudioContext({ sampleRate });
+  let nextTime = 0;
+
+  return {
+    enqueue(pcm16Buffer: ArrayBuffer) {
+      const int16 = new Int16Array(pcm16Buffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
+
+      const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate);
+      audioBuffer.getChannelData(0).set(float32);
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      const startTime = Math.max(now, nextTime);
+      source.start(startTime);
+      nextTime = startTime + audioBuffer.duration;
+    },
+    flush() {
+      nextTime = 0;
+      // Cancel pending audio by closing and recreating context
+      ctx.close();
+    },
+    close() {
+      ctx.close();
+    },
+  };
 }
 ```
 
-**Key points:**
-- Standard React hooks pattern — customers can style and structure however they want.
-- No SDK dependency. Just browser APIs (`WebSocket`, `AudioContext`, `getUserMedia`).
-- The hook manages state machine transitions (connecting → ready → listening →
-  thinking → speaking) so the UI can show the right indicators.
-- Audio capture and playback are encapsulated in helper functions.
-- Could also be done with Vue composables, Svelte stores, or vanilla JS —
-  the WebSocket protocol is the same regardless of framework.
+---
+
+### Summary: what Claude Code touches vs. what it doesn't
+
+| File | Claude Code edits? | Purpose |
+|---|---|---|
+| `agent.ts` | **Yes — always** | Config + tools |
+| `App.tsx` | **Yes — for UI changes** | React component |
+| `server.ts` | Never | 3-line entry point |
+| `lib/voice-agent.ts` | Never | WS plumbing, tool dispatch, relay |
+| `hooks/useVoiceAgent.ts` | Never | WS state machine, message handling |
+| `lib/audio.ts` | Never | Mic capture (AudioWorklet), playback |
+| `CLAUDE.md` | Never | Instructions for Claude Code |
+
+**Why this structure?**
+- `agent.ts` is ~30 lines. Claude Code reads it instantly, knows exactly
+  where to add a tool.
+- `lib/voice-agent.ts` has the `defineTool()` helper that auto-types handler
+  args from the zod schema. No manual type annotations needed.
+- `lib/audio.ts` uses `AudioWorkletNode` (not deprecated `ScriptProcessorNode`)
+  and handles PCM16 encoding/decoding, buffered playback, and flush on barge-in.
+- `useVoiceAgent` hook includes audio handling — no undefined `playAudio()` or
+  `startMic()` references.
+- The `CLAUDE.md` tells Claude Code exactly which file to edit for each task.
 
 ---
 
