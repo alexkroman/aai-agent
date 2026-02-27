@@ -16,7 +16,7 @@ export interface Message {
   steps?: string[];
 }
 
-export function useVoiceAgent(url: string) {
+export function useVoiceAgent(platformUrl: string, agentId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const micCleanupRef = useRef<(() => void) | null>(null);
@@ -25,7 +25,7 @@ export function useVoiceAgent(url: string) {
   const [transcript, setTranscript] = useState("");
 
   useEffect(() => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(`${platformUrl}/session?agent=${agentId}`);
     wsRef.current = ws;
     ws.binaryType = "arraybuffer";
 
@@ -55,6 +55,7 @@ export function useVoiceAgent(url: string) {
           break;
         case "transcript":
           setTranscript(msg.text);
+          // Use functional update to avoid stale closure over `state`
           setState((prev) => (prev !== "thinking" ? "listening" : prev));
           break;
         case "turn":
@@ -91,7 +92,7 @@ export function useVoiceAgent(url: string) {
       playerRef.current?.close();
       ws.close();
     };
-  }, [url]);
+  }, [platformUrl, agentId]);
 
   const cancel = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "cancel" }));

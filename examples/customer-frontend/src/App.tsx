@@ -1,15 +1,17 @@
 // App.tsx — UI component. This is the only frontend file you edit.
 import { useVoiceAgent } from "./hooks/useVoiceAgent";
 
-// frontendUrl comes from the backend's "configured" response.
-// In dev, hardcode it or pass via env var. In prod, fetch from your backend.
-const FRONTEND_URL =
-  import.meta.env.VITE_FRONTEND_URL ??
-  "wss://platform.example.com/session/abc?token=xyz";
+// These come from the backend's "configured" response.
+// Bake into the build via env vars — agentId is safe to expose (not a secret).
+const PLATFORM_URL =
+  import.meta.env.VITE_PLATFORM_URL ?? "wss://platform.example.com";
+const AGENT_ID = import.meta.env.VITE_AGENT_ID ?? "your-agent-id";
 
 export default function App() {
-  const { state, messages, transcript, cancel, reset } =
-    useVoiceAgent(FRONTEND_URL);
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent(
+    PLATFORM_URL,
+    AGENT_ID
+  );
 
   return (
     <div className="voice-agent">

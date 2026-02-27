@@ -16,15 +16,20 @@ both terminating at the platform:
 
 - **WS 1**: Customer frontend ↔ Platform (direct). Audio (PCM16 binary frames)
   and UI events (transcript, thinking, chat, tts_done, greeting, error).
-  Frontend connects directly to the platform using a `frontendUrl` returned
-  by the `configured` response.
-- **WS 2**: Customer backend ↔ Platform. Configuration, tool calls, tool
-  results, and session lifecycle events.
+  Frontend connects directly to the platform using an `agentId` returned
+  by the `configured` response. Each frontend connection creates a new session.
+- **WS 2**: Customer backend ↔ Platform (persistent). Configuration, tool calls
+  (tagged with `sessionId`), tool results, and session lifecycle events.
+  One backend connection handles all sessions for that customer.
 
-**Key simplification**: The customer backend does NOT relay frontend traffic.
-The frontend connects directly to the platform. This eliminates the backend
-WebSocket server, the relay code, and the `lib/voice-agent.ts` boilerplate.
-The customer backend is a single ~45-line file.
+**Key simplifications**:
+- The customer backend does NOT relay frontend traffic. The frontend connects
+  directly to the platform. No backend WebSocket server, no relay code.
+- The backend is a persistent service, not per-session. One WS connection
+  handles N concurrent frontend sessions via `sessionId`-tagged messages.
+- The `agentId` is safe to embed in the frontend — it identifies the agent
+  config, not a secret. The API key stays server-side.
+- The customer backend is a single ~60-line file with reconnection logic.
 
 The customer frontend is purely UI + audio capture/playback. The customer backend
 configures the agent and handles tool execution. The platform owns everything in
@@ -37,23 +42,51 @@ between: STT, LLM orchestration, TTS, session management.
 ### Connection Flow
 
 ```
+Backend (runs once, persistent):
 1. Customer backend connects to platform via WS 2
 2. Customer backend sends "configure" message with instructions, tools, voice
-3. Platform acknowledges with "configured" + frontendUrl
-4. Customer backend logs frontendUrl (or passes it to frontend via any channel)
-5. Customer frontend connects directly to platform via WS 1 (using frontendUrl)
-6. Platform connects to STT provider, sends "ready" to frontend
-7. Platform sends greeting to frontend (text + TTS audio)
+3. Platform acknowledges with "configured" + agentId
+4. Backend stays connected, handling tool calls for all sessions
+   (reconnects automatically with exponential backoff if disconnected)
+
+Frontend (per-user):
+5. Customer frontend connects to platform via WS 1 using agentId
+   (wss://platform.example.com/session?agent=AGENT_ID)
+6. Platform creates a new session, links it to the backend
+7. Platform connects to STT provider, sends "ready" to frontend
+8. Platform sends greeting to frontend (text + TTS audio)
+9. Platform sends "session_started" to backend with sessionId
 
 Voice loop:
-8.  Frontend sends mic audio (binary) → Platform relays to STT
-9.  STT returns transcript → Platform sends to frontend
-10. STT returns final turn → Platform sends to LLM
-11. LLM requests tool call → Platform sends tool_call to backend (WS 2)
-12. Backend executes tool, sends tool_result → Platform feeds to LLM
-13. LLM produces response → Platform sends chat to frontend + starts TTS
-14. TTS audio streams to frontend (binary)
+10. Frontend sends mic audio (binary) → Platform relays to STT
+11. STT returns transcript → Platform sends to frontend
+12. STT returns final turn → Platform sends to LLM
+13. LLM requests tool call → Platform sends tool_call to backend (with sessionId)
+14. Backend executes tool, sends tool_result (with sessionId) → Platform feeds to LLM
+15. LLM produces response → Platform sends chat to frontend + starts TTS
+16. TTS audio streams to frontend (binary)
 ```
+
+### Deployment Model
+
+```
+┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│  Customer Frontend  │     │      Platform        │     │  Customer Backend   │
+│  (Vercel, Netlify,  │────►│  (always running,    │◄────│  (Railway, Fly,     │
+│   S3+CF, any CDN)   │     │   managed by us)     │     │   Render, Docker)   │
+│                     │     │                      │     │                     │
+│  Static React app   │     │  Node.js WS server   │     │  Long-running       │
+│  No server needed   │     │                      │     │  WS client process  │
+└─────────────────────┘     └──────────────────────┘     └─────────────────────┘
+```
+
+- **Frontend**: Static files. Deploy anywhere (Vercel, Netlify, S3+CloudFront).
+  No server required. The `agentId` is baked into the build via env var.
+- **Backend**: A long-running process that maintains a persistent WebSocket to
+  the platform. Deploy on any service that supports long-running processes
+  (Railway, Fly.io, Render, a VM, Docker). NOT a serverless function — it
+  needs a persistent connection.
+- **Platform**: Managed by us. Customers never deploy this.
 
 ### WebSocket 1: Platform ↔ Customer Frontend
 
@@ -113,17 +146,19 @@ The backend configures the agent and handles tool execution.
 {
   type: "tool_result",
   callId: "abc123",
+  sessionId: "sess_xyz",                                 // must match the tool_call's sessionId
   result: "72°F and sunny in San Francisco"
 }
 ```
 
 **Platform sends to backend:**
 ```typescript
-{ type: "configured", sessionId: "abc...", frontendUrl: "wss://platform.example.com/session/abc...?token=xyz" }
-{ type: "session_started" }
-{ type: "tool_call", callId: "abc123", name: "get_weather", args: { city: "SF" } }
-{ type: "session_ended", reason: "disconnect" }
-{ type: "error", message: "LLM call failed" }
+{ type: "configured", agentId: "agent_abc123" }                                          // agent registered, frontends can connect
+{ type: "session_started", sessionId: "sess_xyz" }                                       // a frontend connected
+{ type: "tool_call", callId: "call_123", sessionId: "sess_xyz", name: "get_weather", args: { city: "SF" } }
+{ type: "tool_timeout", callId: "call_123", sessionId: "sess_xyz" }                      // 30s elapsed, platform gave up
+{ type: "session_ended", sessionId: "sess_xyz", reason: "disconnect" }                   // frontend disconnected
+{ type: "error", message: "LLM call failed", sessionId: "sess_xyz" }                     // session-scoped error
 ```
 
 ---
@@ -220,10 +255,11 @@ backend over WS 2 and awaits the result:
 private async executeTool(name: string, args: object): Promise<string> {
   const callId = crypto.randomUUID();
 
-  // Send tool_call to customer backend
+  // Send tool_call to customer backend (tagged with sessionId)
   this.backendWs.send(JSON.stringify({
     type: "tool_call",
     callId,
+    sessionId: this.sessionId,
     name,
     args,
   }));
@@ -278,17 +314,15 @@ Customers use whatever npm packages they want. We don't publish or maintain
 an SDK. There is no boilerplate relay layer. **Claude Code only ever needs to
 edit two files: `agent.ts` (backend: config + tools) and `App.tsx` (frontend: UI).**
 
-### Key simplification
+### Key simplifications
 
-The customer backend does NOT act as a relay. The frontend connects directly
-to the platform using the `frontendUrl` from the `configured` response. This
-means:
-
-- No `WebSocketServer` in customer code
-- No `lib/voice-agent.ts` boilerplate
-- No `server.ts` entry point
-- No relay logic, no message filtering
-- The backend is a single file: `agent.ts` (~45 lines)
+- No `WebSocketServer` in customer code — frontend connects directly to platform
+- No `lib/voice-agent.ts` boilerplate — no relay, no message filtering
+- No `server.ts` entry point — `agent.ts` is the entire backend
+- Backend is persistent (one process serves all sessions via `sessionId`)
+- Frontend is static (deploy on any CDN, no server needed)
+- `agentId` is safe to embed in frontend builds (not a secret)
+- Backend reconnects automatically with exponential backoff
 
 ### Project structure
 
@@ -317,9 +351,11 @@ customer-frontend/
 ## Adding a tool
 Edit `agent.ts` and add an entry to the `tools` object. Each tool has:
 - `description`: what the tool does (the LLM sees this)
-- `parameters`: object mapping param names to types ("string", "number", "boolean",
-  append "?" for optional, e.g. "string?")
-- `handler`: async function that returns a string
+- `parameters`: object mapping param names to types
+  - Simple: `{ city: "string" }` or `{ limit: "number?" }` (? = optional)
+  - With description: `{ city: { type: "string", description: "City name" } }`
+  - With enum: `{ status: { type: "string", enum: ["open", "closed"] } }`
+- `handler`: async function that takes the parsed args and returns a string
 
 ## Changing the agent's behavior
 Edit the config in `agent.ts`: instructions, greeting, voice.
@@ -346,26 +382,34 @@ One dependency. No zod, no schema converters, no SDK.
 ### `agent.ts` — the entire customer backend (single file)
 
 This is the only backend file. No entry point, no boilerplate, no relay.
-Claude Code edits the `tools` object and config. The rest is ~15 lines of
-WebSocket plumbing that never changes.
+Claude Code edits the `tools` object and config. The rest is connection
+plumbing that never changes.
 
 **Parameters use a simplified format** — `{ city: "string" }` instead of
 JSON Schema or zod. The platform converts this to proper JSON Schema before
-sending to the LLM. Append `?` for optional: `{ service: "string?" }`.
+sending to the LLM. See "Simplified parameter format" below for details.
 
 ```typescript
 // agent.ts — the entire customer backend
 import { WebSocket } from "ws";
+
+// ── Agent config ────────────────────────────────────────────────────
+
+const config = {
+  instructions: "You are a helpful weather assistant. Be concise.",
+  greeting: "Hey! Ask me about the weather.",
+  voice: "jess",
+};
 
 // ── Tools ───────────────────────────────────────────────────────────
 
 const tools = {
   get_weather: {
     description: "Get current weather for a city",
-    parameters: { city: "string" },
+    parameters: { city: { type: "string", description: "City name" } },
     handler: async (args: { city: string }) => {
       const resp = await fetch(
-        `https://api.weather.com/current?city=${args.city}`
+        `https://api.weather.com/current?city=${encodeURIComponent(args.city)}`
       );
       const data = await resp.json();
       return `${data.temp}°F and ${data.conditions} in ${args.city}`;
@@ -373,41 +417,79 @@ const tools = {
   },
 };
 
-// ── Connect to platform ─────────────────────────────────────────────
+// ── Platform connection (reconnects automatically) ──────────────────
 
-const ws = new WebSocket(process.env.PLATFORM_URL!, {
-  headers: { Authorization: `Bearer ${process.env.API_KEY}` },
-});
+const pendingCalls = new Map<string, AbortController>();
 
-ws.on("open", () => {
-  ws.send(
-    JSON.stringify({
+function connect() {
+  const ws = new WebSocket(process.env.PLATFORM_URL!, {
+    headers: { Authorization: `Bearer ${process.env.API_KEY}` },
+  });
+
+  let reconnectDelay = 1000;
+
+  ws.on("open", () => {
+    reconnectDelay = 1000;
+    ws.send(JSON.stringify({
       type: "configure",
-      instructions: "You are a helpful weather assistant. Be concise.",
-      greeting: "Hey! Ask me about the weather.",
-      voice: "jess",
+      ...config,
       tools: Object.entries(tools).map(([name, t]) => ({
-        name,
-        description: t.description,
-        parameters: t.parameters,
+        name, description: t.description, parameters: t.parameters,
       })),
-    })
-  );
-});
+    }));
+  });
 
-ws.on("message", async (raw) => {
-  const msg = JSON.parse(raw.toString());
-  if (msg.type === "tool_call") {
-    const tool = tools[msg.name as keyof typeof tools];
-    const result = tool
-      ? await tool.handler(msg.args)
-      : `Unknown tool: ${msg.name}`;
-    ws.send(JSON.stringify({ type: "tool_result", callId: msg.callId, result }));
-  }
-  if (msg.type === "configured") {
-    console.log(`Frontend URL: ${msg.frontendUrl}`);
-  }
-});
+  ws.on("message", async (raw) => {
+    const msg = JSON.parse(raw.toString());
+
+    if (msg.type === "tool_call") {
+      const abort = new AbortController();
+      pendingCalls.set(msg.callId, abort);
+      let result: string;
+      try {
+        const tool = tools[msg.name as keyof typeof tools];
+        if (!tool) throw new Error(`Unknown tool: ${msg.name}`);
+        result = await tool.handler(msg.args);
+      } catch (err) {
+        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      pendingCalls.delete(msg.callId);
+      if (!abort.signal.aborted) {
+        ws.send(JSON.stringify({
+          type: "tool_result",
+          callId: msg.callId,
+          sessionId: msg.sessionId,
+          result,
+        }));
+      }
+    }
+
+    if (msg.type === "tool_timeout") {
+      // Platform gave up waiting — abort the in-flight handler
+      pendingCalls.get(msg.callId)?.abort();
+      pendingCalls.delete(msg.callId);
+    }
+
+    if (msg.type === "configured") {
+      console.log(`Agent ready. ID: ${msg.agentId}`);
+      console.log(`Frontends connect to: ${process.env.PLATFORM_URL}/session?agent=${msg.agentId}`);
+    }
+
+    if (msg.type === "session_started") console.log(`Session started: ${msg.sessionId}`);
+    if (msg.type === "session_ended") console.log(`Session ended: ${msg.sessionId}`);
+    if (msg.type === "error") console.error(`Error: ${msg.message}`);
+  });
+
+  ws.on("close", () => {
+    console.log(`Disconnected. Reconnecting in ${reconnectDelay}ms...`);
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  });
+
+  ws.on("error", (err) => console.error("Connection error:", err.message));
+}
+
+connect();
 ```
 
 ### Adding a new tool (what Claude Code generates)
@@ -417,7 +499,11 @@ Claude Code adds one entry to the `tools` object. Nothing else changes:
 ```typescript
   book_appointment: {
     description: "Book an appointment on the user's calendar",
-    parameters: { date: "string", time: "string", service: "string?" },
+    parameters: {
+      date: { type: "string", description: "Date in YYYY-MM-DD format" },
+      time: { type: "string", description: "Time in HH:MM format" },
+      service: { type: "string?", description: "Type of appointment" },
+    },
     handler: async (args: { date: string; time: string; service?: string }) => {
       const result = await calendarApi.book(args);
       return `Booked ${args.service ?? "appointment"} for ${args.date} at ${args.time}`;
@@ -425,25 +511,37 @@ Claude Code adds one entry to the `tools` object. Nothing else changes:
   },
 ```
 
-One entry. Simplified schema, handler, type annotation — all in one place.
-The platform converts `{ date: "string", time: "string", service: "string?" }`
-to proper JSON Schema with required/optional fields before sending to the LLM.
+One entry. Simplified schema with descriptions, handler, type annotation — all
+in one place.
 
 ### Simplified parameter format (platform converts to JSON Schema)
 
-The platform's `protocol.ts` handles the conversion:
+The platform's `protocol.ts` handles the conversion. Three forms are supported:
 
+**1. Simple** — just the type name:
 ```
-Customer sends:                    Platform converts to JSON Schema:
-{ city: "string" }          →     { type: "object", properties: { city: { type: "string" } }, required: ["city"] }
-{ query: "string",          →     { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } },
-  limit: "number?" }                required: ["query"] }
+{ city: "string" }               →  { type: "object", properties: { city: { type: "string" } }, required: ["city"] }
+{ limit: "number?" }             →  { type: "object", properties: { limit: { type: "number" } }, required: [] }
+```
+
+**2. Extended** — type + description (and optional enum):
+```
+{ city: { type: "string",        →  { type: "object",
+         description: "Name" } }      properties: { city: { type: "string", description: "Name" } },
+                                       required: ["city"] }
+
+{ status: { type: "string",      →  { type: "object",
+            enum: ["open",            properties: { status: { type: "string", enum: ["open", "closed"] } },
+                   "closed"] } }       required: ["status"] }
+```
+
+**3. Raw JSON Schema** — pass-through for complex cases:
+```
+{ type: "object", properties: { ... } }  →  used as-is (detected by presence of "type" at root level)
 ```
 
 Supported types: `"string"`, `"number"`, `"boolean"`. Append `?` for optional.
-This covers ~95% of tool parameter use cases. If a customer needs nested objects
-or arrays, they can pass raw JSON Schema directly instead — the platform detects
-which format is being used.
+The platform auto-detects which format is being used per-tool.
 
 ---
 
@@ -462,19 +560,19 @@ which format is being used.
 
 ### `App.tsx` — the only frontend file Claude Code edits
 
-The frontend connects directly to the platform using the `frontendUrl`.
-In development, this URL can be hardcoded or fetched from the backend.
-In production, it's typically passed via an API call or embedded in the page.
+The frontend connects directly to the platform using `agentId`. The `agentId`
+is stable (derived from the customer's API key) so it can be baked into the
+frontend build via an environment variable. No runtime handoff needed.
 
 ```tsx
 // App.tsx — UI component. This is the only frontend file you edit.
 import { useVoiceAgent } from "./hooks/useVoiceAgent";
 
-// frontendUrl comes from the backend's "configured" response
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL ?? "wss://platform.example.com/session/abc?token=xyz";
+const PLATFORM_URL = import.meta.env.VITE_PLATFORM_URL ?? "wss://platform.example.com";
+const AGENT_ID = import.meta.env.VITE_AGENT_ID ?? "your-agent-id";
 
 function App() {
-  const { state, messages, transcript, cancel, reset } = useVoiceAgent(FRONTEND_URL);
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent(PLATFORM_URL, AGENT_ID);
 
   return (
     <div className="voice-agent">
@@ -516,7 +614,7 @@ export interface Message {
   steps?: string[];
 }
 
-export function useVoiceAgent(url: string) {
+export function useVoiceAgent(platformUrl: string, agentId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const micCleanupRef = useRef<(() => void) | null>(null);
@@ -525,9 +623,8 @@ export function useVoiceAgent(url: string) {
   const [transcript, setTranscript] = useState("");
 
   useEffect(() => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(`${platformUrl}/session?agent=${agentId}`);
     wsRef.current = ws;
-
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => setState("ready");
@@ -542,7 +639,6 @@ export function useVoiceAgent(url: string) {
       const msg = JSON.parse(event.data);
       switch (msg.type) {
         case "ready": {
-          // Start mic capture, start audio player
           const player = createAudioPlayer(msg.ttsSampleRate ?? 24000);
           playerRef.current = player;
           startMicCapture(ws, msg.sampleRate ?? 16000).then((cleanup) => {
@@ -557,7 +653,8 @@ export function useVoiceAgent(url: string) {
           break;
         case "transcript":
           setTranscript(msg.text);
-          if (state !== "thinking") setState("listening");
+          // FIX: use functional update to avoid stale closure over `state`
+          setState((prev) => (prev !== "thinking" ? "listening" : prev));
           break;
         case "turn":
           setMessages((m) => [...m, { role: "user", text: msg.text }]);
@@ -590,7 +687,7 @@ export function useVoiceAgent(url: string) {
       playerRef.current?.close();
       ws.close();
     };
-  }, [url]);
+  }, [platformUrl, agentId]);
 
   const cancel = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "cancel" }));
@@ -670,11 +767,14 @@ export async function startMicCapture(
  * Audio player that buffers PCM16 LE chunks and plays them sequentially.
  */
 export function createAudioPlayer(sampleRate: number) {
-  const ctx = new AudioContext({ sampleRate });
+  // FIX: `let` not `const` — flush() must recreate the context
+  let ctx = new AudioContext({ sampleRate });
   let nextTime = 0;
 
   return {
     enqueue(pcm16Buffer: ArrayBuffer) {
+      if (ctx.state === "closed") return;
+
       const int16 = new Int16Array(pcm16Buffer);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
@@ -694,12 +794,13 @@ export function createAudioPlayer(sampleRate: number) {
       nextTime = startTime + audioBuffer.duration;
     },
     flush() {
+      // FIX: close old context AND recreate so enqueue() still works after barge-in
+      ctx.close().catch(() => {});
+      ctx = new AudioContext({ sampleRate });
       nextTime = 0;
-      // Cancel pending audio by closing and recreating context
-      ctx.close();
     },
     close() {
-      ctx.close();
+      ctx.close().catch(() => {});
     },
   };
 }
@@ -718,15 +819,17 @@ export function createAudioPlayer(sampleRate: number) {
 | `CLAUDE.md` | Never | Instructions for Claude Code |
 
 **Why this structure?**
-- `agent.ts` is ~45 lines. Claude Code reads it instantly, knows exactly
-  where to add a tool. It's the entire backend — no entry point, no
-  boilerplate, no relay.
-- No `lib/voice-agent.ts` — the backend doesn't need WS plumbing. It
-  connects to the platform and handles tool calls. That's it.
-- `lib/audio.ts` uses `AudioWorkletNode` (not deprecated `ScriptProcessorNode`)
-  and handles PCM16 encoding/decoding, buffered playback, and flush on barge-in.
-- `useVoiceAgent` hook connects directly to the platform (not a local relay)
-  and includes audio handling.
+- `agent.ts` is ~90 lines (with reconnection + error handling). Claude Code
+  only edits the `config` object and `tools` object at the top. The connection
+  plumbing at the bottom never changes.
+- The backend is a persistent process (not per-session). Handles N concurrent
+  sessions via `sessionId`-tagged messages. Reconnects automatically.
+- The frontend is static — deploy on any CDN. `agentId` is baked into the build.
+- `lib/audio.ts` uses `AudioWorkletNode` (not deprecated `ScriptProcessorNode`),
+  handles PCM16 encoding/decoding, buffered playback, and properly recreates
+  AudioContext on flush (barge-in).
+- `useVoiceAgent(platformUrl, agentId)` connects directly to the platform.
+  Uses functional state updates to avoid stale closure bugs.
 - The `CLAUDE.md` tells Claude Code exactly which file to edit for each task.
 
 ---
@@ -783,3 +886,90 @@ customers integrate.
 13. Unit tests for protocol, voice-cleaner, LLM response patching
 14. Integration test: backend connects → configures → frontend connects → full voice loop
 15. Verify same behavior as current Python implementation
+
+---
+
+## Deployment Guide (Customer Code)
+
+### Backend deployment
+
+The backend is a long-running Node.js process. It maintains a persistent
+WebSocket connection to the platform. It is NOT suitable for serverless
+(Lambda, Vercel Functions, Cloudflare Workers) because those have short
+execution timeouts and no persistent connections.
+
+**Recommended platforms** (all support long-running processes):
+
+| Platform | Deploy command | Notes |
+|---|---|---|
+| Railway | `railway up` | Auto-detects Node.js, runs `npm start` |
+| Fly.io | `fly launch && fly deploy` | Needs Dockerfile or `fly.toml` |
+| Render | Push to GitHub, connect repo | Auto-detects Node.js |
+| Docker | `docker build && docker run` | Works anywhere |
+| Any VM | `npm install && npm start` | Use PM2 or systemd for process management |
+
+**Environment variables** (set in deployment platform):
+```
+PLATFORM_URL=wss://platform.assemblyai.com/agent
+API_KEY=your-assemblyai-api-key
+```
+
+**Dockerfile** (optional, for platforms that need one):
+```dockerfile
+FROM node:22-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY agent.ts tsconfig.json ./
+CMD ["npx", "tsx", "agent.ts"]
+```
+
+### Frontend deployment
+
+The frontend is a static React app. No server needed. Deploy anywhere:
+
+| Platform | Deploy command | Notes |
+|---|---|---|
+| Vercel | `vercel` or push to GitHub | Zero config for Vite projects |
+| Netlify | `netlify deploy --prod` | Zero config for Vite projects |
+| Cloudflare Pages | Push to GitHub | Zero config |
+| S3 + CloudFront | `aws s3 sync dist/ s3://bucket` | Need CloudFront for HTTPS |
+| GitHub Pages | Push to GitHub | Free |
+
+**Build:**
+```bash
+VITE_PLATFORM_URL=wss://platform.assemblyai.com \
+VITE_AGENT_ID=your-agent-id \
+npm run build
+# Output in dist/ — deploy these static files
+```
+
+**Key point**: `VITE_AGENT_ID` is baked into the build at compile time (Vite
+replaces `import.meta.env.VITE_*` at build). It's safe to expose — it
+identifies the agent config, not a secret. The API key stays server-side.
+
+### Claude Code deployability
+
+The customer code is designed to be trivially deployable by Claude Code:
+
+**Backend** — Claude Code can:
+1. Edit `agent.ts` (add tools, change config)
+2. Run `npm install` and `npm run dev` to test locally
+3. Deploy with one command: `railway up` or `fly deploy`
+
+**Frontend** — Claude Code can:
+1. Edit `App.tsx` (change UI)
+2. Run `npm run dev` to test locally
+3. Build with `npm run build`
+4. Deploy with one command: `vercel` or `netlify deploy --prod`
+
+**No moving parts**: there's no database, no build pipeline configuration,
+no infrastructure-as-code. The backend is a single `.ts` file that runs as
+a process. The frontend is a standard Vite React app.
+
+**What could go wrong** (and mitigations):
+- Backend needs a persistent process host — CLAUDE.md explicitly warns
+  "NOT a serverless function"
+- Frontend needs env vars at build time — `.env.example` shows what's needed
+- `agentId` must be known before frontend build — it's stable per API key,
+  so set it once and forget
