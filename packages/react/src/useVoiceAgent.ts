@@ -1,14 +1,19 @@
-import { useCallback, useReducer, useRef } from "react";
-import { useSessionSocket } from "./useSessionSocket";
-import type { SessionHandlers } from "./useSessionSocket";
+import { useCallback, useReducer, useRef, useEffect } from "react";
+import { getPCMWorkletUrl } from "./pcm-worklet";
+import { PCMPlayer } from "./wav-stream-player";
+
+function toWsUrl(url: string): string {
+  if (url.startsWith("ws://") || url.startsWith("wss://")) return url;
+  if (url.startsWith("http")) return url.replace(/^http/, "ws");
+  const u = new URL(url, window.location.href);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  return u.href;
+}
 import type {
   VoiceAgentOptions,
   VoiceAgentResult,
   VoiceAgentError,
   Message,
-  MessageId,
-  MessageRole,
-  MessageType,
   Phase,
   TurnPhase,
 } from "./types";
@@ -25,7 +30,7 @@ interface VoiceState {
 type VoiceAction =
   | { type: "SET_PHASE"; phase: Phase; turnPhase?: TurnPhase }
   | { type: "ADD_MESSAGE"; message: Message; maxMessages: number }
-  | { type: "REMOVE_MESSAGE"; id: MessageId }
+  | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "CLEAR_MESSAGES" }
   | { type: "SET_ERROR"; error: VoiceAgentError | null };
 
@@ -64,18 +69,18 @@ function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState {
   }
 }
 
-// ── Helper ────────────────────────────────────────────────────────────
-
-function newMessageId(): MessageId {
-  return crypto.randomUUID() as MessageId;
-}
-
 // ── Hook ──────────────────────────────────────────────────────────────
 
 /**
  * React hook that manages a full voice-agent session through a single
  * multiplexed WebSocket. The server handles STT, turn detection, LLM,
  * barge-in, and TTS. The browser is a thin audio I/O client.
+ *
+ * Audio architecture:
+ * - Playback AudioContext (24kHz) is created during the user gesture
+ *   (button click) so the browser never blocks it.
+ * - Capture AudioContext (STT sample rate) is created after the server
+ *   sends the required sample rate in the "ready" message.
  */
 export function useVoiceAgent({
   baseUrl = "",
@@ -106,20 +111,24 @@ export function useVoiceAgent({
   const onTurnEndRef = useRef(onTurnEnd);
   onTurnEndRef.current = onTurnEnd;
 
-  const {
-    connect: sessionConnect,
-    startCapture,
-    disconnect: sessionDisconnect,
-  } = useSessionSocket();
+  // Session refs
+  const socketRef = useRef<WebSocket | null>(null);
+  const captureCtxRef = useRef<AudioContext | null>(null);
+  const captureNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const playerRef = useRef<PCMPlayer | null>(null);
+  const speakingRef = useRef(false);
+  const thinkingIdRef = useRef<string | null>(null);
 
-  // ── message helpers ────────────────────────────────────────────────
+  // ── internal helpers ──────────────────────────────────────────────
+
   const addMessage = useCallback(
     (
       text: string,
-      role: MessageRole,
-      type: MessageType = "message",
-    ): MessageId => {
-      const id = newMessageId();
+      role: Message["role"],
+      type: Message["type"] = "message",
+    ): string => {
+      const id = crypto.randomUUID();
       dispatch({
         type: "ADD_MESSAGE",
         message: { id, text, role, type },
@@ -130,7 +139,7 @@ export function useVoiceAgent({
     [],
   );
 
-  const removeMessage = useCallback((id: MessageId) => {
+  const removeMessage = useCallback((id: string) => {
     dispatch({ type: "REMOVE_MESSAGE", id });
   }, []);
 
@@ -138,7 +147,6 @@ export function useVoiceAgent({
     dispatch({ type: "CLEAR_MESSAGES" });
   }, []);
 
-  // ── phase helpers ──────────────────────────────────────────────────
   const setPhase = useCallback((phase: Phase, turnPhase?: TurnPhase) => {
     phaseRef.current = phase;
     dispatch({ type: "SET_PHASE", phase, turnPhase });
@@ -149,107 +157,217 @@ export function useVoiceAgent({
     if (error) onErrorRef.current?.(error);
   }, []);
 
-  // ── stop ───────────────────────────────────────────────────────────
+  // ── session cleanup ───────────────────────────────────────────────
+
+  const cleanup = useCallback(() => {
+    if (captureNodeRef.current) {
+      captureNodeRef.current.disconnect();
+      captureNodeRef.current = null;
+    }
+    if (captureCtxRef.current) {
+      captureCtxRef.current.close();
+      captureCtxRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+    speakingRef.current = false;
+    if (playerRef.current) {
+      playerRef.current.destroy();
+      playerRef.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.onclose = null;
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+  }, []);
+
+  // ── mic capture ───────────────────────────────────────────────────
+
+  async function startCapture(sampleRate: number): Promise<void> {
+    if (!socketRef.current) return;
+
+    micStreamRef.current = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    if (!socketRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+      return;
+    }
+
+    captureCtxRef.current = new AudioContext({ sampleRate });
+    const source = captureCtxRef.current.createMediaStreamSource(
+      micStreamRef.current,
+    );
+
+    await captureCtxRef.current.audioWorklet.addModule(getPCMWorkletUrl());
+
+    if (!socketRef.current) return;
+
+    captureNodeRef.current = new AudioWorkletNode(
+      captureCtxRef.current,
+      "pcm-processor",
+    );
+    captureNodeRef.current.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(e.data);
+      }
+    };
+    source.connect(captureNodeRef.current);
+    captureNodeRef.current.connect(captureCtxRef.current.destination);
+  }
+
+  // ── stop ──────────────────────────────────────────────────────────
+
   const stopRecording = useCallback(() => {
     if (phaseRef.current === "idle") return;
-    sessionDisconnect();
+    cleanup();
     setPhase("idle", "listening");
     onDisconnectRef.current?.();
-  }, [sessionDisconnect, setPhase]);
+  }, [cleanup, setPhase]);
 
-  // ── start ──────────────────────────────────────────────────────────
+  // ── start ─────────────────────────────────────────────────────────
+
   const startRecording = useCallback(async () => {
     if (phaseRef.current !== "idle") return;
 
     setPhase("connecting");
     dispatch({ type: "SET_ERROR", error: null });
+    thinkingIdRef.current = null;
 
-    let thinkingId: MessageId | null = null;
+    // ── handle server messages ────────────────────────────────────
+    function handleMessage(msg: Record<string, unknown>): void {
+      switch (msg.type) {
+        case "ready": {
+          const sampleRate = msg.sample_rate as number;
+          if (phaseRef.current !== "connecting") break;
+          startCapture(sampleRate)
+            .then(() => {
+              if (phaseRef.current !== "connecting") return;
+              setPhase("active", "listening");
+              onConnectRef.current?.();
+            })
+            .catch((err) => {
+              if (phaseRef.current === "idle") return;
+              const isMicDenied =
+                err instanceof DOMException &&
+                (err.name === "NotAllowedError" ||
+                  err.name === "PermissionDeniedError");
+              setError({
+                code: isMicDenied ? "mic_denied" : "connection_failed",
+                message: isMicDenied
+                  ? "Microphone access denied"
+                  : "Failed to start voice session",
+                cause: err,
+              });
+              stopRecording();
+            });
+          break;
+        }
+        case "turn":
+          onTurnStartRef.current?.(msg.text as string);
+          addMessage(msg.text as string, "user");
+          break;
+        case "thinking":
+          thinkingIdRef.current = addMessage("", "assistant", "thinking");
+          setPhase("active", "processing");
+          break;
+        case "chat":
+          if (thinkingIdRef.current) {
+            removeMessage(thinkingIdRef.current);
+            thinkingIdRef.current = null;
+          }
+          if (msg.text) addMessage(msg.text as string, "assistant");
+          onTurnEndRef.current?.(msg.text as string);
+          break;
+        case "greeting":
+          addMessage(msg.text as string, "assistant");
+          break;
+        case "tts_done":
+          if (playerRef.current) {
+            playerRef.current.flush();
+          }
+          break;
+        case "error":
+          if (thinkingIdRef.current) {
+            removeMessage(thinkingIdRef.current);
+            thinkingIdRef.current = null;
+          }
+          setError({ code: "chat_error", message: msg.message as string });
+          break;
+        case "cancelled":
+          if (thinkingIdRef.current) {
+            removeMessage(thinkingIdRef.current);
+            thinkingIdRef.current = null;
+          }
+          speakingRef.current = false;
+          playerRef.current?.clear();
+          if (phaseRef.current === "active") setPhase("active", "listening");
+          break;
+      }
+    }
 
-    const handlers: SessionHandlers = {
-      onReady: async (sampleRate) => {
-        if (phaseRef.current !== "connecting") return;
-        try {
-          await startCapture(sampleRate);
-          if (phaseRef.current !== "connecting") return;
-          setPhase("active", "listening");
-          onConnectRef.current?.();
-        } catch (err) {
-          if (phaseRef.current === "idle") return;
+    try {
+      // 1. Create player during user gesture so AudioContext isn't suspended
+      const playbackCtx = new AudioContext({ sampleRate: 24000 });
+      if (playbackCtx.state === "suspended") await playbackCtx.resume();
 
-          const isMicDenied =
-            err instanceof DOMException &&
-            (err.name === "NotAllowedError" ||
-              err.name === "PermissionDeniedError");
+      const player = new PCMPlayer();
+      await player.init(playbackCtx);
 
-          setError({
-            code: isMicDenied ? "mic_denied" : "connection_failed",
-            message: isMicDenied
-              ? "Microphone access denied"
-              : "Failed to start voice session",
-            cause: err,
-          });
-          stopRecording();
+      player.onStarted = () => {
+        if (!speakingRef.current) {
+          speakingRef.current = true;
+          if (phaseRef.current === "active") setPhase("active", "speaking");
         }
-      },
-      onTurn: (text) => {
-        onTurnStartRef.current?.(text);
-        addMessage(text, "user");
-      },
-      onThinking: () => {
-        thinkingId = addMessage("", "assistant", "thinking");
-        setPhase("active", "processing");
-      },
-      onChat: (text) => {
-        if (thinkingId) {
-          removeMessage(thinkingId);
-          thinkingId = null;
+      };
+      player.onDone = () => {
+        speakingRef.current = false;
+        if (phaseRef.current === "active") setPhase("active", "listening");
+      };
+      playerRef.current = player;
+
+      // 2. Connect WebSocket
+      const wsUrl = toWsUrl(`${baseUrl}/session`);
+      const ws = await new Promise<WebSocket>((resolve, reject) => {
+        const socket = new WebSocket(wsUrl);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = () => resolve(socket);
+        socket.onerror = (e) => reject(e);
+      });
+
+      socketRef.current = ws;
+
+      ws.onmessage = (evt) => {
+        if (evt.data instanceof ArrayBuffer) {
+          playerRef.current?.write(evt.data);
+        } else if (typeof evt.data === "string") {
+          try {
+            handleMessage(JSON.parse(evt.data));
+          } catch {
+            // ignore parse errors
+          }
         }
-        if (text) {
-          addMessage(text, "assistant");
-        }
-        onTurnEndRef.current?.(text);
-      },
-      onGreeting: (text) => {
-        addMessage(text, "assistant");
-      },
-      onTTSDone: () => {
-        if (phaseRef.current === "active") {
-          setPhase("active", "listening");
-        }
-      },
-      onSpeaking: () => {
-        if (phaseRef.current === "active") {
-          setPhase("active", "speaking");
-        }
-      },
-      onError: (message) => {
-        if (thinkingId) {
-          removeMessage(thinkingId);
-          thinkingId = null;
-        }
-        setError({ code: "chat_error", message });
-      },
-      onCancelled: () => {
-        if (thinkingId) {
-          removeMessage(thinkingId);
-          thinkingId = null;
-        }
-        if (phaseRef.current === "active") {
-          setPhase("active", "listening");
-        }
-      },
-      onClose: () => {
+      };
+
+      ws.onclose = () => {
+        socketRef.current = null;
+        cleanup();
         if (phaseRef.current !== "idle") {
           setPhase("idle", "listening");
           onDisconnectRef.current?.();
         }
-      },
-    };
-
-    try {
-      const sessionUrl = `${baseUrl}/session`;
-      await sessionConnect(sessionUrl, handlers);
+      };
     } catch (err) {
       if ((phaseRef.current as Phase) !== "connecting") return;
       setError({
@@ -262,19 +380,21 @@ export function useVoiceAgent({
     }
   }, [
     baseUrl,
-    sessionConnect,
-    startCapture,
-    stopRecording,
+    cleanup,
     addMessage,
     removeMessage,
     setPhase,
     setError,
+    stopRecording,
   ]);
 
   const toggleRecording = useCallback(() => {
     if (phaseRef.current === "idle") startRecording();
     else stopRecording();
   }, [startRecording, stopRecording]);
+
+  // Cleanup on unmount
+  useEffect(() => cleanup, [cleanup]);
 
   return {
     messages: state.messages,

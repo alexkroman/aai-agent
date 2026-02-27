@@ -17,24 +17,6 @@ class STTConfig(BaseModel):
     max_turn_silence: int = Field(default=1200, ge=0)
 
 
-class FallbackAnswerPrompt(BaseModel):
-    """Template used when the agent gets stuck and needs a fallback answer."""
-
-    model_config = ConfigDict(frozen=True)
-
-    pre_messages: str
-    post_messages: str
-
-
-class StreamingToken(BaseModel):
-    """Ephemeral token and WebSocket URL for browser-side STT, plus TTS config."""
-
-    wss_url: str
-    sample_rate: int = Field(gt=0)
-    tts_enabled: bool = False
-    tts_sample_rate: int = Field(default=24000, gt=0)
-
-
 class VoiceResponse(BaseModel):
     """Response from a voice chat interaction."""
 

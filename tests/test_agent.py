@@ -11,7 +11,7 @@ from aai_agent.agent import (
     VOICE_RULES,
     VoiceAgent,
 )
-from aai_agent.types import STTConfig, StreamingToken, VoiceResponse
+from aai_agent.types import STTConfig, VoiceResponse
 
 
 @pytest.fixture
@@ -165,19 +165,6 @@ class TestVoiceAgentContextManager:
         agent.stt.aclose = AsyncMock()
         await agent.aclose()
         agent.stt.aclose.assert_called_once()
-
-
-class TestVoiceAgentStreamingToken:
-    @pytest.mark.anyio
-    async def test_create_streaming_token(self, agent):
-        agent.stt.create_token = AsyncMock(return_value="test-token")
-
-        result = await agent.create_streaming_token()
-        assert isinstance(result, StreamingToken)
-        assert result.sample_rate == 16000
-        assert "test-token" in result.wss_url
-        assert "sample_rate=16000" in result.wss_url
-        assert "speech_model=u3-pro" in result.wss_url
 
 
 class TestExtractSteps:

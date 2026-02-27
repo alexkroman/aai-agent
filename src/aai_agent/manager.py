@@ -11,7 +11,7 @@ from cachetools import TTLCache
 from pydantic_ai import ModelSettings
 
 from .agent import VoiceAgent, _load_dotenv
-from .types import FallbackAnswerPrompt, STTConfig
+from .types import STTConfig
 
 
 class VoiceAgentManager:
@@ -40,10 +40,6 @@ class VoiceAgentManager:
         stt_config: STT configuration forwarded to each :class:`VoiceAgent`.
         greeting: Greeting text forwarded to each :class:`VoiceAgent`.
         voice_rules: Voice rules forwarded to each :class:`VoiceAgent`.
-        fallback_answer_prompt: Fallback prompt forwarded to each
-            :class:`VoiceAgent`.
-        include_ask_user: Whether to include AskUserTool, forwarded to
-            each :class:`VoiceAgent`.
 
     Example::
 
@@ -71,8 +67,6 @@ class VoiceAgentManager:
         stt_config: STTConfig | None = None,
         greeting: str | None = None,
         voice_rules: str | None = None,
-        fallback_answer_prompt: FallbackAnswerPrompt | None = None,
-        include_ask_user: bool | None = None,
     ):
         _load_dotenv()
 
@@ -105,8 +99,6 @@ class VoiceAgentManager:
                 "stt_config": stt_config,
                 "greeting": greeting,
                 "voice_rules": voice_rules,
-                "fallback_answer_prompt": fallback_answer_prompt,
-                "include_ask_user": include_ask_user,
             }.items()
             if v is not None
         }

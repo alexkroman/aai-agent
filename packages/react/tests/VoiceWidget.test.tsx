@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { createMessageId } from "../src/types";
 import type { Message, VoiceAgentResult } from "../src/types";
 
 // Mock useVoiceAgent so we can control its return values
@@ -114,8 +113,8 @@ describe("VoiceWidget", () => {
   it("renders messages", () => {
     mockedUseVoiceAgent.mockReturnValue(
       mockMessages(
-        { id: createMessageId("1"), text: "Hello", role: "user", type: "message" },
-        { id: createMessageId("2"), text: "Hi there", role: "assistant", type: "message" },
+        { id: "1", text: "Hello", role: "user", type: "message" },
+        { id: "2", text: "Hi there", role: "assistant", type: "message" },
       ),
     );
 
@@ -127,7 +126,7 @@ describe("VoiceWidget", () => {
   it("renders thinking indicator", () => {
     mockedUseVoiceAgent.mockReturnValue(
       mockMessages(
-        { id: createMessageId("1"), text: "", role: "assistant", type: "thinking" },
+        { id: "1", text: "", role: "assistant", type: "thinking" },
       ),
     );
 
@@ -138,7 +137,7 @@ describe("VoiceWidget", () => {
   it("conversation pane is hidden when idle", () => {
     mockedUseVoiceAgent.mockReturnValue({
       ...defaultMock,
-      messages: [{ id: createMessageId("1"), text: "hi", role: "user", type: "message" }],
+      messages: [{ id: "1", text: "hi", role: "user", type: "message" }],
     });
 
     const { container } = render(<VoiceWidget />);

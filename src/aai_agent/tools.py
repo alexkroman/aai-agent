@@ -11,11 +11,6 @@ _VISIT_TIMEOUT = 15.0
 _MAX_CHARS = 8000
 
 
-def ask_user(question: str) -> str:
-    """Ask the user a clarifying question. The question will be spoken aloud."""
-    return question
-
-
 async def _visit_url(url: str) -> str:
     """Fetch a web page and return its text content.
 

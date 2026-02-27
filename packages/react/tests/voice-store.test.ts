@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useVoiceAgent } from "../src/useVoiceAgent";
-import { createMessageId } from "../src/types";
 
 describe("useVoiceAgent", () => {
   it("starts with empty messages and default status", () => {
@@ -22,8 +21,6 @@ describe("useVoiceAgent", () => {
 
   it("clearMessages empties the message list", () => {
     const { result } = renderHook(() => useVoiceAgent());
-    // We can't easily add messages without server interaction,
-    // but we can verify clearMessages doesn't crash on empty
     act(() => result.current.clearMessages());
     expect(result.current.messages).toEqual([]);
   });

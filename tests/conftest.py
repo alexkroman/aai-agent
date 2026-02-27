@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aai_agent.manager import VoiceAgentManager
-from aai_agent.types import StreamingToken, VoiceResponse
+from aai_agent.types import VoiceResponse
 
 
 @pytest.fixture(params=["asyncio"])
@@ -38,9 +38,6 @@ def manager(mock_env):
 def mock_agent():
     """Create a fully mocked VoiceAgent for endpoint testing."""
     agent = MagicMock()
-    agent.create_streaming_token = AsyncMock(
-        return_value=StreamingToken(wss_url="wss://example.com", sample_rate=16000)
-    )
     agent.greeting = "Hello!"
     agent.chat = AsyncMock(
         return_value=VoiceResponse(text="42", steps=["Using duckduckgo_search_tool"])

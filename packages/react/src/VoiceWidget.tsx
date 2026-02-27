@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useVoiceAgent } from "./useVoiceAgent";
-import { statusClassOf } from "./types";
 import type { VoiceAgentOptions } from "./types";
 
 interface VoiceWidgetProps extends VoiceAgentOptions {
@@ -27,7 +26,7 @@ export function VoiceWidget({
   }, [messages]);
 
   const active = phase !== "idle";
-  const statusClass = statusClassOf(phase, turnPhase);
+  const statusClass = phase === "active" ? turnPhase : "";
   const micLabel = active ? "Stop recording" : "Start recording";
 
   return (

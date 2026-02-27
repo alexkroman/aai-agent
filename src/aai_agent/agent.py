@@ -9,8 +9,6 @@ import os
 import uuid
 from collections.abc import Sequence
 from typing import Any
-from urllib.parse import urlencode
-
 import httpx
 import logfire
 from pydantic_ai import Agent, ModelSettings, UsageLimits
@@ -23,18 +21,17 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .stt import AssemblyAISTT
-from .tools import ask_user
 from .types import (
-    FallbackAnswerPrompt,
     STTConfig,
-    StreamingToken,
     VoiceResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 try:
-    logfire.configure(send_to_logfire="if-token-present", console=logfire.ConsoleOptions())
+    logfire.configure(
+        send_to_logfire="if-token-present", console=logfire.ConsoleOptions()
+    )
     logfire.instrument_pydantic_ai()
 except Exception:
     pass
@@ -52,7 +49,11 @@ def _load_dotenv() -> None:
 
 LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1"
 
-_FINISH_REASON_MAP = {"end_turn": "stop", "max_tokens": "length", "tool_use": "tool_calls"}
+_FINISH_REASON_MAP = {
+    "end_turn": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+}
 
 
 class _PatchTransport(httpx.AsyncBaseTransport):
@@ -166,20 +167,6 @@ VOICE_RULES = (
 
 DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I help you with?"
 
-FALLBACK_ANSWER_PROMPT = FallbackAnswerPrompt(
-    pre_messages=(
-        "An agent tried to answer a user query but got stuck. "
-        "You must provide a spoken answer instead. Here is the agent's memory:"
-    ),
-    post_messages=(
-        "Answer the following as if you're speaking to someone in conversation:\n"
-        "{{task}}\n\n"
-        "Your answer will be read aloud by a text-to-speech system. "
-        "Keep it to one or two sentences. Talk like a real person would — "
-        "no lists, no formatting, no jargon. Just give them the answer directly."
-    ),
-)
-
 
 def _extract_steps(messages: Sequence[ModelMessage]) -> list[str]:
     """Extract human-readable step descriptions from pydantic-ai messages."""
@@ -216,10 +203,6 @@ class VoiceAgent:
             empty string to disable. Defaults to DEFAULT_GREETING.
         voice_rules: Appended to instructions to guide voice-friendly output.
             Pass an empty string to disable. Defaults to VOICE_RULES.
-        fallback_answer_prompt: Template used when the agent gets stuck.
-            Defaults to FALLBACK_ANSWER_PROMPT.
-        include_ask_user: Whether to include the built-in ``ask_user``
-            tool that lets the agent ask clarifying questions. Defaults to True.
 
     Example::
 
@@ -245,9 +228,7 @@ class VoiceAgent:
         stt_config: STTConfig | None = None,
         greeting: str = DEFAULT_GREETING,
         voice_rules: str | None = None,
-        fallback_answer_prompt: FallbackAnswerPrompt | None = None,
         stt: AssemblyAISTT | None = None,
-        include_ask_user: bool = True,
     ):
         _load_dotenv()
 
@@ -270,12 +251,9 @@ class VoiceAgent:
         self._max_steps = max_steps
         self._model_settings = model_settings
         self._voice_rules = VOICE_RULES if voice_rules is None else voice_rules
-        self._fallback_answer_prompt = fallback_answer_prompt or FALLBACK_ANSWER_PROMPT
 
         # Build tools list — accepts plain callables and pydantic_ai.Tool instances
         all_tools: list[Any] = []
-        if include_ask_user:
-            all_tools.append(ask_user)
         if tools:
             all_tools.extend(tools)
 
@@ -396,32 +374,3 @@ class VoiceAgent:
             VoiceResponse with greeting text.
         """
         return VoiceResponse(text=self._greeting)
-
-    async def create_streaming_token(self) -> StreamingToken:
-        """Create an AssemblyAI streaming token and WebSocket URL for browser-side STT.
-
-        If the ``ASSEMBLYAI_TTS_API_KEY`` environment variable is set,
-        ``tts_enabled`` is ``True`` in the response, telling the browser
-        to connect to the server's ``/tts`` WebSocket proxy for audio.
-
-        Returns:
-            StreamingToken with wss_url, sample_rate, and tts_enabled flag.
-        """
-        token = await self.stt.create_token()
-        cfg = self.stt.config
-        params = urlencode(
-            {
-                "sample_rate": cfg.sample_rate,
-                "speech_model": cfg.speech_model,
-                "token": token,
-                "format_turns": str(cfg.format_turns).lower(),
-                "min_end_of_turn_silence_when_confident": cfg.min_end_of_turn_silence_when_confident,
-                "max_turn_silence": cfg.max_turn_silence,
-            }
-        )
-
-        return StreamingToken(
-            wss_url=f"{cfg.wss_base}?{params}",
-            sample_rate=cfg.sample_rate,
-            tts_enabled=bool(os.environ.get("ASSEMBLYAI_TTS_API_KEY")),
-        )

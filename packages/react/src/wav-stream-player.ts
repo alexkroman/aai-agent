@@ -44,8 +44,7 @@ export class PCMPlayer {
   /** Feed a PCM16 chunk (ArrayBuffer or Int16Array) to the player. */
   write(data: ArrayBuffer | Int16Array): void {
     if (!this.node) return;
-    const samples =
-      data instanceof Int16Array ? data : new Int16Array(data);
+    const samples = data instanceof Int16Array ? data : new Int16Array(data);
     this.node.port.postMessage({ event: "write", samples });
   }
 
