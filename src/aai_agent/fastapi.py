@@ -68,8 +68,8 @@ def create_voice_router(
         {
             "voice": _tts_voice,
             "max_tokens": 2000,
-            "buffer_size": 30,
-            "repetition_penalty": 1.3,
+            "buffer_size": 5,
+            "repetition_penalty": 1.2,
             "temperature": 0.6,
             "top_p": 0.9,
         }
