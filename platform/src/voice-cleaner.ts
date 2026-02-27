@@ -48,7 +48,17 @@ const UNIT_MAP: Record<string, string> = {
 };
 
 function num2words(n: number): string {
-  return toWords(n);
+  if (Number.isInteger(n)) {
+    return toWords(n);
+  }
+  // number-to-words doesn't support floats — split on decimal point
+  const [intPart, decPart] = String(n).split(".");
+  const intWords = toWords(parseInt(intPart));
+  const decWords = decPart
+    .split("")
+    .map((d) => toWords(parseInt(d)))
+    .join(" ");
+  return `${intWords} point ${decWords}`;
 }
 
 /**
@@ -63,8 +73,8 @@ export function normalizeVoiceText(text: string): string {
   text = text.replace(RE_BOLD_ITALIC_STAR, "$1");
   text = text.replace(RE_BOLD_ITALIC_UNDER, "$1");
   text = text.replace(RE_HEADERS, "");
+  text = text.replace(RE_IMAGES, "");   // Must run before LINKS
   text = text.replace(RE_LINKS, "$1");
-  text = text.replace(RE_IMAGES, "");
   text = text.replace(RE_BULLETS, "");
   text = text.replace(RE_NUMBERED, "");
   text = text.replace(RE_BLOCKQUOTES, "");
