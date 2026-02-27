@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
 import { ConfigureMessageSchema, ControlMessageSchema } from "./types.js";
 import { VoiceSession } from "./session.js";
+import { loadSecretsFile, type SecretStore } from "./secrets.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
@@ -19,6 +20,7 @@ const MIME_TYPES: Record<string, string> = {
 interface ServerOptions {
   port: number;
   clientDir?: string; // Directory containing built client.js and react.js
+  secretsFile?: string; // Path to JSON secrets file (per-customer)
 }
 
 export interface ServerHandle {
@@ -31,6 +33,13 @@ export interface ServerHandle {
  */
 export function startServer(options: ServerOptions): ServerHandle {
   const sessions = new Map<string, VoiceSession>();
+
+  // Load per-customer secrets from file
+  let secretStore: SecretStore = new Map();
+  if (options.secretsFile) {
+    secretStore = loadSecretsFile(options.secretsFile);
+    console.log(`[server] Loaded secrets for ${secretStore.size} customer(s)`);
+  }
 
   // ── HTTP server ────────────────────────────────────────────────
 
@@ -135,12 +144,18 @@ export function startServer(options: ServerOptions): ServerHandle {
         }
 
         const cfg = parsed.data;
-        session = new VoiceSession(sessionId, ws, {
-          instructions: cfg.instructions ?? "",
-          greeting: cfg.greeting ?? "",
-          voice: cfg.voice ?? "jess",
-          tools: cfg.tools ?? [],
-        });
+        const customerSecrets = secretStore.get(apiKey) ?? {};
+        session = new VoiceSession(
+          sessionId,
+          ws,
+          {
+            instructions: cfg.instructions ?? "",
+            greeting: cfg.greeting ?? "",
+            voice: cfg.voice ?? "jess",
+            tools: cfg.tools ?? [],
+          },
+          customerSecrets
+        );
         sessions.set(sessionId, session);
         configured = true;
 

@@ -144,7 +144,6 @@ describe("VoiceSession", () => {
     delete process.env.ASSEMBLYAI_API_KEY;
     delete process.env.ASSEMBLYAI_TTS_API_KEY;
     delete process.env.LLM_MODEL;
-    delete process.env.CUSTOMER_SECRETS;
   });
 
   describe("start()", () => {
@@ -462,14 +461,14 @@ describe("VoiceSession", () => {
       expect(session).toBeDefined();
     });
 
-    it("loads customer secrets from CUSTOMER_SECRETS env", () => {
-      process.env.CUSTOMER_SECRETS = JSON.stringify({ API_KEY: "secret123" });
-      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+    it("accepts customer secrets parameter", () => {
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig, {
+        API_KEY: "secret123",
+      });
       expect(session).toBeDefined();
     });
 
-    it("ignores invalid CUSTOMER_SECRETS JSON", () => {
-      process.env.CUSTOMER_SECRETS = "not json {{{";
+    it("defaults to empty secrets when none provided", () => {
       const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
       expect(session).toBeDefined();
     });

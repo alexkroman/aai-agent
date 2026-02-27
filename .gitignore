@@ -1,12 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment and secrets
 .env
+.env.*
+secrets.json
+
+# OS
+.DS_Store
+
+# IDE
+.claude
+
+# Python (legacy)
 __pycache__/
 *.pyc
 .venv/
-node_modules/
-.DS_Store
 .python-version
-dist/
 *.egg-info/
 uv.lock
-.claude
 .mypy_cache

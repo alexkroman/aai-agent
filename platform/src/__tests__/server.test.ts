@@ -4,6 +4,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 import WebSocket from "ws";
 
+// Track VoiceSession constructor args
+const { constructorCalls } = vi.hoisted(() => ({
+  constructorCalls: [] as { id: string; config: unknown; customerSecrets: unknown }[],
+}));
+
 // Use vi.hoisted so mock fns are available inside vi.mock factory
 const { mockStart, mockOnAudio, mockOnCancel, mockOnReset, mockStop } = vi.hoisted(() => ({
   mockStart: vi.fn().mockResolvedValue(undefined),
@@ -18,8 +23,11 @@ vi.mock("../session.js", () => ({
     constructor(
       public id: string,
       public ws: unknown,
-      public config: unknown
-    ) {}
+      public config: unknown,
+      public customerSecrets: unknown = {}
+    ) {
+      constructorCalls.push({ id, config, customerSecrets });
+    }
     start = mockStart;
     onAudio = mockOnAudio;
     onCancel = mockOnCancel;
@@ -42,6 +50,7 @@ function getPort(h: ServerHandle): number {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  constructorCalls.length = 0;
 
   clientDir = mkdtempSync(join(tmpdir(), "test-client-"));
   writeFileSync(join(clientDir, "client.js"), "// client bundle");
@@ -260,5 +269,58 @@ describe("close()", () => {
     await handle.close();
 
     expect(mockStop).toHaveBeenCalled();
+  });
+});
+
+describe("secrets file", () => {
+  it("passes per-customer secrets to VoiceSession", async () => {
+    // Close the default handle so we can start a new server with secrets
+    await handle.close();
+
+    const secretsPath = join(clientDir, "secrets.json");
+    writeFileSync(
+      secretsPath,
+      JSON.stringify({
+        pk_cust_abc: { WEATHER_KEY: "sk-weather" },
+        pk_cust_def: { STRIPE_KEY: "sk-stripe" },
+      })
+    );
+
+    handle = startServer({ port: 0, clientDir, secretsFile: secretsPath });
+    port = getPort(handle);
+
+    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_cust_abc`);
+    await new Promise<void>((resolve) => ws.on("open", resolve));
+
+    ws.send(JSON.stringify({ type: "configure", tools: [] }));
+    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
+
+    // VoiceSession should have received the secrets for pk_cust_abc
+    expect(constructorCalls.length).toBe(1);
+    expect(constructorCalls[0].customerSecrets).toEqual({ WEATHER_KEY: "sk-weather" });
+
+    ws.close();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  });
+
+  it("passes empty secrets for unknown API key", async () => {
+    await handle.close();
+
+    const secretsPath = join(clientDir, "secrets.json");
+    writeFileSync(secretsPath, JSON.stringify({ pk_known: { KEY: "val" } }));
+
+    handle = startServer({ port: 0, clientDir, secretsFile: secretsPath });
+    port = getPort(handle);
+
+    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_unknown`);
+    await new Promise<void>((resolve) => ws.on("open", resolve));
+
+    ws.send(JSON.stringify({ type: "configure", tools: [] }));
+    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
+
+    expect(constructorCalls[0].customerSecrets).toEqual({});
+
+    ws.close();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
   });
 });

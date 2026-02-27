@@ -170,13 +170,27 @@ Handlers run on the platform in a V8 sandbox. They must be self-contained:
 
 Tool handlers access secrets via `ctx.secrets`. Secrets are injected server-side and never exposed to the browser.
 
-Currently, secrets are configured via the `CUSTOMER_SECRETS` environment variable as a JSON object:
+Create a `secrets.json` file with per-customer secrets, keyed by API key:
 
-```bash
-CUSTOMER_SECRETS='{"WEATHER_API_KEY":"sk-abc123","ORDERS_API_KEY":"sk-xyz789"}' npm run dev
+```json
+{
+  "pk_customer_abc": {
+    "WEATHER_API_KEY": "sk-abc123",
+    "ORDERS_API_KEY": "sk-xyz789"
+  },
+  "pk_customer_def": {
+    "STRIPE_KEY": "sk-stripe-123"
+  }
+}
 ```
 
-Inside a handler, access them with `ctx.secrets.WEATHER_API_KEY`.
+Start the server with `SECRETS_FILE`:
+
+```bash
+SECRETS_FILE=secrets.json npm run dev
+```
+
+Inside a handler, access them with `ctx.secrets.WEATHER_API_KEY`. Each customer only sees their own secrets.
 
 Secrets are copied into each tool execution via V8's `ExternalCopy` — mutations inside a handler never leak back to the host or to other tool calls.
 
@@ -188,7 +202,7 @@ Secrets are copied into each tool execution via V8's `ExternalCopy` — mutation
 | `ASSEMBLYAI_TTS_API_KEY` | Yes | API key for TTS (Orpheus via Baseten) |
 | `ASSEMBLYAI_TTS_WSS_URL` | No | Custom TTS WebSocket URL |
 | `LLM_MODEL` | No | LLM model name (default: `claude-haiku-4-5-20251001`) |
-| `CUSTOMER_SECRETS` | No | JSON object of secrets available via `ctx.secrets` |
+| `SECRETS_FILE` | No | Path to JSON file with per-customer secrets |
 | `PORT` | No | Server port (default: `3000`) |
 | `CLIENT_DIR` | No | Path to built client bundles (e.g., `dist`) |
 

@@ -64,27 +64,22 @@ export class VoiceSession {
   private toolSchemas: ToolSchema[];
   private stopped = false;
 
-  constructor(id: string, browserWs: WebSocket, config: AgentConfig) {
+  constructor(
+    id: string,
+    browserWs: WebSocket,
+    config: AgentConfig,
+    customerSecrets: Record<string, string> = {}
+  ) {
     this.id = id;
     this.browserWs = browserWs;
     this.config = config;
 
     this.deps = createSessionDeps();
+    this.deps.customerSecrets = customerSecrets;
 
     // Override TTS voice from config
     if (config.voice) {
       this.deps.ttsConfig.voice = config.voice;
-    }
-
-    // TODO: Load customer secrets from platform secret store by API key
-    // For now, secrets come from environment as a JSON blob
-    const secretsEnv = process.env.CUSTOMER_SECRETS;
-    if (secretsEnv) {
-      try {
-        this.deps.customerSecrets = JSON.parse(secretsEnv);
-      } catch {
-        // ignore
-      }
     }
 
     this.sandbox = new Sandbox(config.tools, this.deps.customerSecrets);
