@@ -9,10 +9,14 @@ import pino from "pino";
  * In development: set LOG_LEVEL=debug for verbose output.
  */
 export function createLogger(name: string, meta?: Record<string, string>): pino.Logger {
+  const isDev = process.env.NODE_ENV !== "production";
   return pino({
     name,
     level: process.env.LOG_LEVEL ?? "info",
     ...(meta ? { base: { ...meta } } : { base: undefined }),
+    ...(isDev
+      ? { transport: { target: "pino-pretty", options: { colorize: true } } }
+      : {}),
   });
 }
 
