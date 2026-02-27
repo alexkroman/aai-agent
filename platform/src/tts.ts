@@ -9,6 +9,17 @@ import WebSocket from "ws";
 import type { TTSConfig } from "./types.js";
 
 /**
+ * Safely close a WebSocket, absorbing any async 'error' events emitted
+ * during close (e.g. when closing a CONNECTING WebSocket, `ws` emits the
+ * error via process.nextTick after `abortHandshake`).
+ */
+function safeCloseWs(ws: WebSocket): void {
+  ws.removeAllListeners();
+  ws.on("error", () => {}); // absorb async error from close()
+  ws.close();
+}
+
+/**
  * TTS client that pre-warms WebSocket connections for lower latency.
  *
  * Usage:
@@ -33,12 +44,18 @@ export class TtsClient {
   private warmUp(): void {
     if (this.disposed || !this.config.apiKey) return;
 
+    // Close existing warm connection before creating a new one
+    if (this.warmWs) {
+      safeCloseWs(this.warmWs);
+      this.warmWs = null;
+    }
+
     const ws = new WebSocket(this.config.wssUrl, {
       headers: { Authorization: `Api-Key ${this.config.apiKey}` },
     });
 
-    // Discard silently on error during warm-up
-    ws.on("error", () => {
+    ws.on("error", (err: Error) => {
+      console.warn("[tts] warmUp failed:", err.message);
       if (this.warmWs === ws) {
         this.warmWs = null;
       }
@@ -70,12 +87,33 @@ export class TtsClient {
       });
     }
 
+    return this.runTtsProtocol(ws, text, onAudio, signal);
+  }
+
+  /**
+   * Close any pre-warmed connection and stop warming up.
+   */
+  close(): void {
+    this.disposed = true;
+    if (this.warmWs) {
+      safeCloseWs(this.warmWs);
+      this.warmWs = null;
+    }
+  }
+
+  /**
+   * Run the Orpheus TTS WebSocket protocol on a given connection.
+   * Shared logic for both warm and fresh connections.
+   */
+  private runTtsProtocol(
+    ws: WebSocket,
+    text: string,
+    onAudio: (chunk: Buffer) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
-        ws.removeAllListeners();
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close();
-        }
+        safeCloseWs(ws);
       };
 
       const onAbort = () => {
@@ -86,7 +124,6 @@ export class TtsClient {
       signal?.addEventListener("abort", onAbort, { once: true });
 
       const sendText = () => {
-        // Send TTS configuration
         ws.send(
           JSON.stringify({
             voice: this.config.voice,
@@ -97,7 +134,6 @@ export class TtsClient {
             top_p: this.config.topP,
           })
         );
-        // Send text word by word
         for (const word of text.split(/\s+/)) {
           if (word) ws.send(word);
         }
@@ -119,7 +155,6 @@ export class TtsClient {
 
       ws.on("close", () => {
         signal?.removeEventListener("abort", onAbort);
-        // Pre-warm the next connection
         this.warmUp();
         resolve();
       });
@@ -131,92 +166,4 @@ export class TtsClient {
       });
     });
   }
-
-  /**
-   * Close any pre-warmed connection and stop warming up.
-   */
-  close(): void {
-    this.disposed = true;
-    if (this.warmWs) {
-      try {
-        this.warmWs.removeAllListeners();
-        this.warmWs.close();
-      } catch {
-        // Already closed
-      }
-      this.warmWs = null;
-    }
-  }
-}
-
-/**
- * Synthesize text via Orpheus TTS (standalone, no connection reuse).
- * Kept for backward compatibility and simple use cases.
- */
-export async function synthesize(
-  text: string,
-  config: TTSConfig,
-  onAudio: (chunk: Buffer) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-
-    const ws = new WebSocket(config.wssUrl, {
-      headers: { Authorization: `Api-Key ${config.apiKey}` },
-    });
-
-    const cleanup = () => {
-      ws.removeAllListeners();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
-    };
-
-    const onAbort = () => {
-      cleanup();
-      resolve();
-    };
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    ws.on("open", () => {
-      // Send TTS configuration
-      ws.send(
-        JSON.stringify({
-          voice: config.voice,
-          max_tokens: config.maxTokens,
-          buffer_size: config.bufferSize,
-          repetition_penalty: config.repetitionPenalty,
-          temperature: config.temperature,
-          top_p: config.topP,
-        })
-      );
-      // Send text word by word
-      for (const word of text.split(/\s+/)) {
-        if (word) ws.send(word);
-      }
-      ws.send("__END__");
-    });
-
-    ws.on("message", (data) => {
-      if (data instanceof Buffer) {
-        onAudio(data);
-      }
-    });
-
-    ws.on("close", () => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    });
-
-    ws.on("error", (err) => {
-      signal?.removeEventListener("abort", onAbort);
-      cleanup();
-      reject(err);
-    });
-  });
 }

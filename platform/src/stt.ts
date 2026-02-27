@@ -3,7 +3,7 @@
 import WebSocket from "ws";
 import { TIMEOUTS } from "./constants.js";
 import { ERR_INTERNAL } from "./errors.js";
-import type { STTConfig } from "./types.js";
+import { SttMessageSchema, type STTConfig } from "./types.js";
 
 const TOKEN_URL = "https://streaming.assemblyai.com/v3/token";
 
@@ -85,26 +85,36 @@ export async function connectStt(
     let msgCount = 0;
     ws.on("message", (raw, isBinary) => {
       if (isBinary) return; // skip binary frames
+      let parsed: unknown;
       try {
-        const msg = JSON.parse(raw.toString());
-        msgCount++;
-        if (msgCount <= 5) {
-          console.log(`[stt] Message #${msgCount}: type=${msg.type}`);
+        parsed = JSON.parse(raw.toString());
+      } catch (err) {
+        console.warn("[stt] Failed to parse message:", err);
+        return;
+      }
+
+      const result = SttMessageSchema.safeParse(parsed);
+      if (!result.success) {
+        console.warn("[stt] Invalid STT message, skipping:", result.error.message);
+        return;
+      }
+
+      const msg = result.data;
+      msgCount++;
+      if (msgCount <= 5) {
+        console.log(`[stt] Message #${msgCount}: type=${msg.type}`);
+      }
+      if (msg.type === "Transcript") {
+        events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
+      } else if (msg.type === "Turn") {
+        const text = (msg.transcript ?? "").trim();
+        if (!text) return;
+        if (!msg.turn_is_formatted) {
+          // Partial turn — send as transcript
+          events.onTranscript(text, false);
+          return;
         }
-        if (msg.type === "Transcript") {
-          events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
-        } else if (msg.type === "Turn") {
-          const text = (msg.transcript ?? "").trim();
-          if (!text) return;
-          if (!msg.turn_is_formatted) {
-            // Partial turn — send as transcript
-            events.onTranscript(text, false);
-            return;
-          }
-          events.onTurn(text);
-        }
-      } catch {
-        // Ignore unparseable messages
+        events.onTurn(text);
       }
     });
 

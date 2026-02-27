@@ -1,7 +1,7 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
 import { ERR_INTERNAL } from "./errors.js";
-import { LLM_GATEWAY_BASE, type ChatMessage, type LLMResponse, type ToolSchema } from "./types.js";
+import type { ChatMessage, LLMResponse, ToolSchema } from "./types.js";
 
 /**
  * Replace empty text content with "..." (gateway rejects empty text blocks).
@@ -23,8 +23,11 @@ export async function callLLM(
   tools: ToolSchema[],
   apiKey: string,
   model: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  gatewayBase?: string
 ): Promise<LLMResponse> {
+  const base = gatewayBase ?? "https://llm-gateway.assemblyai.com/v1";
+
   const body: Record<string, unknown> = {
     model,
     messages: sanitizeMessages(messages),
@@ -41,7 +44,7 @@ export async function callLLM(
     }));
   }
 
-  const resp = await fetch(`${LLM_GATEWAY_BASE}/chat/completions`, {
+  const resp = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

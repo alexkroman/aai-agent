@@ -15,6 +15,7 @@ export interface PlatformConfig {
   sttConfig: STTConfig;
   ttsConfig: TTSConfig;
   model: string;
+  llmGatewayBase: string;
 }
 
 /**
@@ -37,16 +38,11 @@ export function loadPlatformConfig(): PlatformConfig {
     ttsApiKey,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
+      ...DEFAULT_TTS_CONFIG,
       wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
       apiKey: ttsApiKey,
-      voice: "jess",
-      maxTokens: 2000,
-      bufferSize: 105,
-      repetitionPenalty: 1.2,
-      temperature: 0.6,
-      topP: 0.9,
-      sampleRate: 24000,
     },
     model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
+    llmGatewayBase: process.env.LLM_GATEWAY_BASE ?? "https://llm-gateway.assemblyai.com/v1",
   };
 }

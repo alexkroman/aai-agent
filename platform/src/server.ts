@@ -107,8 +107,11 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
           });
           res.end(content);
           return;
-        } catch {
-          // Fall through to 404
+        } catch (err: unknown) {
+          // ENOENT is expected (file not found → fall through to 404)
+          if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+            console.warn(`[server] Unexpected error reading ${pathname}:`, err);
+          }
         }
       }
     }
@@ -142,9 +145,37 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     let authenticated = false;
     let session: VoiceSession | null = null;
     let configured = false;
+    let ready = false;
+    const pendingMessages: { raw: Buffer | ArrayBuffer; isBinary: boolean }[] = [];
+
+    /** Process a single message once the session is ready. */
+    async function processMessage(raw: Buffer | ArrayBuffer, isBinary: boolean): Promise<void> {
+      if (isBinary) {
+        session?.onAudio(raw as Buffer);
+        return;
+      }
+
+      const parsed = ControlMessageSchema.safeParse(JSON.parse(raw.toString()));
+      if (!parsed.success) return;
+
+      if (parsed.data.type === MSG.CANCEL) {
+        await session?.onCancel();
+      } else if (parsed.data.type === MSG.RESET) {
+        await session?.onReset();
+      }
+    }
 
     ws.on("message", async (raw, isBinary) => {
-      // Binary frame: mic audio → relay to STT
+      // If configured but not yet ready, queue messages for replay after start()
+      if (configured && !ready) {
+        // Binary audio before STT is connected gets dropped (no STT yet)
+        if (!isBinary) {
+          pendingMessages.push({ raw: raw as Buffer, isBinary });
+        }
+        return;
+      }
+
+      // Once ready, route binary audio directly
       if (isBinary) {
         if (session) {
           session.onAudio(raw as Buffer);
@@ -157,10 +188,11 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
       try {
         data = JSON.parse(raw.toString());
       } catch {
+        console.warn("[server] Unparseable JSON from client");
         return;
       }
 
-      // Handle ping → pong
+      // Handle ping → pong (always, regardless of state)
       if (data.type === MSG.PING) {
         ws.send(JSON.stringify({ type: MSG.PONG }));
         return;
@@ -182,6 +214,11 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
 
         apiKey = parsed.data.apiKey;
         authenticated = true;
+
+        // NOTE: We log all connections. Unrecognized keys still work (they just get no secrets).
+        if (Object.keys(secrets).length > 0 && !secrets[apiKey]) {
+          console.warn(`[server] Unrecognized API key: ${apiKey.slice(0, 8)}...`);
+        }
 
         console.log(
           `[server] Authenticated key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
@@ -224,18 +261,18 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         );
 
         await session.start();
+        ready = true;
+
+        // Replay any messages that arrived during start()
+        for (const msg of pendingMessages) {
+          await processMessage(msg.raw, msg.isBinary);
+        }
+        pendingMessages.length = 0;
         return;
       }
 
       // Subsequent messages: control commands
-      const parsed = ControlMessageSchema.safeParse(data);
-      if (!parsed.success) return;
-
-      if (parsed.data.type === MSG.CANCEL) {
-        await session?.onCancel();
-      } else if (parsed.data.type === MSG.RESET) {
-        await session?.onReset();
-      }
+      await processMessage(raw as Buffer, false);
     });
 
     ws.on("close", async () => {

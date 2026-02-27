@@ -34,7 +34,6 @@ vi.mock("../stt.js", () => ({
 const mockTtsSynthesize = vi.fn().mockResolvedValue(undefined);
 const mockTtsClose = vi.fn();
 vi.mock("../tts.js", () => ({
-  synthesize: (...args: unknown[]) => mockTtsSynthesize(...args),
   TtsClient: class {
     synthesize = (...args: unknown[]) => mockTtsSynthesize(...args);
     close = mockTtsClose;
@@ -348,7 +347,7 @@ describe("VoiceSession", () => {
       expect(chatMsg!.text).toBe("Sorry, I couldn't generate a response.");
     });
 
-    it("handles tool call with invalid JSON arguments (falls back to {})", async () => {
+    it("returns error string to LLM when tool args JSON is invalid", async () => {
       // LLM returns a tool call with unparseable arguments
       mockCallLLM.mockResolvedValueOnce({
         id: "resp-tc",
@@ -373,8 +372,10 @@ describe("VoiceSession", () => {
           },
         ],
       });
-      mockSandboxExecute.mockResolvedValueOnce("tool result");
+      // Second LLM call after receiving the error string
       mockCallLLM.mockResolvedValueOnce(llmResponse("Done!"));
+
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const session = new VoiceSession("sess-1", browserWs as any, {
         ...defaultConfig,
@@ -392,8 +393,20 @@ describe("VoiceSession", () => {
         return expect(msgs.some((m) => m.type === "chat")).toBeTruthy();
       });
 
-      // Sandbox should have been called with empty args (fallback)
-      expect(mockSandboxExecute).toHaveBeenCalledWith("my_tool", {});
+      // Sandbox should NOT have been called (parse failed before execution)
+      expect(mockSandboxExecute).not.toHaveBeenCalled();
+
+      // LLM should have received the error string as a tool result
+      const secondLLMCall = mockCallLLM.mock.calls[1];
+      const toolMessage = secondLLMCall[0].find(
+        (m: any) => m.role === "tool" && m.tool_call_id === "tc-0"
+      );
+      expect(toolMessage.content).toBe('Error: Invalid JSON arguments for tool "my_tool"');
+
+      // Should have logged the error
+      expect(consoleSpy).toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
 
     it("stops after MAX_TOOL_ITERATIONS tool-call rounds", async () => {

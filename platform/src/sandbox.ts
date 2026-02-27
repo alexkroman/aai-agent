@@ -146,8 +146,8 @@ export class Sandbox {
       clearTimeout(timeout);
       try {
         context?.release();
-      } catch {
-        // Already released
+      } catch (err) {
+        console.warn("[sandbox] Context release failed:", err);
       }
     }
   }
@@ -158,8 +158,8 @@ export class Sandbox {
   dispose(): void {
     try {
       this.isolate.dispose();
-    } catch {
-      // Already disposed
+    } catch (err) {
+      console.warn("[sandbox] Isolate dispose failed:", err);
     }
   }
 }

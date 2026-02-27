@@ -16,7 +16,6 @@ function mockOverrides(): SessionOverrides {
       clear: vi.fn(),
       close: vi.fn(),
     }),
-    synthesize: vi.fn().mockResolvedValue(undefined),
     callLLM: vi.fn().mockResolvedValue({
       id: "mock",
       choices: [

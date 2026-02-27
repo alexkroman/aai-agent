@@ -39,7 +39,7 @@ vi.mock("ws", () => {
   return { default: MockWS };
 });
 
-import { synthesize, TtsClient } from "../tts.js";
+import { TtsClient } from "../tts.js";
 import type { TTSConfig } from "../types.js";
 
 const config: TTSConfig = {
@@ -54,11 +54,7 @@ const config: TTSConfig = {
   sampleRate: 24000,
 };
 
-function lastWs() {
-  return instances[instances.length - 1];
-}
-
-describe("synthesize", () => {
+describe("TtsClient", () => {
   beforeEach(() => {
     instances.length = 0;
   });
@@ -67,10 +63,23 @@ describe("synthesize", () => {
     vi.restoreAllMocks();
   });
 
+  it("pre-warms a connection on construction", () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+    client.close();
+  });
+
   it("connects with correct URL and auth header", async () => {
-    const p = synthesize("hello", config, vi.fn());
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    const ws = lastWs();
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hello", vi.fn());
+    // Uses the warm connection
+    expect(instances.length).toBe(1);
+    const ws = instances[0];
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
     ws.emit("close");
     await p;
 
@@ -78,12 +87,16 @@ describe("synthesize", () => {
     expect(ws.opts.headers).toEqual({
       Authorization: "Api-Key tts-key-123",
     });
+
+    client.close();
   });
 
-  it("sends config then words then __END__ on open", async () => {
-    const p = synthesize("hello world", config, vi.fn());
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    const ws = lastWs();
+  it("sends config then words then __END__", async () => {
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hello world", vi.fn());
+    const ws = instances[0];
     await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
 
     const configMsg = JSON.parse(ws.sent[0] as string);
@@ -100,13 +113,17 @@ describe("synthesize", () => {
 
     ws.emit("close");
     await p;
+
+    client.close();
   });
 
   it("calls onAudio for each Buffer message", async () => {
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
     const onAudio = vi.fn();
-    const p = synthesize("hi", config, onAudio);
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    const ws = lastWs();
+    const p = client.synthesize("hi", onAudio);
+    const ws = instances[0];
 
     const chunk1 = Buffer.from([1, 2, 3]);
     const chunk2 = Buffer.from([4, 5, 6]);
@@ -119,52 +136,74 @@ describe("synthesize", () => {
 
     ws.emit("close");
     await p;
+
+    client.close();
   });
 
   it("ignores non-Buffer messages", async () => {
-    const onAudio = vi.fn();
-    const p = synthesize("hi", config, onAudio);
-    await vi.waitFor(() => expect(instances.length).toBe(1));
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
 
-    lastWs().emit("message", "not a buffer");
+    const onAudio = vi.fn();
+    const p = client.synthesize("hi", onAudio);
+
+    instances[0].emit("message", "not a buffer");
     expect(onAudio).not.toHaveBeenCalled();
 
-    lastWs().emit("close");
+    instances[0].emit("close");
     await p;
+
+    client.close();
   });
 
   it("resolves on close", async () => {
-    const p = synthesize("hi", config, vi.fn());
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    lastWs().emit("close");
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hi", vi.fn());
+    instances[0].emit("close");
     await expect(p).resolves.toBeUndefined();
+
+    client.close();
   });
 
   it("rejects on error", async () => {
-    const p = synthesize("hi", config, vi.fn());
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    lastWs().emit("error", new Error("connection failed"));
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hi", vi.fn());
+    instances[0].emit("error", new Error("connection failed"));
     await expect(p).rejects.toThrow("connection failed");
+
+    client.close();
   });
 
   it("resolves immediately if signal already aborted", async () => {
+    const client = new TtsClient(config);
     const controller = new AbortController();
     controller.abort();
-    await expect(synthesize("hi", config, vi.fn(), controller.signal)).resolves.toBeUndefined();
+    await expect(client.synthesize("hi", vi.fn(), controller.signal)).resolves.toBeUndefined();
+    client.close();
   });
 
   it("resolves and cleans up on abort signal", async () => {
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
     const controller = new AbortController();
-    const p = synthesize("hi", config, vi.fn(), controller.signal);
-    await vi.waitFor(() => expect(instances.length).toBe(1));
+    const p = client.synthesize("hi", vi.fn(), controller.signal);
     controller.abort();
     await expect(p).resolves.toBeUndefined();
+
+    client.close();
   });
 
   it("handles multi-word text with extra spaces", async () => {
-    const p = synthesize("  hello   beautiful  world  ", config, vi.fn());
-    await vi.waitFor(() => expect(instances.length).toBe(1));
-    const ws = lastWs();
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("  hello   beautiful  world  ", vi.fn());
+    const ws = instances[0];
     await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
 
     // First is config JSON, then words, then __END__
@@ -173,21 +212,7 @@ describe("synthesize", () => {
 
     ws.emit("close");
     await p;
-  });
-});
 
-describe("TtsClient", () => {
-  beforeEach(() => {
-    instances.length = 0;
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("pre-warms a connection on construction", () => {
-    const client = new TtsClient(config);
-    expect(instances.length).toBe(1);
     client.close();
   });
 
@@ -287,5 +312,36 @@ describe("TtsClient", () => {
     const client = new TtsClient(noKeyConfig);
     expect(instances.length).toBe(0);
     client.close();
+  });
+
+  it("closes existing warm connection before creating a new one in warmUp", async () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+    const firstWarm = instances[0];
+    await vi.waitFor(() => expect(firstWarm.readyState).toBe(1));
+
+    // First synthesis — takes the warm connection, triggers warmUp on close
+    const p = client.synthesize("hello", vi.fn());
+    await vi.waitFor(() => expect(firstWarm.sent.length).toBeGreaterThan(0));
+    firstWarm.emit("close");
+    await p;
+
+    // Second warm connection created
+    expect(instances.length).toBe(2);
+    const secondWarm = instances[1];
+
+    // Now synthesize again — takes second warm, closes it on completion, creates third
+    await vi.waitFor(() => expect(secondWarm.readyState).toBe(1));
+    const p2 = client.synthesize("world", vi.fn());
+    await vi.waitFor(() => expect(secondWarm.sent.length).toBeGreaterThan(0));
+    secondWarm.emit("close");
+    await p2;
+
+    // Third warm connection
+    expect(instances.length).toBe(3);
+
+    client.close();
+    // Third warm should be closed
+    expect(instances[2].readyState).toBe(3);
   });
 });

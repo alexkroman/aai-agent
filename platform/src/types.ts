@@ -70,9 +70,6 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
 
 // ── LLM Configuration ──────────────────────────────────────────────
 
-/** Base URL for the AssemblyAI LLM Gateway (OpenAI-compatible). */
-export const LLM_GATEWAY_BASE = "https://llm-gateway.assemblyai.com/v1";
-
 /** Default LLM model identifier. */
 export const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
@@ -102,6 +99,18 @@ export const VOICE_RULES =
 
 /** Default greeting spoken when a session starts. */
 export const DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I help you with?";
+
+// ── STT Message Schema (for validating incoming STT WebSocket messages) ──
+
+/** Zod schema for STT messages received from AssemblyAI streaming. */
+export const SttMessageSchema = z
+  .object({
+    type: z.string(),
+    transcript: z.string().optional(),
+    is_final: z.boolean().optional(),
+    turn_is_formatted: z.boolean().optional(),
+  })
+  .passthrough();
 
 // ── Tool Definition (from customer configure message) ──────────────
 
