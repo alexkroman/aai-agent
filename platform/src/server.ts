@@ -5,6 +5,8 @@ import { readFile } from "fs/promises";
 import { join, extname } from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
+import { MSG, PATHS } from "./constants.js";
+import { ERR } from "./errors.js";
 import { ConfigureMessageSchema, ControlMessageSchema } from "./types.js";
 import { VoiceSession } from "./session.js";
 import { loadSecretsFile, type SecretStore } from "./secrets.js";
@@ -47,7 +49,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
     // Health check
-    if (url.pathname === "/health") {
+    if (url.pathname === PATHS.HEALTH) {
       res.writeHead(200, {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
@@ -57,7 +59,10 @@ export function startServer(options: ServerOptions): ServerHandle {
     }
 
     // Serve client library files
-    if (options.clientDir && (url.pathname === "/client.js" || url.pathname === "/react.js")) {
+    if (
+      options.clientDir &&
+      (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
+    ) {
       try {
         const filePath = join(options.clientDir, url.pathname.slice(1));
         const content = await readFile(filePath);
@@ -92,7 +97,7 @@ export function startServer(options: ServerOptions): ServerHandle {
 
   // ── WebSocket server ───────────────────────────────────────────
 
-  const wss = new WebSocketServer({ server: httpServer, path: "/session" });
+  const wss = new WebSocketServer({ server: httpServer, path: PATHS.WEBSOCKET });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
@@ -105,7 +110,7 @@ export function startServer(options: ServerOptions): ServerHandle {
 
     // TODO: Validate API key against customer database
     if (!apiKey) {
-      ws.send(JSON.stringify({ type: "error", message: "Missing API key" }));
+      ws.send(JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }));
       ws.close();
       return;
     }
@@ -136,8 +141,8 @@ export function startServer(options: ServerOptions): ServerHandle {
         if (!parsed.success) {
           ws.send(
             JSON.stringify({
-              type: "error",
-              message: "First message must be a valid configure message",
+              type: MSG.ERROR,
+              message: ERR.INVALID_CONFIGURE,
             })
           );
           return;
@@ -195,12 +200,12 @@ export function startServer(options: ServerOptions): ServerHandle {
 
   httpServer.listen(options.port, () => {
     console.log(`[server] Platform running on port ${options.port}`);
-    console.log(`[server] WebSocket endpoint: ws://localhost:${options.port}/session`);
+    console.log(`[server] WebSocket endpoint: ws://localhost:${options.port}${PATHS.WEBSOCKET}`);
     if (options.clientDir) {
-      console.log(`[server] Client library: http://localhost:${options.port}/client.js`);
-      console.log(`[server] React hook: http://localhost:${options.port}/react.js`);
+      console.log(`[server] Client library: http://localhost:${options.port}${PATHS.CLIENT_JS}`);
+      console.log(`[server] React hook: http://localhost:${options.port}${PATHS.REACT_JS}`);
     }
-    console.log(`[server] Health check: http://localhost:${options.port}/health`);
+    console.log(`[server] Health check: http://localhost:${options.port}${PATHS.HEALTH}`);
   });
 
   // ── Graceful shutdown ──────────────────────────────────────────

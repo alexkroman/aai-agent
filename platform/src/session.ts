@@ -1,6 +1,9 @@
 // session.ts — VoiceSession class: orchestrates one voice conversation.
 
 import type WebSocket from "ws";
+import { loadPlatformConfig, type PlatformConfig } from "./config.js";
+import { MAX_TOOL_ITERATIONS, MSG } from "./constants.js";
+import { ERR } from "./errors.js";
 import { callLLM } from "./llm.js";
 import { toolDefsToSchemas } from "./protocol.js";
 import { Sandbox } from "./sandbox.js";
@@ -10,41 +13,15 @@ import { normalizeVoiceText } from "./voice-cleaner.js";
 import {
   DEFAULT_GREETING,
   DEFAULT_INSTRUCTIONS,
-  DEFAULT_MODEL,
-  DEFAULT_STT_CONFIG,
-  DEFAULT_TTS_CONFIG,
   VOICE_RULES,
   type AgentConfig,
   type ChatMessage,
-  type STTConfig,
-  type TTSConfig,
   type ToolSchema,
 } from "./types.js";
 
-interface SessionDeps {
-  apiKey: string;
-  ttsApiKey: string;
-  sttConfig: STTConfig;
-  ttsConfig: TTSConfig;
-  model: string;
+interface SessionDeps extends PlatformConfig {
   /** Customer secrets from platform store */
   customerSecrets: Record<string, string>;
-}
-
-function createSessionDeps(): SessionDeps {
-  const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY ?? "";
-  return {
-    apiKey: process.env.ASSEMBLYAI_API_KEY ?? "",
-    ttsApiKey,
-    sttConfig: { ...DEFAULT_STT_CONFIG },
-    ttsConfig: {
-      ...DEFAULT_TTS_CONFIG,
-      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
-      apiKey: ttsApiKey,
-    },
-    model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
-    customerSecrets: {},
-  };
 }
 
 export class VoiceSession {
@@ -75,8 +52,7 @@ export class VoiceSession {
     this.browserWs = browserWs;
     this.config = config;
 
-    this.deps = createSessionDeps();
-    this.deps.customerSecrets = customerSecrets;
+    this.deps = { ...loadPlatformConfig(), customerSecrets };
 
     // Override TTS voice from config
     if (config.voice) {
@@ -125,7 +101,7 @@ export class VoiceSession {
     try {
       const events: SttEvents = {
         onTranscript: (text, isFinal) => {
-          this.sendJson({ type: "transcript", text, final: isFinal });
+          this.sendJson({ type: MSG.TRANSCRIPT, text, final: isFinal });
         },
         onTurn: (text) => {
           this.handleTurn(text);
@@ -141,16 +117,13 @@ export class VoiceSession {
       this.stt = await connectStt(this.deps.apiKey, this.deps.sttConfig, events);
     } catch (err) {
       log(`Failed to connect STT: ${err}`);
-      this.sendJson({
-        type: "error",
-        message: "Failed to connect to speech recognition",
-      });
+      this.sendJson({ type: MSG.ERROR, message: ERR.STT_CONNECT_FAILED });
       return;
     }
 
     // Send ready
     this.sendJson({
-      type: "ready",
+      type: MSG.READY,
       sampleRate: this.deps.sttConfig.sampleRate,
       ttsSampleRate: this.deps.ttsConfig.sampleRate,
     });
@@ -158,7 +131,7 @@ export class VoiceSession {
     // Send greeting
     const greeting = this.config.greeting ?? DEFAULT_GREETING;
     if (greeting) {
-      this.sendJson({ type: "greeting", text: greeting });
+      this.sendJson({ type: MSG.GREETING, text: greeting });
       if (this.deps.ttsApiKey) {
         this.ttsRelay(greeting);
       }
@@ -178,7 +151,7 @@ export class VoiceSession {
   async onCancel(): Promise<void> {
     this.cancelInflight();
     this.stt?.clear();
-    this.sendJson({ type: "cancelled" });
+    this.sendJson({ type: MSG.CANCELLED });
   }
 
   /**
@@ -188,7 +161,7 @@ export class VoiceSession {
     this.cancelInflight();
     // Keep system message, clear conversation
     this.messages = this.messages.slice(0, 1);
-    this.sendJson({ type: "reset" });
+    this.sendJson({ type: MSG.RESET });
   }
 
   /**
@@ -220,8 +193,8 @@ export class VoiceSession {
     // Cancel any in-flight work
     this.cancelInflight();
 
-    this.sendJson({ type: "turn", text });
-    this.sendJson({ type: "thinking" });
+    this.sendJson({ type: MSG.TURN, text });
+    this.sendJson({ type: MSG.THINKING });
 
     const abort = new AbortController();
     this.chatAbort = abort;
@@ -230,7 +203,7 @@ export class VoiceSession {
       // Add user message
       this.messages.push({ role: "user", content: text });
 
-      // LLM tool loop (max 3 iterations)
+      // LLM tool loop
       let response = await callLLM(
         this.messages,
         this.toolSchemas,
@@ -241,9 +214,8 @@ export class VoiceSession {
 
       const steps: string[] = [];
       let iterations = 0;
-      const MAX_ITERATIONS = 3;
 
-      while (iterations < MAX_ITERATIONS) {
+      while (iterations < MAX_TOOL_ITERATIONS) {
         const choice = response.choices[0];
         if (!choice) break;
 
@@ -301,7 +273,7 @@ export class VoiceSession {
           this.messages.push({ role: "assistant", content: responseText });
 
           this.sendJson({
-            type: "chat",
+            type: MSG.CHAT,
             text: responseText,
             steps,
           });
@@ -310,7 +282,7 @@ export class VoiceSession {
           if (this.deps.ttsApiKey && responseText) {
             this.ttsRelay(responseText);
           } else {
-            this.sendJson({ type: "tts_done" });
+            this.sendJson({ type: MSG.TTS_DONE });
           }
           break;
         }
@@ -318,7 +290,7 @@ export class VoiceSession {
     } catch (err) {
       if (abort.signal.aborted) return;
       console.error(`[session:${this.id.slice(0, 8)}] Chat failed:`, err);
-      this.sendJson({ type: "error", message: "Chat failed" });
+      this.sendJson({ type: MSG.ERROR, message: ERR.CHAT_FAILED });
     } finally {
       if (this.chatAbort === abort) {
         this.chatAbort = null;
@@ -340,13 +312,13 @@ export class VoiceSession {
       .synthesize(cleaned, (chunk) => this.sendBytes(chunk), abort.signal)
       .then(() => {
         if (!abort.signal.aborted) {
-          this.sendJson({ type: "tts_done" });
+          this.sendJson({ type: MSG.TTS_DONE });
         }
       })
       .catch((err) => {
         if (!abort.signal.aborted) {
           log(`error: ${err.message}`);
-          this.sendJson({ type: "error", message: "TTS synthesis failed" });
+          this.sendJson({ type: MSG.ERROR, message: ERR.TTS_FAILED });
         }
       })
       .finally(() => {

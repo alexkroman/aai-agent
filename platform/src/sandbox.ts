@@ -5,9 +5,8 @@
 // context so tool calls cannot leak state to each other.
 
 import ivm from "isolated-vm";
-
-const HANDLER_TIMEOUT_MS = 30_000;
-const ISOLATE_MEMORY_LIMIT_MB = 128;
+import { ISOLATE_MEMORY_LIMIT_MB, TIMEOUTS } from "./constants.js";
+import { ERR_INTERNAL } from "./errors.js";
 
 interface CompiledHandler {
   name: string;
@@ -52,11 +51,11 @@ export class Sandbox {
   async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
     const handler = this.handlers.get(toolName);
     if (!handler) {
-      return `Error: Unknown tool "${toolName}"`;
+      return ERR_INTERNAL.TOOL_UNKNOWN(toolName);
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HANDLER_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), TIMEOUTS.TOOL_HANDLER);
     let context: ivm.Context | null = null;
 
     try {
@@ -128,7 +127,7 @@ export class Sandbox {
           new ivm.ExternalCopy(args).copyInto(),
         ],
         {
-          timeout: HANDLER_TIMEOUT_MS,
+          timeout: TIMEOUTS.TOOL_HANDLER,
           result: { promise: true, copy: true },
         }
       );
@@ -136,7 +135,7 @@ export class Sandbox {
       return (result as string) ?? "null";
     } catch (err) {
       if (controller.signal.aborted) {
-        return `Error: Tool "${toolName}" timed out after ${HANDLER_TIMEOUT_MS}ms`;
+        return ERR_INTERNAL.TOOL_TIMEOUT(toolName, TIMEOUTS.TOOL_HANDLER);
       }
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     } finally {

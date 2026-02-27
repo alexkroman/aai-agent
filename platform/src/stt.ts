@@ -1,6 +1,8 @@
 // stt.ts — AssemblyAI token creation + WebSocket client.
 
 import WebSocket from "ws";
+import { TIMEOUTS } from "./constants.js";
+import { ERR_INTERNAL } from "./errors.js";
 import type { STTConfig } from "./types.js";
 
 const TOKEN_URL = "https://streaming.assemblyai.com/v3/token";
@@ -15,7 +17,7 @@ export async function createSttToken(apiKey: string, expiresIn: number): Promise
     headers: { Authorization: apiKey },
   });
   if (!resp.ok) {
-    throw new Error(`STT token request failed: ${resp.status} ${resp.statusText}`);
+    throw new Error(ERR_INTERNAL.STT_TOKEN_FAILED(resp.status, resp.statusText));
   }
   const data = (await resp.json()) as { token: string };
   return data.token;
@@ -56,8 +58,8 @@ export async function connectStt(
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.close();
-      reject(new Error("STT connection timeout"));
-    }, 10_000);
+      reject(new Error(ERR_INTERNAL.STT_CONNECTION_TIMEOUT));
+    }, TIMEOUTS.STT_CONNECTION);
 
     ws.on("open", () => {
       clearTimeout(timeout);

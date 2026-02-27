@@ -1,5 +1,6 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
+import { ERR_INTERNAL } from "./errors.js";
 import { LLM_GATEWAY_BASE, type ChatMessage, type LLMResponse, type ToolSchema } from "./types.js";
 
 /**
@@ -52,7 +53,7 @@ export async function callLLM(
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`LLM request failed: ${resp.status} ${text}`);
+    throw new Error(ERR_INTERNAL.LLM_REQUEST_FAILED(resp.status, text));
   }
 
   return (await resp.json()) as LLMResponse;
