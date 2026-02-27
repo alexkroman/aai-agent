@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx agent.ts",
-    "dev": "tsx watch agent.ts"
+    "start": "tsx run.ts",
+    "dev": "tsx watch run.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -153,7 +153,7 @@ The backend configures the agent and handles tool execution.
 
 **Platform sends to backend:**
 ```typescript
-{ type: "configured", agentId: "agent_abc123" }                                          // agent registered, frontends can connect
+{ type: "configured", agentId: "agent_abc123", defaultUrl: "https://platform.example.com/a/agent_abc123" }  // agent ready
 { type: "session_started", sessionId: "sess_xyz" }                                       // a frontend connected
 { type: "tool_call", callId: "call_123", sessionId: "sess_xyz", name: "get_weather", args: { city: "SF" } }
 { type: "tool_timeout", callId: "call_123", sessionId: "sess_xyz" }                      // 30s elapsed, platform gave up
@@ -311,29 +311,30 @@ filling null id/model/usage fields).
 ## Customer Code (TypeScript, No AssemblyAI SDK)
 
 Customers use whatever npm packages they want. We don't publish or maintain
-an SDK. There is no boilerplate relay layer. **Claude Code only ever needs to
-edit two files: `agent.ts` (backend: config + tools) and `App.tsx` (frontend: UI).**
+an SDK. **Claude Code only edits `agent.ts` (~30 lines) for the backend. The
+frontend is optional — the platform hosts a default UI.**
 
 ### Key simplifications
 
-- No `WebSocketServer` in customer code — frontend connects directly to platform
-- No `lib/voice-agent.ts` boilerplate — no relay, no message filtering
-- No `server.ts` entry point — `agent.ts` is the entire backend
-- Backend is persistent (one process serves all sessions via `sessionId`)
-- Frontend is static (deploy on any CDN, no server needed)
+- `agent.ts` is pure business logic — config + tools, nothing else
+- `run.ts` handles all WebSocket plumbing — Claude Code never reads or edits it
+- Handlers return any JSON-serializable value (string, object, array) —
+  `run.ts` auto-stringifies non-strings
+- Frontend is optional — platform serves a default UI at `defaultUrl`
+- For custom UIs, Claude Code edits `App.tsx` (React hook does all the work)
 - `agentId` is safe to embed in frontend builds (not a secret)
-- Backend reconnects automatically with exponential backoff
 
 ### Project structure
 
 ```
 customer-backend/
-├── agent.ts               ← CLAUDE CODE EDITS THIS: config + tools (~45 lines)
+├── agent.ts               ← CLAUDE CODE EDITS THIS: config + tools (~30 lines)
+├── run.ts                 ← Boilerplate: WS connection, tool dispatch (never edit)
 ├── package.json
 ├── tsconfig.json
 └── CLAUDE.md
 
-customer-frontend/
+customer-frontend/           ← OPTIONAL (platform has default UI)
 ├── App.tsx                ← CLAUDE CODE EDITS THIS: UI components
 ├── hooks/
 │   └── useVoiceAgent.ts   ← Hook: WS state machine + message handling
@@ -346,23 +347,25 @@ customer-frontend/
 ### CLAUDE.md (guides Claude Code)
 
 ```markdown
-# Voice Agent
+# Voice Agent Backend
+
+Only edit `agent.ts`. Never edit `run.ts`.
+
+## agent.ts structure
+- `config`: instructions (system prompt), greeting, voice
+- `tools`: object mapping tool names to { description, parameters, handler }
 
 ## Adding a tool
-Edit `agent.ts` and add an entry to the `tools` object. Each tool has:
-- `description`: what the tool does (the LLM sees this)
-- `parameters`: object mapping param names to types
-  - Simple: `{ city: "string" }` or `{ limit: "number?" }` (? = optional)
-  - With description: `{ city: { type: "string", description: "City name" } }`
-  - With enum: `{ status: { type: "string", enum: ["open", "closed"] } }`
-- `handler`: async function that takes the parsed args and returns a string
+Add an entry to the `tools` object in `agent.ts`. Each tool has:
+- `description`: what the tool does (the LLM reads this)
+- `parameters`: { paramName: { type: "string", description: "..." } }
+- `handler`: async function → return any value (strings, objects, arrays)
 
 ## Changing the agent's behavior
-Edit the config in `agent.ts`: instructions, greeting, voice.
+Edit `config.instructions` in `agent.ts`.
 
-## Changing the UI
-Edit `App.tsx`. The `useVoiceAgent` hook provides: state, messages,
-transcript, cancel(), reset().
+## Changing the UI (optional)
+Edit `App.tsx` in customer-frontend/. Or skip — the platform has a default UI.
 ```
 
 ### Backend dependencies
@@ -379,31 +382,28 @@ One dependency. No zod, no schema converters, no SDK.
 
 ---
 
-### `agent.ts` — the entire customer backend (single file)
+### `agent.ts` — the only file Claude Code edits (~30 lines)
 
-This is the only backend file. No entry point, no boilerplate, no relay.
-Claude Code edits the `tools` object and config. The rest is connection
-plumbing that never changes.
+Pure business logic. No imports, no WebSocket code, no boilerplate.
+Claude Code reads 30 lines, knows exactly what to add.
 
 **Parameters use a simplified format** — `{ city: "string" }` instead of
 JSON Schema or zod. The platform converts this to proper JSON Schema before
 sending to the LLM. See "Simplified parameter format" below for details.
 
+**Handlers return any value** — strings, objects, arrays. `run.ts`
+auto-stringifies non-strings before sending to the platform.
+
 ```typescript
-// agent.ts — the entire customer backend
-import { WebSocket } from "ws";
+// agent.ts — Agent config and tools. This is the only file you edit.
 
-// ── Agent config ────────────────────────────────────────────────────
-
-const config = {
+export const config = {
   instructions: "You are a helpful weather assistant. Be concise.",
   greeting: "Hey! Ask me about the weather.",
   voice: "jess",
 };
 
-// ── Tools ───────────────────────────────────────────────────────────
-
-const tools = {
+export const tools = {
   get_weather: {
     description: "Get current weather for a city",
     parameters: { city: { type: "string", description: "City name" } },
@@ -411,90 +411,21 @@ const tools = {
       const resp = await fetch(
         `https://api.weather.com/current?city=${encodeURIComponent(args.city)}`
       );
-      const data = await resp.json();
-      return `${data.temp}°F and ${data.conditions} in ${args.city}`;
+      return await resp.json(); // return object — auto-stringified
     },
   },
 };
-
-// ── Platform connection (reconnects automatically) ──────────────────
-
-const pendingCalls = new Map<string, AbortController>();
-
-function connect() {
-  const ws = new WebSocket(process.env.PLATFORM_URL!, {
-    headers: { Authorization: `Bearer ${process.env.API_KEY}` },
-  });
-
-  let reconnectDelay = 1000;
-
-  ws.on("open", () => {
-    reconnectDelay = 1000;
-    ws.send(JSON.stringify({
-      type: "configure",
-      ...config,
-      tools: Object.entries(tools).map(([name, t]) => ({
-        name, description: t.description, parameters: t.parameters,
-      })),
-    }));
-  });
-
-  ws.on("message", async (raw) => {
-    const msg = JSON.parse(raw.toString());
-
-    if (msg.type === "tool_call") {
-      const abort = new AbortController();
-      pendingCalls.set(msg.callId, abort);
-      let result: string;
-      try {
-        const tool = tools[msg.name as keyof typeof tools];
-        if (!tool) throw new Error(`Unknown tool: ${msg.name}`);
-        result = await tool.handler(msg.args);
-      } catch (err) {
-        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-      pendingCalls.delete(msg.callId);
-      if (!abort.signal.aborted) {
-        ws.send(JSON.stringify({
-          type: "tool_result",
-          callId: msg.callId,
-          sessionId: msg.sessionId,
-          result,
-        }));
-      }
-    }
-
-    if (msg.type === "tool_timeout") {
-      // Platform gave up waiting — abort the in-flight handler
-      pendingCalls.get(msg.callId)?.abort();
-      pendingCalls.delete(msg.callId);
-    }
-
-    if (msg.type === "configured") {
-      console.log(`Agent ready. ID: ${msg.agentId}`);
-      console.log(`Frontends connect to: ${process.env.PLATFORM_URL}/session?agent=${msg.agentId}`);
-    }
-
-    if (msg.type === "session_started") console.log(`Session started: ${msg.sessionId}`);
-    if (msg.type === "session_ended") console.log(`Session ended: ${msg.sessionId}`);
-    if (msg.type === "error") console.error(`Error: ${msg.message}`);
-  });
-
-  ws.on("close", () => {
-    console.log(`Disconnected. Reconnecting in ${reconnectDelay}ms...`);
-    setTimeout(connect, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-  });
-
-  ws.on("error", (err) => console.error("Connection error:", err.message));
-}
-
-connect();
 ```
+
+### `run.ts` — boilerplate (Claude Code never reads or edits this)
+
+Handles WebSocket connection, reconnection, tool dispatch, serialization.
+Imports `config` and `tools` from `agent.ts`. Generated once per project.
+`npm start` runs `run.ts`, which imports `agent.ts`.
 
 ### Adding a new tool (what Claude Code generates)
 
-Claude Code adds one entry to the `tools` object. Nothing else changes:
+Claude Code adds one entry to the `tools` object in `agent.ts`. Nothing else:
 
 ```typescript
   book_appointment: {
@@ -506,13 +437,13 @@ Claude Code adds one entry to the `tools` object. Nothing else changes:
     },
     handler: async (args: { date: string; time: string; service?: string }) => {
       const result = await calendarApi.book(args);
-      return `Booked ${args.service ?? "appointment"} for ${args.date} at ${args.time}`;
+      return { booked: true, date: args.date, time: args.time }; // return object
     },
   },
 ```
 
-One entry. Simplified schema with descriptions, handler, type annotation — all
-in one place.
+One entry. Simplified schema, handler, type annotation — all in one place.
+Handler returns any value.
 
 ### Simplified parameter format (platform converts to JSON Schema)
 
@@ -545,7 +476,13 @@ The platform auto-detects which format is being used per-tool.
 
 ---
 
-## Customer Frontend (React + TypeScript)
+## Customer Frontend (Optional — React + TypeScript)
+
+The platform hosts a default voice UI at the `defaultUrl` returned in the
+`configured` response. Customers who just want voice + tools don't need a
+frontend at all — they deploy `agent.ts` and share the platform's default URL.
+
+For custom UIs, create a React app with the `useVoiceAgent` hook:
 
 ### Frontend dependencies
 
@@ -810,27 +747,31 @@ export function createAudioPlayer(sampleRate: number) {
 
 ### Summary: what Claude Code touches vs. what it doesn't
 
+**Backend** (required):
 | File | Claude Code edits? | Purpose |
 |---|---|---|
-| `agent.ts` | **Yes — always** | Config + tools (entire backend) |
+| `agent.ts` | **Yes — always** | Config + tools (~30 lines of pure business logic) |
+| `run.ts` | Never | WS connection, reconnection, tool dispatch |
+| `CLAUDE.md` | Never | Instructions for Claude Code |
+
+**Frontend** (optional — platform has default UI):
+| File | Claude Code edits? | Purpose |
+|---|---|---|
 | `App.tsx` | **Yes — for UI changes** | React component |
 | `hooks/useVoiceAgent.ts` | Never | WS state machine, message handling |
 | `lib/audio.ts` | Never | Mic capture (AudioWorklet), playback |
-| `CLAUDE.md` | Never | Instructions for Claude Code |
 
-**Why this structure?**
-- `agent.ts` is ~90 lines (with reconnection + error handling). Claude Code
-  only edits the `config` object and `tools` object at the top. The connection
-  plumbing at the bottom never changes.
-- The backend is a persistent process (not per-session). Handles N concurrent
-  sessions via `sessionId`-tagged messages. Reconnects automatically.
-- The frontend is static — deploy on any CDN. `agentId` is baked into the build.
-- `lib/audio.ts` uses `AudioWorkletNode` (not deprecated `ScriptProcessorNode`),
-  handles PCM16 encoding/decoding, buffered playback, and properly recreates
-  AudioContext on flush (barge-in).
-- `useVoiceAgent(platformUrl, agentId)` connects directly to the platform.
-  Uses functional state updates to avoid stale closure bugs.
-- The `CLAUDE.md` tells Claude Code exactly which file to edit for each task.
+**What Claude Code sees when it opens `agent.ts`:**
+```
+30 lines. Two objects: config and tools.
+No imports. No WebSocket code. No boilerplate.
+```
+
+**Minimum viable voice agent** (what Claude Code produces for "build me a voice agent"):
+1. Write `agent.ts` (~30 lines) — config + tools
+2. `npm run dev` — agent connects to platform
+3. Share the `defaultUrl` — platform hosts the UI
+4. Done. No frontend code needed.
 
 ---
 
