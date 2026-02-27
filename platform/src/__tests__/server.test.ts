@@ -5,12 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { randomBytes } from "crypto";
 
-import {
-  startServer,
-  loadSecretsFile,
-  type ServerHandle,
-  type ServerOptions,
-} from "../server.js";
+import { startServer, loadSecretsFile, type ServerHandle, type ServerOptions } from "../server.js";
 import type { SessionOverrides } from "../session.js";
 
 /** Create mock overrides that prevent real STT/TTS/LLM API calls. */
@@ -36,9 +31,7 @@ function mockOverrides(): SessionOverrides {
 }
 
 /** Convenience to start a server with mocked session dependencies. */
-function startTestServer(
-  opts: Partial<ServerOptions> = {},
-): Promise<ServerHandle> {
+function startTestServer(opts: Partial<ServerOptions> = {}): Promise<ServerHandle> {
   return startServer({
     port: 0,
     sessionOverrides: mockOverrides(),
@@ -73,7 +66,7 @@ describe("loadSecretsFile", () => {
       JSON.stringify({
         pk_abc: { KEY1: "val1", KEY2: "val2" },
         pk_def: { KEY3: "val3" },
-      }),
+      })
     );
 
     const secrets = await loadSecretsFile(path);
@@ -175,9 +168,7 @@ describe("server", () => {
     it("rejects invalid configure message", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_test`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -196,9 +187,7 @@ describe("server", () => {
       });
 
       const errMsg = messages.find((m) => m.type === "error");
-      expect(errMsg.message).toBe(
-        "First message must be a valid configure message",
-      );
+      expect(errMsg.message).toBe("First message must be a valid configure message");
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
@@ -207,9 +196,7 @@ describe("server", () => {
     it("configures session and sends ready + greeting", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_test`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -226,7 +213,7 @@ describe("server", () => {
           type: "configure",
           instructions: "Be helpful",
           greeting: "Hello!",
-        }),
+        })
       );
 
       // Wait for ready and greeting messages
@@ -235,7 +222,7 @@ describe("server", () => {
           expect(messages.some((m) => m.type === "ready")).toBe(true);
           expect(messages.some((m) => m.type === "greeting")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       const readyMsg = messages.find((m) => m.type === "ready");
@@ -252,9 +239,7 @@ describe("server", () => {
     it("handles cancel and reset commands", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_test`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -273,7 +258,7 @@ describe("server", () => {
         () => {
           expect(messages.some((m) => m.type === "ready")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       // Cancel
@@ -283,7 +268,7 @@ describe("server", () => {
         () => {
           expect(messages.some((m) => m.type === "cancelled")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       // Reset
@@ -293,7 +278,7 @@ describe("server", () => {
         () => {
           expect(messages.some((m) => m.type === "reset")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       ws.close();
@@ -303,9 +288,7 @@ describe("server", () => {
     it("gracefully handles session disconnect", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_test`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       ws.send(JSON.stringify({ type: "configure" }));
@@ -323,7 +306,7 @@ describe("server", () => {
         () => {
           expect(messages.some((m) => m.type === "ready")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       // Close the connection — should clean up without errors
@@ -334,10 +317,7 @@ describe("server", () => {
 
   describe("secrets integration", () => {
     it("loads secrets from file and passes to sessions", async () => {
-      const tmpDir = join(
-        tmpdir(),
-        `aai-test-${randomBytes(4).toString("hex")}`,
-      );
+      const tmpDir = join(tmpdir(), `aai-test-${randomBytes(4).toString("hex")}`);
       await mkdir(tmpDir, { recursive: true });
       const secretsPath = join(tmpDir, "secrets.json");
       await writeFile(
@@ -346,14 +326,12 @@ describe("server", () => {
           pk_customer_abc: {
             WEATHER_API_KEY: "sk-abc123",
           },
-        }),
+        })
       );
 
       server = await startTestServer({ secretsFile: secretsPath });
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_customer_abc`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_customer_abc`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -377,14 +355,14 @@ describe("server", () => {
               handler: "async (args, ctx) => ctx.secrets.WEATHER_API_KEY",
             },
           ],
-        }),
+        })
       );
 
       await vi.waitFor(
         () => {
           expect(messages.some((m) => m.type === "ready")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       ws.close();
@@ -398,9 +376,7 @@ describe("server", () => {
     it("starts without secrets file", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(
-        `ws://localhost:${server.port}/session?key=pk_test`,
-      );
+      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -418,7 +394,7 @@ describe("server", () => {
         () => {
           expect(messages.some((m) => m.type === "ready")).toBe(true);
         },
-        { timeout: 5000 },
+        { timeout: 5000 }
       );
 
       ws.close();

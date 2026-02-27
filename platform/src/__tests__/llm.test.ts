@@ -28,12 +28,7 @@ describe("callLLM", () => {
       }),
     });
 
-    const result = await callLLM(
-      [{ role: "user", content: "Hi" }],
-      [],
-      "test-key",
-      "test-model",
-    );
+    const result = await callLLM([{ role: "user", content: "Hi" }], [], "test-key", "test-model");
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, opts] = mockFetch.mock.calls[0];
@@ -71,7 +66,7 @@ describe("callLLM", () => {
         },
       ],
       "key",
-      "model",
+      "model"
     );
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
@@ -136,7 +131,7 @@ describe("callLLM", () => {
       ],
       [],
       "key",
-      "model",
+      "model"
     );
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
@@ -152,9 +147,7 @@ describe("callLLM", () => {
       text: async () => "Unauthorized",
     });
 
-    await expect(callLLM([], [], "bad-key", "model")).rejects.toThrow(
-      "LLM request failed: 401",
-    );
+    await expect(callLLM([], [], "bad-key", "model")).rejects.toThrow("LLM request failed: 401");
   });
 
   it("passes abort signal to fetch", async () => {

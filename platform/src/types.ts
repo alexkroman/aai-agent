@@ -146,7 +146,7 @@ export const ConfigureMessageSchema = z.object({
         description: z.string(),
         parameters: z.record(z.unknown()),
         handler: z.string(),
-      }),
+      })
     )
     .optional(),
 });

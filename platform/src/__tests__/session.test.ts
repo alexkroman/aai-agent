@@ -34,6 +34,7 @@ vi.mock("../stt.js", () => ({
 const mockTtsSynthesize = vi.fn().mockResolvedValue(undefined);
 const mockTtsClose = vi.fn();
 vi.mock("../tts.js", () => ({
+  synthesize: (...args: unknown[]) => mockTtsSynthesize(...args),
   TtsClient: class {
     synthesize = (...args: unknown[]) => mockTtsSynthesize(...args);
     close = mockTtsClose;

@@ -74,47 +74,42 @@ vi.stubGlobal("AudioContext", MockAudioContext);
 vi.stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 vi.stubGlobal("navigator", {
   mediaDevices: {
-    getUserMedia: vi
-      .fn()
-      .mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+    getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
   },
 });
 vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
-  },
+  }
 );
 vi.stubGlobal("Blob", class Blob {});
 
 // ── Mock React hooks (hoisted for vi.mock factory) ────────────────
 
-const { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state } =
-  vi.hoisted(() => {
-    const state = {
-      effectCleanup: null as (() => void) | null,
-      current: {} as any,
-    };
-    const mockSetState = vi.fn((updater: any) => {
-      if (typeof updater === "function") {
-        state.current = updater(state.current);
-      } else {
-        state.current = updater;
-      }
-    });
-    const mockUseEffect = vi.fn(
-      (fn: () => (() => void) | void, _deps?: unknown[]) => {
-        const cleanup = fn();
-        if (typeof cleanup === "function") {
-          state.effectCleanup = cleanup;
-        }
-      },
-    );
-    const mockUseRef = vi.fn((initial: any) => ({ current: initial }));
-    const mockUseCallback = vi.fn((fn: any) => fn);
-
-    return { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state };
+const { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state } = vi.hoisted(() => {
+  const state = {
+    effectCleanup: null as (() => void) | null,
+    current: {} as any,
+  };
+  const mockSetState = vi.fn((updater: any) => {
+    if (typeof updater === "function") {
+      state.current = updater(state.current);
+    } else {
+      state.current = updater;
+    }
   });
+  const mockUseEffect = vi.fn((fn: () => (() => void) | void, _deps?: unknown[]) => {
+    const cleanup = fn();
+    if (typeof cleanup === "function") {
+      state.effectCleanup = cleanup;
+    }
+  });
+  const mockUseRef = vi.fn((initial: any) => ({ current: initial }));
+  const mockUseCallback = vi.fn((fn: any) => fn);
+
+  return { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state };
+});
 
 vi.mock("react", () => ({
   useState: (initial: any) => {

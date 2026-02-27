@@ -109,17 +109,13 @@ vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
-  },
+  }
 );
 vi.stubGlobal("Blob", class Blob {});
 
 // ── Imports ───────────────────────────────────────────────────────
 
-import {
-  serializeTools,
-  createAudioPlayer,
-  startMicCapture,
-} from "../../client/core.js";
+import { serializeTools, createAudioPlayer, startMicCapture } from "../../client/core.js";
 
 // ── Tests ─────────────────────────────────────────────────────────
 
@@ -187,16 +183,16 @@ describe("createAudioPlayer", () => {
     vi.clearAllMocks();
   });
 
-  it("creates a player with enqueue, flush, and close methods", () => {
-    const player = createAudioPlayer(24000);
+  it("creates a player with enqueue, flush, and close methods", async () => {
+    const player = await createAudioPlayer(24000);
 
     expect(player).toHaveProperty("enqueue");
     expect(player).toHaveProperty("flush");
     expect(player).toHaveProperty("close");
   });
 
-  it("enqueue converts PCM16 to float32 and schedules playback", () => {
-    const player = createAudioPlayer(24000);
+  it("enqueue converts PCM16 to float32 and schedules playback", async () => {
+    const player = await createAudioPlayer(24000);
 
     // Create a small PCM16 buffer (4 samples)
     const pcm16 = new Int16Array([0, 16384, 32767, -32768]);
@@ -206,8 +202,8 @@ describe("createAudioPlayer", () => {
     // (verified by not throwing)
   });
 
-  it("flush resets playback by recreating AudioContext", () => {
-    const player = createAudioPlayer(24000);
+  it("flush resets playback by recreating AudioContext", async () => {
+    const player = await createAudioPlayer(24000);
     player.enqueue(new Int16Array([100, 200]).buffer);
     player.flush();
 
@@ -215,14 +211,14 @@ describe("createAudioPlayer", () => {
     player.enqueue(new Int16Array([300, 400]).buffer);
   });
 
-  it("close calls ctx.close()", () => {
-    const player = createAudioPlayer(24000);
+  it("close calls ctx.close()", async () => {
+    const player = await createAudioPlayer(24000);
     player.close();
     // Should not throw when closing
   });
 
-  it("enqueue after close is a no-op", () => {
-    const player = createAudioPlayer(24000);
+  it("enqueue after close is a no-op", async () => {
+    const player = await createAudioPlayer(24000);
     player.close();
     // Enqueue after close should not throw
     player.enqueue(new Int16Array([100]).buffer);

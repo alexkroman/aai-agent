@@ -99,7 +99,7 @@ vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
-  },
+  }
 );
 vi.stubGlobal("Blob", class Blob {});
 
@@ -109,9 +109,7 @@ import { VoiceSession } from "../../client/core.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-function createSession(
-  opts: Partial<ConstructorParameters<typeof VoiceSession>[0]> = {},
-) {
+function createSession(opts: Partial<ConstructorParameters<typeof VoiceSession>[0]> = {}) {
   const stateChanges: string[] = [];
   const receivedMessages: any[] = [];
   const transcripts: string[] = [];
@@ -126,7 +124,7 @@ function createSession(
       onStateChange: (state) => stateChanges.push(state),
       onMessage: (msg) => receivedMessages.push(msg),
       onTranscript: (text) => transcripts.push(text),
-    },
+    }
   );
 
   return { session, stateChanges, receivedMessages, transcripts };
@@ -230,7 +228,8 @@ describe("VoiceSession", () => {
         ttsSampleRate: 24000,
       });
 
-      expect(stateChanges).toContain("listening");
+      // createAudioPlayer and startMicCapture are async, so "listening" is set after promises resolve
+      await vi.waitFor(() => expect(stateChanges).toContain("listening"));
     });
 
     it("handles 'greeting' message", async () => {
@@ -258,8 +257,7 @@ describe("VoiceSession", () => {
     });
 
     it("handles 'turn' message — adds user message and clears transcript", async () => {
-      const { session, stateChanges, receivedMessages, transcripts } =
-        createSession();
+      const { session, stateChanges, receivedMessages, transcripts } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
@@ -323,28 +321,24 @@ describe("VoiceSession", () => {
         ttsSampleRate: 24000,
       });
 
+      // Wait for async audio setup to complete
+      await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
       lastWs().simulateMessage({ type: "cancelled" });
 
-      const listeningCount = stateChanges.filter(
-        (s) => s === "listening",
-      ).length;
+      const listeningCount = stateChanges.filter((s) => s === "listening").length;
       expect(listeningCount).toBeGreaterThanOrEqual(2);
     });
 
     it("handles 'error' message — logs to console", async () => {
-      const consoleSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
       lastWs().simulateMessage({ type: "error", message: "Something failed" });
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Agent error:",
-        "Something failed",
-      );
+      expect(consoleSpy).toHaveBeenCalledWith("Agent error:", "Something failed");
       consoleSpy.mockRestore();
     });
 
@@ -422,8 +416,7 @@ describe("VoiceSession", () => {
 
   describe("full message flow", () => {
     it("simulates a complete conversation turn", async () => {
-      const { session, stateChanges, receivedMessages, transcripts } =
-        createSession();
+      const { session, stateChanges, receivedMessages, transcripts } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
@@ -435,7 +428,7 @@ describe("VoiceSession", () => {
         sampleRate: 16000,
         ttsSampleRate: 24000,
       });
-      expect(stateChanges).toContain("listening");
+      await vi.waitFor(() => expect(stateChanges).toContain("listening"));
 
       // 2. Server sends greeting
       ws.simulateMessage({ type: "greeting", text: "Hello!" });

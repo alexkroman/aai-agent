@@ -14,9 +14,7 @@ export const ERR_INTERNAL = {
   STT_TOKEN_FAILED: (status: number, statusText: string) =>
     `STT token request failed: ${status} ${statusText}`,
   STT_CONNECTION_TIMEOUT: "STT connection timeout",
-  LLM_REQUEST_FAILED: (status: number, body: string) =>
-    `LLM request failed: ${status} ${body}`,
+  LLM_REQUEST_FAILED: (status: number, body: string) => `LLM request failed: ${status} ${body}`,
   TOOL_UNKNOWN: (name: string) => `Error: Unknown tool "${name}"`,
-  TOOL_TIMEOUT: (name: string, ms: number) =>
-    `Error: Tool "${name}" timed out after ${ms}ms`,
+  TOOL_TIMEOUT: (name: string, ms: number) => `Error: Tool "${name}" timed out after ${ms}ms`,
 } as const;

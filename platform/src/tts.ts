@@ -157,7 +157,7 @@ export async function synthesize(
   text: string,
   config: TTSConfig,
   onAudio: (chunk: Buffer) => void,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -171,10 +171,7 @@ export async function synthesize(
 
     const cleanup = () => {
       ws.removeAllListeners();
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
     };
@@ -196,7 +193,7 @@ export async function synthesize(
           repetition_penalty: config.repetitionPenalty,
           temperature: config.temperature,
           top_p: config.topP,
-        }),
+        })
       );
       // Send text word by word
       for (const word of text.split(/\s+/)) {

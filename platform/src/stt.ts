@@ -10,19 +10,14 @@ const TOKEN_URL = "https://streaming.assemblyai.com/v3/token";
 /**
  * Create an ephemeral streaming token for AssemblyAI STT.
  */
-export async function createSttToken(
-  apiKey: string,
-  expiresIn: number,
-): Promise<string> {
+export async function createSttToken(apiKey: string, expiresIn: number): Promise<string> {
   const url = new URL(TOKEN_URL);
   url.searchParams.set("expires_in_seconds", String(expiresIn));
   const resp = await fetch(url, {
     headers: { Authorization: apiKey },
   });
   if (!resp.ok) {
-    throw new Error(
-      ERR_INTERNAL.STT_TOKEN_FAILED(resp.status, resp.statusText),
-    );
+    throw new Error(ERR_INTERNAL.STT_TOKEN_FAILED(resp.status, resp.statusText));
   }
   const data = (await resp.json()) as { token: string };
   return data.token;
@@ -41,7 +36,7 @@ export interface SttEvents {
 export async function connectStt(
   apiKey: string,
   config: STTConfig,
-  events: SttEvents,
+  events: SttEvents
 ): Promise<{
   send: (audio: Buffer) => void;
   clear: () => void;
@@ -54,9 +49,7 @@ export async function connectStt(
     speech_model: config.speechModel,
     token,
     format_turns: String(config.formatTurns),
-    min_end_of_turn_silence_when_confident: String(
-      config.minEndOfTurnSilenceWhenConfident,
-    ),
+    min_end_of_turn_silence_when_confident: String(config.minEndOfTurnSilenceWhenConfident),
     max_turn_silence: String(config.maxTurnSilence),
   });
 

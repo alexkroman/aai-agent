@@ -3,7 +3,7 @@
 import {
   DEFAULT_MODEL,
   DEFAULT_STT_CONFIG,
-  DEFAULT_TTS_WSS_URL,
+  DEFAULT_TTS_CONFIG,
   type STTConfig,
   type TTSConfig,
 } from "./types.js";
@@ -29,7 +29,7 @@ export function loadPlatformConfig(): PlatformConfig {
     ttsApiKey,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
-      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_WSS_URL,
+      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
       apiKey: ttsApiKey,
       voice: "jess",
       maxTokens: 2000,

@@ -114,10 +114,7 @@ export function normalizeVoiceText(text: string): string {
 
   // Units: Hz → hertz, kHz → kilohertz, etc.
   for (const [abbr, full] of Object.entries(UNIT_MAP)) {
-    const re = new RegExp(
-      `(\\d)\\s*${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-      "g",
-    );
+    const re = new RegExp(`(\\d)\\s*${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g");
     text = text.replace(re, `$1 ${full}`);
   }
 

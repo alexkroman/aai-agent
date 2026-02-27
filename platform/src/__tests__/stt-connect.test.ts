@@ -7,6 +7,7 @@ const { instances } = vi.hoisted(() => {
 });
 
 vi.mock("ws", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EventEmitter } = require("events");
 
   class MockWS extends EventEmitter {

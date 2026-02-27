@@ -8,7 +8,7 @@ import { callLLM } from "./llm.js";
 import { toolDefsToSchemas } from "./protocol.js";
 import { Sandbox } from "./sandbox.js";
 import { connectStt, type SttEvents } from "./stt.js";
-import { TtsClient } from "./tts.js";
+import { synthesize } from "./tts.js";
 import { normalizeVoiceText } from "./voice-cleaner.js";
 import {
   DEFAULT_GREETING,
@@ -43,7 +43,6 @@ export class VoiceSession {
     clear: () => void;
     close: () => void;
   } | null = null;
-  private ttsClient: TtsClient;
   private chatAbort: AbortController | null = null;
   private ttsAbort: AbortController | null = null;
   private messages: ChatMessage[] = [];
@@ -55,7 +54,7 @@ export class VoiceSession {
     browserWs: WebSocket,
     config: AgentConfig,
     customerSecrets: Record<string, string> = {},
-    overrides: SessionOverrides = {},
+    overrides: SessionOverrides = {}
   ) {
     this.id = id;
     this.browserWs = browserWs;
@@ -124,11 +123,7 @@ export class VoiceSession {
       };
 
       const sttConnect = this.overrides.connectStt ?? connectStt;
-      this.stt = await sttConnect(
-        this.deps.apiKey,
-        this.deps.sttConfig,
-        events,
-      );
+      this.stt = await sttConnect(this.deps.apiKey, this.deps.sttConfig, events);
     } catch (err) {
       log(`Failed to connect STT: ${err}`);
       this.sendJson({
@@ -190,7 +185,6 @@ export class VoiceSession {
 
     this.cancelInflight();
     this.stt?.close();
-    this.ttsClient.close();
     this.sandbox.dispose();
   }
 
@@ -227,7 +221,7 @@ export class VoiceSession {
         this.toolSchemas,
         this.deps.apiKey,
         this.deps.model,
-        abort.signal,
+        abort.signal
       );
 
       const steps: string[] = [];
@@ -282,7 +276,7 @@ export class VoiceSession {
             this.toolSchemas,
             this.deps.apiKey,
             this.deps.model,
-            abort.signal,
+            abort.signal
           );
           iterations++;
         } else {
@@ -327,12 +321,7 @@ export class VoiceSession {
     const log = (msg: string) => console.log(`[session:${this.id.slice(0, 8)}] TTS: ${msg}`);
 
     const tts = this.overrides.synthesize ?? synthesize;
-    tts(
-      cleaned,
-      this.deps.ttsConfig,
-      (chunk) => this.sendBytes(chunk),
-      abort.signal,
-    )
+    tts(cleaned, this.deps.ttsConfig, (chunk) => this.sendBytes(chunk), abort.signal)
       .then(() => {
         if (!abort.signal.aborted) {
           this.sendJson({ type: MSG.TTS_DONE });

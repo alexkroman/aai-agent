@@ -38,9 +38,7 @@ export async function loadSecretsFile(path: string): Promise<SecretsStore> {
   try {
     const content = await readFile(path, "utf-8");
     const parsed = JSON.parse(content);
-    console.log(
-      `[server] Loaded secrets for ${Object.keys(parsed).length} customer(s)`,
-    );
+    console.log(`[server] Loaded secrets for ${Object.keys(parsed).length} customer(s)`);
     return parsed as SecretsStore;
   } catch (err) {
     console.warn(`[server] Failed to load secrets file: ${err}`);
@@ -51,9 +49,7 @@ export async function loadSecretsFile(path: string): Promise<SecretsStore> {
 /**
  * Create and start the platform server.
  */
-export async function startServer(
-  options: ServerOptions,
-): Promise<ServerHandle> {
+export async function startServer(options: ServerOptions): Promise<ServerHandle> {
   const sessions = new Map<string, VoiceSession>();
 
   // Load per-customer secrets
@@ -63,57 +59,55 @@ export async function startServer(
 
   // ── HTTP server ────────────────────────────────────────────────
 
-  const httpServer = createServer(
-    async (req: IncomingMessage, res: ServerResponse) => {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
-      // Health check
-      if (url.pathname === PATHS.HEALTH) {
+    // Health check
+    if (url.pathname === PATHS.HEALTH) {
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    // Serve client library files
+    if (
+      options.clientDir &&
+      (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
+    ) {
+      try {
+        const filePath = join(options.clientDir, url.pathname.slice(1));
+        const content = await readFile(filePath);
+        const ext = extname(url.pathname);
         res.writeHead(200, {
-          "Content-Type": "application/json",
+          "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
           "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=3600",
         });
-        res.end(JSON.stringify({ status: "ok" }));
-        return;
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end("Not found");
       }
+      return;
+    }
 
-      // Serve client library files
-      if (
-        options.clientDir &&
-        (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
-      ) {
-        try {
-          const filePath = join(options.clientDir, url.pathname.slice(1));
-          const content = await readFile(filePath);
-          const ext = extname(url.pathname);
-          res.writeHead(200, {
-            "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "public, max-age=3600",
-          });
-          res.end(content);
-        } catch {
-          res.writeHead(404);
-          res.end("Not found");
-        }
-        return;
-      }
+    // CORS preflight
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      res.end();
+      return;
+    }
 
-      // CORS preflight
-      if (req.method === "OPTIONS") {
-        res.writeHead(204, {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        });
-        res.end();
-        return;
-      }
-
-      res.writeHead(404);
-      res.end("Not found");
-    },
-  );
+    res.writeHead(404);
+    res.end("Not found");
+  });
 
   // ── WebSocket server ───────────────────────────────────────────
 
@@ -128,14 +122,12 @@ export async function startServer(
     const sessionId = randomBytes(16).toString("hex");
 
     console.log(
-      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`,
+      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
     );
 
     // TODO: Validate API key against customer database
     if (!apiKey) {
-      ws.send(
-        JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }),
-      );
+      ws.send(JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }));
       ws.close();
       return;
     }
@@ -168,7 +160,7 @@ export async function startServer(
             JSON.stringify({
               type: MSG.ERROR,
               message: ERR.INVALID_CONFIGURE,
-            }),
+            })
           );
           return;
         }
@@ -185,13 +177,13 @@ export async function startServer(
             tools: cfg.tools ?? [],
           },
           customerSecrets,
-          options.sessionOverrides ?? {},
+          options.sessionOverrides ?? {}
         );
         sessions.set(sessionId, session);
         configured = true;
 
         console.log(
-          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`,
+          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`
         );
 
         await session.start();
@@ -218,10 +210,7 @@ export async function startServer(
     });
 
     ws.on("error", (err) => {
-      console.error(
-        `[server] WS error session=${sessionId.slice(0, 8)}:`,
-        err.message,
-      );
+      console.error(`[server] WS error session=${sessionId.slice(0, 8)}:`, err.message);
     });
   });
 
@@ -256,14 +245,13 @@ export async function startServer(
     httpServer.close();
   };
 
-  process.on("SIGINT", async () => {
+  const shutdown = async () => {
     await close();
     process.exit(0);
-  });
-  process.on("SIGTERM", async () => {
-    await close();
-    process.exit(0);
-  });
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   return { port: actualPort, close };
 }
