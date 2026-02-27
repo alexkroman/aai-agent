@@ -136,6 +136,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         this.changeState("connecting");
         return;
       }
+      this.emit("disconnected", { intentional: false });
       this.cleanupAudio();
       this.scheduleReconnect();
     };
@@ -168,7 +169,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
           }
           this.player = player;
           this.micCleanup = micCleanup;
+          this.emit("audioReady");
           this.changeState("listening");
+          this.emit("connected");
         }).catch((err) => {
           if (connId !== this.connectionId) return;
           console.error("Audio setup failed:", err);
@@ -310,5 +313,6 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     this.cleanupAudio();
     this.ws?.close();
     this.ws = null;
+    this.emit("disconnected", { intentional: true });
   }
 }

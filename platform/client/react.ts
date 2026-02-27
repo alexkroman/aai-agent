@@ -9,6 +9,8 @@ import {
   type Message,
   type ToolDef,
   type ToolContext,
+  SessionError,
+  SessionErrorCode,
 } from "./core.js";
 
 // Import React from the customer's bundle (peer dependency)
@@ -16,6 +18,7 @@ import {
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 
 export type { AgentState, Message, ToolDef, ToolContext };
+export { SessionError, SessionErrorCode };
 
 export interface VoiceAgentOptions {
   apiKey: string;
@@ -23,6 +26,7 @@ export interface VoiceAgentOptions {
   instructions?: string;
   greeting?: string;
   voice?: string;
+  prompt?: string;
   tools?: Record<string, ToolDef>;
 }
 
@@ -32,12 +36,14 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
   const [state, setState] = useState<AgentState>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
   const [transcript, setTranscript] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<SessionError | null>(null);
+  const [audioReady, setAudioReady] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
 
   // Memoize config/tools so changes trigger reconnection
   const configKey = useMemo(
-    () => JSON.stringify({ instructions: opts.instructions, greeting: opts.greeting, voice: opts.voice }),
-    [opts.instructions, opts.greeting, opts.voice]
+    () => JSON.stringify({ instructions: opts.instructions, greeting: opts.greeting, voice: opts.voice, prompt: opts.prompt }),
+    [opts.instructions, opts.greeting, opts.voice, opts.prompt]
   );
   const toolNames = useMemo(
     () => (opts.tools ? Object.keys(opts.tools).sort().join(",") : ""),
@@ -55,6 +61,7 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
         instructions: opts.instructions,
         greeting: opts.greeting,
         voice: opts.voice,
+        prompt: opts.prompt,
         tools: toolsRef.current,
       },
       {
@@ -67,24 +74,46 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
         onTranscript(text: string) {
           setTranscript(text);
         },
-        onError(message: string) {
-          setError(message);
+        onError(_message: string) {
+          // Typed error is handled via the event emitter below
         },
       }
     );
 
     sessionRef.current = session;
 
+    session.on("error", (err) => {
+      setError(err);
+    });
+
+    session.on("audioReady", () => {
+      setAudioReady(true);
+    });
+
+    session.on("connected", () => {
+      setIsConnected(true);
+    });
+
+    session.on("disconnected", () => {
+      setIsConnected(false);
+      setAudioReady(false);
+    });
+
     session.on("reset", () => {
       setMessages([]);
       setTranscript("");
-      setError("");
+      setError(null);
     });
 
     try {
       session.connect();
     } catch (err: any) {
-      setError(err.message ?? "Connection failed");
+      setError(
+        new SessionError(
+          SessionErrorCode.CONNECTION_FAILED,
+          err.message ?? "Connection failed"
+        )
+      );
       setState("error");
     }
 
@@ -101,5 +130,13 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
     sessionRef.current?.reset();
   }, []);
 
-  return { state, messages, transcript, error, cancel, reset };
+  const connect = useCallback(() => {
+    sessionRef.current?.connect({ skipGreeting: true });
+  }, []);
+
+  const disconnect = useCallback(() => {
+    sessionRef.current?.disconnect();
+  }, []);
+
+  return { state, messages, transcript, error, audioReady, isConnected, cancel, reset, connect, disconnect };
 }

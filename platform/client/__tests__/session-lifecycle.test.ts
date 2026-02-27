@@ -294,6 +294,61 @@ describe("VoiceSession — heartbeat", () => {
   });
 });
 
+describe("VoiceSession — connected/disconnected/audioReady events", () => {
+  beforeEach(() => {
+    resetWsInstances();
+    vi.clearAllMocks();
+  });
+
+  it("emits audioReady and connected after audio setup", async () => {
+    const { session, stateChanges } = createSession();
+    const events: string[] = [];
+    session.on("audioReady", () => events.push("audioReady"));
+    session.on("connected", () => events.push("connected"));
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    lastWs().simulateMessage({
+      type: "ready",
+      sampleRate: 16000,
+      ttsSampleRate: 24000,
+    });
+    await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+    expect(events).toContain("audioReady");
+    expect(events).toContain("connected");
+    // audioReady fires before connected
+    expect(events.indexOf("audioReady")).toBeLessThan(events.indexOf("connected"));
+  });
+
+  it("emits disconnected with intentional: true on disconnect()", async () => {
+    const { session, stateChanges } = createSession();
+    const disconnectEvents: { intentional: boolean }[] = [];
+    session.on("disconnected", (data) => disconnectEvents.push(data));
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    session.disconnect();
+
+    expect(disconnectEvents).toHaveLength(1);
+    expect(disconnectEvents[0].intentional).toBe(true);
+  });
+
+  it("emits disconnected with intentional: false on unexpected close", async () => {
+    const { session, stateChanges } = createSession();
+    const disconnectEvents: { intentional: boolean }[] = [];
+    session.on("disconnected", (data) => disconnectEvents.push(data));
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Simulate unexpected close
+    lastWs().close();
+
+    expect(disconnectEvents).toHaveLength(1);
+    expect(disconnectEvents[0].intentional).toBe(false);
+  });
+});
+
 describe("VoiceSession — disconnect during audio setup", () => {
   beforeEach(() => {
     resetWsInstances();

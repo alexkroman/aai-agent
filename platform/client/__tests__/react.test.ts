@@ -5,7 +5,7 @@ import { stubBrowserGlobals, resetWsInstances, wsInstances } from "./_mocks.js";
 
 stubBrowserGlobals();
 
-import { useVoiceAgent, type VoiceAgentOptions } from "../react.js";
+import { useVoiceAgent, type VoiceAgentOptions, SessionErrorCode } from "../react.js";
 
 describe("useVoiceAgent", () => {
   beforeEach(() => {
@@ -28,9 +28,15 @@ describe("useVoiceAgent", () => {
     expect(result.current).toHaveProperty("error");
     expect(result.current).toHaveProperty("cancel");
     expect(result.current).toHaveProperty("reset");
+    expect(result.current).toHaveProperty("connect");
+    expect(result.current).toHaveProperty("disconnect");
+    expect(result.current).toHaveProperty("audioReady");
+    expect(result.current).toHaveProperty("isConnected");
     expect(result.current.messages).toEqual([]);
     expect(result.current.transcript).toBe("");
-    expect(result.current.error).toBe("");
+    expect(result.current.error).toBeNull();
+    expect(result.current.audioReady).toBe(false);
+    expect(result.current.isConnected).toBe(false);
   });
 
   it("transitions to ready state on WS open", async () => {
@@ -86,7 +92,7 @@ describe("useVoiceAgent", () => {
     expect(result.current.transcript).toBe("Hello wor");
   });
 
-  it("sets error on error message", async () => {
+  it("sets typed error on error message", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { result } = renderHook(() =>
       useVoiceAgent({ apiKey: "pk_test", platformUrl: "ws://localhost:3000" })
@@ -98,7 +104,10 @@ describe("useVoiceAgent", () => {
       lastWs().simulateMessage({ type: "error", message: "Something failed" });
     });
 
-    expect(result.current.error).toBe("Something failed");
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.error!.code).toBe(SessionErrorCode.SERVER_ERROR);
+    expect(result.current.error!.message).toBe("Something failed");
+    expect(result.current.error!.recoverable).toBe(true);
     expect(result.current.state).toBe("error");
     consoleSpy.mockRestore();
   });
@@ -122,6 +131,7 @@ describe("useVoiceAgent", () => {
   });
 
   it("reset clears messages, transcript, and error on server RESET", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { result } = renderHook(() =>
       useVoiceAgent({ apiKey: "pk_test", platformUrl: "ws://localhost:3000" })
     );
@@ -147,7 +157,8 @@ describe("useVoiceAgent", () => {
 
     expect(result.current.messages).toEqual([]);
     expect(result.current.transcript).toBe("");
-    expect(result.current.error).toBe("");
+    expect(result.current.error).toBeNull();
+    consoleSpy.mockRestore();
   });
 
   it("disconnects on unmount", async () => {
@@ -188,7 +199,7 @@ describe("useVoiceAgent", () => {
     expect(configMsg.tools[0].name).toBe("search");
   });
 
-  it("handles connection error", () => {
+  it("handles connection error with typed SessionError", () => {
     const OriginalWS = (globalThis as any).WebSocket;
     (globalThis as any).WebSocket = class ThrowingWS {
       constructor() {
@@ -201,8 +212,75 @@ describe("useVoiceAgent", () => {
     );
 
     expect(result.current.state).toBe("error");
-    expect(result.current.error).toContain("Connection");
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.error!.code).toBe(SessionErrorCode.CONNECTION_FAILED);
+    expect(result.current.error!.message).toContain("Connection");
 
     (globalThis as any).WebSocket = OriginalWS;
+  });
+
+  it("passes prompt in configure message", async () => {
+    const { result } = renderHook(() =>
+      useVoiceAgent({
+        apiKey: "pk_test",
+        platformUrl: "ws://localhost:3000",
+        prompt: "You are a helpful assistant",
+      })
+    );
+
+    await vi.waitFor(() => expect(result.current.state).toBe("ready"));
+
+    const configMsg = JSON.parse(lastWs().sent[1] as string);
+    expect(configMsg.prompt).toBe("You are a helpful assistant");
+  });
+
+  it("sets audioReady and isConnected after ready message", async () => {
+    const { result } = renderHook(() =>
+      useVoiceAgent({ apiKey: "pk_test", platformUrl: "ws://localhost:3000" })
+    );
+
+    await vi.waitFor(() => expect(result.current.state).toBe("ready"));
+    expect(result.current.audioReady).toBe(false);
+    expect(result.current.isConnected).toBe(false);
+
+    act(() => {
+      lastWs().simulateMessage({ type: "ready", sampleRate: 16000, ttsSampleRate: 24000 });
+    });
+
+    await vi.waitFor(() => expect(result.current.audioReady).toBe(true));
+    expect(result.current.isConnected).toBe(true);
+  });
+
+  it("connect and disconnect control session", async () => {
+    const { result } = renderHook(() =>
+      useVoiceAgent({ apiKey: "pk_test", platformUrl: "ws://localhost:3000" })
+    );
+
+    await vi.waitFor(() => expect(result.current.state).toBe("ready"));
+
+    act(() => {
+      lastWs().simulateMessage({ type: "ready", sampleRate: 16000, ttsSampleRate: 24000 });
+    });
+    await vi.waitFor(() => expect(result.current.isConnected).toBe(true));
+
+    // Disconnect
+    act(() => {
+      result.current.disconnect();
+    });
+
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.audioReady).toBe(false);
+
+    // Reconnect
+    act(() => {
+      result.current.connect();
+    });
+
+    await vi.waitFor(() => expect(lastWs().readyState).toBe(1));
+
+    // Verify skipGreeting: configure message should have empty greeting
+    const latestWs = lastWs();
+    const configMsg = JSON.parse(latestWs.sent[1] as string);
+    expect(configMsg.greeting).toBe("");
   });
 });

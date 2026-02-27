@@ -10,6 +10,7 @@ export interface SessionEventMap {
   error: SessionError;
   connected: void;
   disconnected: { intentional: boolean };
+  audioReady: void;
   reset: void;
 }
 
