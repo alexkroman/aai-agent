@@ -264,65 +264,92 @@ filling null id/model/usage fields).
 
 ---
 
-## Customer Backend (Raw TypeScript, No SDK)
+## Customer Backend (TypeScript, No AssemblyAI SDK)
 
-The customer defines their agent with plain TypeScript objects. No JSON Schema —
-tool parameters use a simplified `{ name: type }` format that the platform
-expands to full JSON Schema internally. Tools are just async functions in a
-handler map.
+Customers use whatever npm packages they want — zod, ws, etc. We don't publish
+or maintain an SDK. The constraint is: no `npm install @assemblyai/voice-agent`.
+
+The key DX insight is using **zod** so each tool is defined in one place —
+schema, types, and handler together. No sync issues between three separate
+definitions.
+
+### Customer dependencies
+
+```json
+{
+  "dependencies": {
+    "ws": "^8.0.0",
+    "zod": "^3.0.0",
+    "zod-to-json-schema": "^3.0.0"
+  }
+}
+```
+
+### Full example
 
 ```typescript
 // customer-backend/server.ts
 import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 const PLATFORM_URL = "wss://platform.example.com/agent";
 const FRONTEND_PORT = 8080;
 
-// ── Tool implementations ────────────────────────────────────────────
-// Just plain async functions. No decorators, no SDK.
+// ── Define tools ────────────────────────────────────────────────────
+// Each tool is ONE object: schema + handler together. Zod gives you
+// runtime validation, TypeScript types, and JSON Schema generation.
 
-async function getWeather(args: { city: string }): Promise<string> {
-  const resp = await fetch(`https://api.weather.com/current?city=${args.city}`);
-  const data = await resp.json();
-  return `${data.temp}°F and ${data.conditions} in ${args.city}`;
-}
-
-async function searchWeb(args: { query: string }): Promise<string> {
-  const resp = await fetch(`https://api.duckduckgo.com/?q=${args.query}&format=json`);
-  const data = await resp.json();
-  return data.AbstractText || "No results found.";
-}
-
-// ── Agent configuration ─────────────────────────────────────────────
-// Typed inline — IDE autocomplete works, Claude Code can easily add fields.
-
-const agentConfig = {
-  type: "configure" as const,
-  instructions: "You are a helpful weather assistant. Be concise.",
-  greeting: "Hey! Ask me about the weather anywhere in the world.",
-  voice: "jess",
-  tools: [
-    {
-      name: "get_weather",
-      description: "Get current weather for a city",
-      parameters: { city: "string" },
+const tools = {
+  get_weather: {
+    description: "Get current weather for a city",
+    parameters: z.object({
+      city: z.string().describe("City name, e.g. San Francisco"),
+    }),
+    handler: async (args: { city: string }) => {
+      const resp = await fetch(`https://api.weather.com/current?city=${args.city}`);
+      const data = await resp.json();
+      return `${data.temp}°F and ${data.conditions} in ${args.city}`;
     },
-    {
-      name: "search_web",
-      description: "Search the web for information",
-      parameters: { query: "string" },
+  },
+
+  search_web: {
+    description: "Search the web for information",
+    parameters: z.object({
+      query: z.string().describe("Search query"),
+    }),
+    handler: async (args: { query: string }) => {
+      const resp = await fetch(`https://api.duckduckgo.com/?q=${args.query}&format=json`);
+      const data = await resp.json();
+      return data.AbstractText || "No results found.";
     },
-  ],
+  },
 };
 
-// ── Tool handler map ────────────────────────────────────────────────
-// Maps tool names to their implementations. Platform sends tool_call,
-// we look up the handler, run it, send back tool_result.
+// ── Convert tools to wire format ────────────────────────────────────
+// zodToJsonSchema generates the JSON Schema the LLM needs.
+// This runs once at startup — not per request.
 
-const toolHandlers: Record<string, (args: any) => Promise<string>> = {
-  get_weather: getWeather,
-  search_web: searchWeb,
-};
+function toolSchemas() {
+  return Object.entries(tools).map(([name, tool]) => ({
+    name,
+    description: tool.description,
+    parameters: zodToJsonSchema(tool.parameters),
+  }));
+}
+
+// ── Handle a tool call from the platform ────────────────────────────
+
+async function handleToolCall(name: string, args: unknown): Promise<string> {
+  const tool = tools[name as keyof typeof tools];
+  if (!tool) return `Unknown tool: ${name}`;
+
+  // Validate args against the zod schema
+  const parsed = tool.parameters.safeParse(args);
+  if (!parsed.success) return `Invalid args: ${parsed.error.message}`;
+
+  return tool.handler(parsed.data);
+}
 
 // ── Connect to platform ─────────────────────────────────────────────
 
@@ -331,17 +358,20 @@ const platform = new WebSocket(PLATFORM_URL, {
 });
 
 platform.on("open", () => {
-  platform.send(JSON.stringify(agentConfig));
+  platform.send(JSON.stringify({
+    type: "configure",
+    instructions: "You are a helpful weather assistant. Be concise.",
+    greeting: "Hey! Ask me about the weather anywhere in the world.",
+    voice: "jess",
+    tools: toolSchemas(),
+  }));
 });
 
 platform.on("message", async (raw) => {
   const msg = JSON.parse(raw.toString());
 
   if (msg.type === "tool_call") {
-    const handler = toolHandlers[msg.name];
-    const result = handler
-      ? await handler(msg.args)
-      : `Unknown tool: ${msg.name}`;
+    const result = await handleToolCall(msg.name, msg.args);
     platform.send(JSON.stringify({
       type: "tool_result",
       callId: msg.callId,
@@ -379,144 +409,173 @@ function startFrontendRelay(token: string) {
 
 ### Adding a new tool (what Claude Code would generate)
 
-To add a tool, a customer (or Claude Code) just does three things:
+To add a tool, Claude Code adds one entry to the `tools` object:
 
 ```typescript
-// 1. Write the function
-async function bookAppointment(args: { date: string; time: string }): Promise<string> {
-  // ... call your calendar API
-  return `Booked for ${args.date} at ${args.time}`;
-}
+// Just add to the tools object — schema, types, and handler in one place
+const tools = {
+  // ... existing tools ...
 
-// 2. Add to config
-agentConfig.tools.push({
-  name: "book_appointment",
-  description: "Book an appointment on the user's calendar",
-  parameters: { date: "string", time: "string" },
-});
-
-// 3. Add to handler map
-toolHandlers.book_appointment = bookAppointment;
-```
-
-No JSON Schema, no decorators, no schema/handler sync issues.
-
-### Simplified parameter format
-
-The `parameters` field uses a shorthand that the platform expands:
-
-```typescript
-// Customer writes:
-{ city: "string" }
-{ query: "string", limit: "number" }
-{ city: "string", unit: "string?" }   // ? = optional
-
-// Platform expands to JSON Schema for the LLM:
-{
-  type: "object",
-  properties: { city: { type: "string" } },
-  required: ["city"]
-}
-```
-
-If a customer needs full JSON Schema (e.g. enums, nested objects), they can
-pass it directly — the platform detects the format and uses it as-is:
-
-```typescript
-// Full schema also works when needed:
-{
-  name: "set_temperature",
-  description: "Set thermostat temperature",
-  parameters: {
-    type: "object",
-    properties: {
-      degrees: { type: "number", minimum: 60, maximum: 90 },
-      unit: { type: "string", enum: ["fahrenheit", "celsius"] },
+  book_appointment: {
+    description: "Book an appointment on the user's calendar",
+    parameters: z.object({
+      date: z.string().describe("Date in YYYY-MM-DD format"),
+      time: z.string().describe("Time in HH:MM format"),
+      service: z.string().describe("Type of appointment").optional(),
+    }),
+    handler: async (args: { date: string; time: string; service?: string }) => {
+      // call calendar API...
+      return `Booked ${args.service ?? "appointment"} for ${args.date} at ${args.time}`;
     },
-    required: ["degrees"],
   },
-}
+};
 ```
+
+One place. Schema, validation, types, handler — all together. `toolSchemas()`
+and `handleToolCall()` pick it up automatically.
+
+**Why zod?**
+- Most popular TS validation library (~25M weekly npm downloads)
+- Customers likely already use it
+- `z.string().describe()` adds parameter descriptions the LLM can see
+- `.optional()` generates correct `required` in JSON Schema
+- `.safeParse()` validates args from the platform WebSocket at runtime
+- Types are inferred — no manual `args: { city: string }` needed if you use `z.infer`
+- `zod-to-json-schema` is a single function call
 
 **Key points:**
-- Zero SDK imports. Just `ws` from npm.
-- Tools are plain async functions in a handler map — no switch statement, no class.
-- Config is a typed object literal with IDE autocomplete.
-- Adding a tool = write function + add to config + add to map.
-- The customer backend relays frontend WS frames while intercepting tool events.
+- No AssemblyAI SDK. Customer uses `ws` + `zod` (both standard ecosystem deps).
+- Tools defined in one place — no schema/handler sync issues.
+- Adding a tool = add one entry to the `tools` object.
+- Args are validated at runtime before the handler runs.
+- Frontend relay is a simple bidirectional proxy.
 
 ---
 
-## Customer Frontend (Browser, Raw TypeScript)
+## Customer Frontend (React + TypeScript)
+
+Customers will most likely use React. The frontend is purely UI + audio — no
+business logic. Here's a minimal example using standard React patterns:
+
+### Customer dependencies
+
+```json
+{
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
+```
+
+### Hooks (customer writes or Claude Code generates)
 
 ```typescript
-// customer-frontend/app.ts
-const ws = new WebSocket("ws://localhost:8080"); // connects to customer backend
+// hooks/useVoiceAgent.ts
+import { useEffect, useRef, useState, useCallback } from "react";
 
-const audioCtx = new AudioContext({ sampleRate: 24000 });
-let mediaStream: MediaStream;
+type AgentState = "connecting" | "ready" | "listening" | "thinking" | "speaking";
 
-ws.onmessage = async (event) => {
-  if (event.data instanceof Blob) {
-    // TTS audio — play it
-    const buffer = await event.data.arrayBuffer();
-    playAudio(buffer);
-    return;
-  }
-
-  const msg = JSON.parse(event.data);
-  switch (msg.type) {
-    case "ready":
-      startMic(msg.sampleRate);
-      break;
-    case "greeting":
-      showMessage("assistant", msg.text);
-      break;
-    case "transcript":
-      showTranscript(msg.text, msg.final);
-      break;
-    case "thinking":
-      showThinking();
-      break;
-    case "chat":
-      showMessage("assistant", msg.text);
-      showSteps(msg.steps);
-      break;
-    case "tts_done":
-      onTTSDone();
-      break;
-    case "error":
-      showError(msg.message);
-      break;
-  }
-};
-
-function startMic(sampleRate: number) {
-  navigator.mediaDevices.getUserMedia({ audio: { sampleRate } })
-    .then(stream => {
-      mediaStream = stream;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processor.onaudioprocess = (e) => {
-        const pcm = e.inputBuffer.getChannelData(0);
-        const int16 = float32ToInt16(pcm);
-        ws.send(int16.buffer);
-      };
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-    });
+interface Message {
+  role: "user" | "assistant";
+  text: string;
+  steps?: string[];
 }
 
-function cancelSpeech() {
-  ws.send(JSON.stringify({ type: "cancel" }));
+export function useVoiceAgent(url: string) {
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const [state, setState] = useState<AgentState>("connecting");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [transcript, setTranscript] = useState("");
+
+  useEffect(() => {
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onmessage = async (event) => {
+      if (event.data instanceof Blob) {
+        playAudio(await event.data.arrayBuffer());
+        return;
+      }
+      const msg = JSON.parse(event.data);
+      switch (msg.type) {
+        case "ready":
+          setState("ready");
+          startMic(ws, msg.sampleRate);
+          break;
+        case "greeting":
+          setMessages((m) => [...m, { role: "assistant", text: msg.text }]);
+          setState("speaking");
+          break;
+        case "transcript":
+          setTranscript(msg.text);
+          setState("listening");
+          break;
+        case "turn":
+          setMessages((m) => [...m, { role: "user", text: msg.text }]);
+          setTranscript("");
+          break;
+        case "thinking":
+          setState("thinking");
+          break;
+        case "chat":
+          setMessages((m) => [...m, { role: "assistant", text: msg.text, steps: msg.steps }]);
+          setState("speaking");
+          break;
+        case "tts_done":
+          setState("listening");
+          break;
+      }
+    };
+
+    return () => ws.close();
+  }, [url]);
+
+  const cancel = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "cancel" }));
+  }, []);
+
+  const reset = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "reset" }));
+    setMessages([]);
+  }, []);
+
+  return { state, messages, transcript, cancel, reset };
+}
+```
+
+### Usage in a component
+
+```tsx
+// App.tsx
+import { useVoiceAgent } from "./hooks/useVoiceAgent";
+
+function App() {
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent("ws://localhost:8080");
+
+  return (
+    <div>
+      <div>{state}</div>
+      {messages.map((m, i) => (
+        <div key={i} className={m.role}>{m.text}</div>
+      ))}
+      {transcript && <div className="transcript">{transcript}</div>}
+      <button onClick={cancel}>Cancel</button>
+      <button onClick={reset}>Reset</button>
+    </div>
+  );
 }
 ```
 
 **Key points:**
-- Pure browser APIs: `WebSocket`, `AudioContext`, `getUserMedia`.
-- No SDK, no framework dependency. Could be used with React, Vue, Svelte, or
-  vanilla JS.
-- Frontend connects to customer backend (not platform directly). Backend relays.
+- Standard React hooks pattern — customers can style and structure however they want.
+- No SDK dependency. Just browser APIs (`WebSocket`, `AudioContext`, `getUserMedia`).
+- The hook manages state machine transitions (connecting → ready → listening →
+  thinking → speaking) so the UI can show the right indicators.
+- Audio capture and playback are encapsulated in helper functions.
+- Could also be done with Vue composables, Svelte stores, or vanilla JS —
+  the WebSocket protocol is the same regardless of framework.
 
 ---
 
