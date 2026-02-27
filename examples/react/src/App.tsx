@@ -1,11 +1,28 @@
-// App.tsx — UI component. This is the only frontend file you edit.
-// @ts-expect-error — platform-served module
-import { useVoiceAgent } from "https://platform.example.com/react.js";
+// App.tsx — UI component. Edit this to customize the voice agent UI.
+
+import { useState, useEffect } from "react";
 import { config, tools } from "./agent";
 
+// Platform URL — change for production
+const PLATFORM = import.meta.env.VITE_PLATFORM_URL || "http://localhost:3000";
+
 export default function App() {
+  const [hook, setHook] = useState<any>(null);
+
+  useEffect(() => {
+    // Load the voice agent hook from the platform server
+    import(/* @vite-ignore */ `${PLATFORM}/react.js`).then(setHook);
+  }, []);
+
+  if (!hook) return <div style={{ padding: 20 }}>Loading voice agent...</div>;
+
+  return <VoiceUI useVoiceAgent={hook.useVoiceAgent} />;
+}
+
+function VoiceUI({ useVoiceAgent }: { useVoiceAgent: any }) {
   const { state, messages, transcript, cancel, reset } = useVoiceAgent({
     apiKey: import.meta.env.VITE_API_KEY,
+    platformUrl: PLATFORM.replace("http", "ws"),
     config,
     tools,
   });

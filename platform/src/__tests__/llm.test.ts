@@ -87,24 +87,7 @@ describe("callLLM", () => {
     ]);
   });
 
-  it("patches non-standard finish_reason values", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: { role: "assistant", content: "Done" },
-            finish_reason: "end_turn",
-          },
-        ],
-      }),
-    });
-
-    const result = await callLLM([], [], "key", "model");
-    expect(result.choices[0].finish_reason).toBe("stop");
-  });
-
-  it("maps tool_use finish_reason to tool_calls", async () => {
+  it("returns tool_calls from the response", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -128,59 +111,10 @@ describe("callLLM", () => {
     });
 
     const result = await callLLM([], [], "key", "model");
-    expect(result.choices[0].finish_reason).toBe("tool_calls");
-  });
-
-  it("maps max_tokens finish_reason to length", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: { role: "assistant", content: "truncated" },
-            finish_reason: "max_tokens",
-          },
-        ],
-      }),
-    });
-
-    const result = await callLLM([], [], "key", "model");
-    expect(result.choices[0].finish_reason).toBe("length");
-  });
-
-  it("defaults null finish_reason to stop", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: { role: "assistant", content: "done" },
-            finish_reason: null,
-          },
-        ],
-      }),
-    });
-
-    const result = await callLLM([], [], "key", "model");
-    expect(result.choices[0].finish_reason).toBe("stop");
-  });
-
-  it("fills missing id, model, usage fields", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: { role: "assistant", content: "hi" },
-            finish_reason: "stop",
-          },
-        ],
-      }),
-    });
-
-    const result = await callLLM([], [], "key", "model");
-    expect(result.id).toBeTruthy();
-    expect(result.id).toMatch(/^chatcmpl-/);
+    expect(result.choices[0].message.tool_calls).toHaveLength(1);
+    expect(result.choices[0].message.tool_calls![0].function.name).toBe(
+      "test"
+    );
   });
 
   it("sanitizes empty text content to placeholder", async () => {

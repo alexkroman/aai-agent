@@ -7,15 +7,8 @@ import {
   type ToolSchema,
 } from "./types.js";
 
-const FINISH_REASON_MAP: Record<string, string> = {
-  end_turn: "stop",
-  max_tokens: "length",
-  tool_use: "tool_calls",
-};
-
 /**
- * Sanitize outgoing request body:
- * - Replace empty text content with "..." (gateway rejects empty text blocks)
+ * Replace empty text content with "..." (gateway rejects empty text blocks).
  */
 function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((msg) => {
@@ -24,36 +17,6 @@ function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
     }
     return msg;
   });
-}
-
-/**
- * Patch response to be OpenAI-compatible:
- * - Map non-standard finish_reason values
- * - Fill missing id/model/usage fields
- */
-function patchResponse(data: Record<string, unknown>): LLMResponse {
-  if (!data.id) data.id = `chatcmpl-${crypto.randomUUID().slice(0, 12)}`;
-  if (!data.object) data.object = "chat.completion";
-  if (!data.model) data.model = "unknown";
-
-  const usage = (data.usage ?? {}) as Record<string, number>;
-  usage.prompt_tokens ??= 0;
-  usage.completion_tokens ??= 0;
-  usage.total_tokens ??= 0;
-  data.usage = usage;
-
-  const choices = (data.choices ?? []) as Record<string, unknown>[];
-  for (const choice of choices) {
-    choice.index ??= 0;
-    const fr = choice.finish_reason as string | null;
-    if (fr && fr in FINISH_REASON_MAP) {
-      choice.finish_reason = FINISH_REASON_MAP[fr];
-    } else if (fr === null || fr === undefined) {
-      choice.finish_reason = "stop";
-    }
-  }
-
-  return data as unknown as LLMResponse;
 }
 
 /**
@@ -97,6 +60,5 @@ export async function callLLM(
     throw new Error(`LLM request failed: ${resp.status} ${text}`);
   }
 
-  const data = (await resp.json()) as Record<string, unknown>;
-  return patchResponse(data);
+  return (await resp.json()) as LLMResponse;
 }

@@ -192,7 +192,7 @@ export class VoiceSession {
    * Handle cancel command (barge-in).
    */
   async onCancel(): Promise<void> {
-    await this.cancelInflight();
+    this.cancelInflight();
     this.stt?.clear();
     this.sendJson({ type: "cancelled" });
   }
@@ -201,7 +201,7 @@ export class VoiceSession {
    * Handle reset command.
    */
   async onReset(): Promise<void> {
-    await this.cancelInflight();
+    this.cancelInflight();
     // Keep system message, clear conversation
     this.messages = this.messages.slice(0, 1);
     this.sendJson({ type: "reset" });
@@ -214,14 +214,14 @@ export class VoiceSession {
     if (this.stopped) return;
     this.stopped = true;
 
-    await this.cancelInflight();
+    this.cancelInflight();
     this.stt?.close();
     this.sandbox.dispose();
   }
 
   // ── Private methods ────────────────────────────────────────────────
 
-  private async cancelInflight(): Promise<void> {
+  private cancelInflight(): void {
     this.chatAbort?.abort();
     this.chatAbort = null;
     this.ttsAbort?.abort();
@@ -233,7 +233,7 @@ export class VoiceSession {
    */
   private async handleTurn(text: string): Promise<void> {
     // Cancel any in-flight work
-    await this.cancelInflight();
+    this.cancelInflight();
 
     this.sendJson({ type: "turn", text });
     this.sendJson({ type: "thinking" });

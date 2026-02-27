@@ -1,5 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Sandbox } from "../sandbox.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("Sandbox", () => {
   it("executes a simple handler returning a string", async () => {
@@ -100,10 +104,14 @@ describe("Sandbox", () => {
     sandbox.dispose();
   });
 
-  it("injects ctx.fetch", async () => {
-    // Mock global fetch for this test
+  it("injects ctx.fetch that proxies through the host", async () => {
+    // Mock global fetch — the sandbox's host callback calls this
     const mockFetch = vi.fn().mockResolvedValue({
-      json: async () => ({ temp: 72 }),
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => JSON.stringify({ temp: 72 }),
     });
     vi.stubGlobal("fetch", mockFetch);
 
@@ -112,7 +120,7 @@ describe("Sandbox", () => {
         {
           name: "call_api",
           handler:
-            'async (args, ctx) => { const resp = await ctx.fetch("https://api.example.com/data"); return await resp.json(); }',
+            'async (args, ctx) => { const resp = ctx.fetch("https://api.example.com/data"); return resp.json(); }',
         },
       ],
       {}
@@ -127,7 +135,32 @@ describe("Sandbox", () => {
     );
 
     sandbox.dispose();
-    vi.restoreAllMocks();
+  });
+
+  it("ctx.fetch works with await (async handler)", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      text: async () => JSON.stringify({ name: "Alice" }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const sandbox = new Sandbox(
+      [
+        {
+          name: "lookup",
+          handler:
+            'async (args, ctx) => { const resp = await ctx.fetch("https://api.example.com/users/" + args.id); const data = await resp.json(); return "Found: " + data.name; }',
+        },
+      ],
+      {}
+    );
+
+    const result = await sandbox.execute("lookup", { id: "42" });
+    expect(result).toBe("Found: Alice");
+    sandbox.dispose();
   });
 
   it("can execute multiple tools in the same sandbox", async () => {
@@ -190,5 +223,84 @@ describe("Sandbox", () => {
     const sandbox = new Sandbox([], {});
     sandbox.dispose();
     sandbox.dispose(); // Should not throw
+  });
+
+  // ── Isolation tests ──────────────────────────────────────────────────
+
+  it("handler cannot access Node.js globals", async () => {
+    const sandbox = new Sandbox(
+      [
+        {
+          name: "check_process",
+          handler: "async () => typeof process",
+        },
+        {
+          name: "check_require",
+          handler: "async () => typeof require",
+        },
+        {
+          name: "check_settimeout",
+          handler: "async () => typeof setTimeout",
+        },
+      ],
+      {}
+    );
+
+    expect(await sandbox.execute("check_process", {})).toBe("undefined");
+    expect(await sandbox.execute("check_require", {})).toBe("undefined");
+    expect(await sandbox.execute("check_settimeout", {})).toBe("undefined");
+    sandbox.dispose();
+  });
+
+  it("handler cannot access filesystem or network directly", async () => {
+    const sandbox = new Sandbox(
+      [
+        {
+          name: "try_fs",
+          handler:
+            'async () => { try { const fs = require("fs"); return "has fs"; } catch { return "no fs"; } }',
+        },
+        {
+          name: "try_fetch_global",
+          handler:
+            'async () => { try { return typeof globalThis.fetch; } catch { return "no fetch"; } }',
+        },
+      ],
+      {}
+    );
+
+    // require is undefined in the isolate, so calling it throws and the
+    // handler's catch block returns "no fs"
+    const fsResult = await sandbox.execute("try_fs", {});
+    expect(fsResult).toBe("no fs");
+
+    // fetch is not available as a global in the isolate
+    const fetchResult = await sandbox.execute("try_fetch_global", {});
+    expect(fetchResult).toBe("undefined");
+
+    sandbox.dispose();
+  });
+
+  it("each execution gets a fresh context (no shared state)", async () => {
+    const sandbox = new Sandbox(
+      [
+        {
+          name: "set_global",
+          handler:
+            'async () => { globalThis.__test = "leaked"; return "set"; }',
+        },
+        {
+          name: "read_global",
+          handler:
+            'async () => typeof globalThis.__test === "undefined" ? "clean" : "leaked"',
+        },
+      ],
+      {}
+    );
+
+    await sandbox.execute("set_global", {});
+    const result = await sandbox.execute("read_global", {});
+    expect(result).toBe("clean");
+    sandbox.dispose();
   });
 });

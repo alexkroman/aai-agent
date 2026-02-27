@@ -1,6 +1,16 @@
 // agent.ts — Agent config and tools. This is the only file you edit.
 
-type Ctx = { secrets: Record<string, string>; fetch: typeof fetch };
+type Ctx = {
+  secrets: Record<string, string>;
+  fetch: (url: string, init?: RequestInit) => {
+    ok: boolean;
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    text: () => string;
+    json: () => unknown;
+  };
+};
 
 export const config = {
   instructions: "You are a helpful order tracking assistant. Be concise.",
@@ -13,11 +23,11 @@ export const tools = {
     description: "Look up order status by order ID",
     parameters: { order_id: { type: "string", description: "Order ID" } },
     handler: async (args: { order_id: string }, ctx: Ctx) => {
-      const resp = await ctx.fetch(
+      const resp = ctx.fetch(
         `https://api.example.com/orders/${args.order_id}`,
         { headers: { Authorization: `Bearer ${ctx.secrets.ORDERS_API_KEY}` } }
       );
-      return await resp.json();
+      return resp.json();
     },
   },
   schedule_callback: {
@@ -27,7 +37,7 @@ export const tools = {
       time: { type: "string?", description: "Preferred time, e.g. '2pm'" },
     },
     handler: async (args: { phone: string; time?: string }, ctx: Ctx) => {
-      const resp = await ctx.fetch("https://api.example.com/callbacks", {
+      const resp = ctx.fetch("https://api.example.com/callbacks", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.secrets.ORDERS_API_KEY}`,
@@ -35,7 +45,7 @@ export const tools = {
         },
         body: JSON.stringify({ phone: args.phone, time: args.time ?? "next available" }),
       });
-      return await resp.json();
+      return resp.json();
     },
   },
 };

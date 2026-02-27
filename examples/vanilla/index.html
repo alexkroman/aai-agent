@@ -8,10 +8,13 @@
 <body>
   <div id="app"></div>
   <script type="module">
-    import { VoiceAgent } from "https://platform.example.com/client.js";
+    // In production, replace with your platform URL or CDN
+    const PLATFORM = "http://localhost:3000";
+    const { VoiceAgent } = await import(`${PLATFORM}/client.js`);
 
     VoiceAgent.start({
       element: "#app",
+      platformUrl: PLATFORM.replace("http", "ws"),
       apiKey: "pk_your_publishable_key",
       instructions: "You are a helpful order tracking assistant. Be concise.",
       greeting: "Hi! I can help you check your order status.",
@@ -21,11 +24,11 @@
           description: "Look up order status by order ID",
           parameters: { order_id: { type: "string", description: "Order ID" } },
           handler: async (args, ctx) => {
-            const resp = await ctx.fetch(
+            const resp = ctx.fetch(
               `https://api.example.com/orders/${args.order_id}`,
               { headers: { Authorization: `Bearer ${ctx.secrets.ORDERS_API_KEY}` } }
             );
-            return await resp.json();
+            return resp.json();
           },
         },
         schedule_callback: {
@@ -35,7 +38,7 @@
             time: { type: "string?", description: "Preferred time, e.g. '2pm'" },
           },
           handler: async (args, ctx) => {
-            const resp = await ctx.fetch("https://api.example.com/callbacks", {
+            const resp = ctx.fetch("https://api.example.com/callbacks", {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${ctx.secrets.ORDERS_API_KEY}`,
@@ -43,7 +46,7 @@
               },
               body: JSON.stringify({ phone: args.phone, time: args.time ?? "next available" }),
             });
-            return await resp.json();
+            return resp.json();
           },
         },
       },

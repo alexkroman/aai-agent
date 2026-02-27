@@ -1,16 +1,13 @@
 // sandbox.ts — V8 isolate manager for tool handler execution.
 //
 // Runs customer-provided tool handler functions in an isolated V8 context
-// with injected ctx.secrets and ctx.fetch.
+// with injected ctx.secrets and ctx.fetch. Each execution gets a fresh
+// context so tool calls cannot leak state to each other.
 
 import ivm from "isolated-vm";
 
 const HANDLER_TIMEOUT_MS = 30_000;
 const ISOLATE_MEMORY_LIMIT_MB = 128;
-
-export interface SandboxContext {
-  secrets: Record<string, string>;
-}
 
 interface CompiledHandler {
   name: string;
@@ -21,8 +18,9 @@ interface CompiledHandler {
 /**
  * A sandbox that runs customer tool handlers in an isolated V8 context.
  *
- * Each session gets its own Sandbox instance. Handlers are compiled once
- * on creation and executed per tool call.
+ * Each session gets its own Sandbox instance (one V8 isolate). Each
+ * execute() call creates a fresh context within that isolate for full
+ * isolation between tool calls.
  */
 export class Sandbox {
   private isolate: ivm.Isolate;
@@ -48,11 +46,11 @@ export class Sandbox {
    * Execute a tool handler with the given arguments.
    *
    * The handler runs in an isolated V8 context with access to:
-   * - ctx.secrets: customer secrets from the platform store
-   * - ctx.fetch: proxied fetch function (runs in Node.js, results passed back)
+   * - ctx.secrets: customer secrets (copied per execution, mutations don't leak)
+   * - ctx.fetch: proxied fetch (runs in Node.js host, result serialized back)
    *
-   * Since isolated-vm doesn't support async natively, we use a synchronous
-   * execution model with callback-based fetch that resolves in the host.
+   * ctx.fetch returns a simplified Response-like object:
+   *   { ok, status, statusText, headers, text(), json() }
    */
   async execute(
     toolName: string,
@@ -65,29 +63,85 @@ export class Sandbox {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HANDLER_TIMEOUT_MS);
+    let context: ivm.Context | null = null;
 
     try {
-      // For now, we execute the handler in the main Node.js process
-      // but in a controlled way. The full isolated-vm implementation
-      // would compile and run in a separate V8 isolate.
-      //
-      // This approach gives us the API shape while we develop the full
-      // sandbox. The handler source is eval'd with ctx injected.
-      const ctx: SandboxContext & { fetch: typeof fetch } = {
-        secrets: { ...this.secrets },
-        fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-          return fetch(input, {
+      context = await this.isolate.createContext();
+
+      // Inject a host-side fetch function as a Reference on the context global.
+      // The isolate calls it via applySyncPromise which blocks the isolate
+      // thread while the host performs the async HTTP request.
+      const fetchRef = new ivm.Reference(
+        async (url: string, initJson: string): Promise<string> => {
+          const init = initJson ? JSON.parse(initJson) : {};
+          const resp = await fetch(url, {
             ...init,
             signal: controller.signal,
           });
-        },
-      };
+          const body = await resp.text();
+          return JSON.stringify({
+            ok: resp.ok,
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: Object.fromEntries(resp.headers.entries()),
+            body,
+          });
+        }
+      );
+      context.global.setSync("__fetchRef", fetchRef);
 
-      // Reconstruct the handler function from source and call it
-      // eslint-disable-next-line no-new-func
-      const fn = new Function("return " + handler.source)();
-      const result = await fn(args, ctx);
-      return typeof result === "string" ? result : JSON.stringify(result);
+      // The evalClosure code:
+      // 1. Captures the fetch Reference and removes it from globals
+      // 2. Builds a ctx object with secrets and fetch
+      // 3. Executes the handler with args and ctx
+      // 4. Stringifies non-string results
+      //
+      // $0 = secrets (ExternalCopy), $1 = args (ExternalCopy)
+      // Handler source is embedded directly in the code string.
+      const code = `
+        return (async () => {
+          const __fr = globalThis.__fetchRef;
+          delete globalThis.__fetchRef;
+
+          const ctx = {
+            secrets: $0,
+            fetch: (url, init) => {
+              const raw = __fr.applySyncPromise(
+                undefined,
+                [String(url), init ? JSON.stringify(init) : '']
+              );
+              const r = JSON.parse(raw);
+              return {
+                ok: r.ok,
+                status: r.status,
+                statusText: r.statusText,
+                headers: r.headers,
+                text: () => r.body,
+                json: () => JSON.parse(r.body),
+              };
+            },
+          };
+
+          const fn = (${handler.source});
+          const result = await fn($1, ctx);
+          if (result === undefined || result === null) return 'null';
+          return typeof result === 'string' ? result : JSON.stringify(result);
+        })();
+      `;
+
+      const result = await context.evalClosure(
+        code,
+        [
+          new ivm.ExternalCopy({ ...this.secrets }).copyInto(),
+          new ivm.ExternalCopy(args).copyInto(),
+        ],
+        {
+          timeout: HANDLER_TIMEOUT_MS,
+          result: { promise: true, copy: true },
+        }
+      );
+
+      return (result as string) ?? "null";
     } catch (err) {
       if (controller.signal.aborted) {
         return `Error: Tool "${toolName}" timed out after ${HANDLER_TIMEOUT_MS}ms`;
@@ -95,6 +149,11 @@ export class Sandbox {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       clearTimeout(timeout);
+      try {
+        context?.release();
+      } catch {
+        // Already released
+      }
     }
   }
 
