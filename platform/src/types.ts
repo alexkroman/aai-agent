@@ -38,8 +38,17 @@ export interface TTSConfig {
   sampleRate: number;
 }
 
-export const DEFAULT_TTS_WSS_URL =
-  "wss://model-q844y7pw.api.baseten.co/environments/production/websocket";
+export const DEFAULT_TTS_CONFIG: TTSConfig = {
+  wssUrl: "wss://model-q844y7pw.api.baseten.co/environments/production/websocket",
+  apiKey: "",
+  voice: "jess",
+  maxTokens: 2000,
+  bufferSize: 105,
+  repetitionPenalty: 1.2,
+  temperature: 0.6,
+  topP: 0.9,
+  sampleRate: 24000,
+};
 
 // ── LLM Configuration ──────────────────────────────────────────────
 

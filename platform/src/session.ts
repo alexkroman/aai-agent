@@ -12,7 +12,7 @@ import {
   DEFAULT_INSTRUCTIONS,
   DEFAULT_MODEL,
   DEFAULT_STT_CONFIG,
-  DEFAULT_TTS_WSS_URL,
+  DEFAULT_TTS_CONFIG,
   VOICE_RULES,
   type AgentConfig,
   type ChatMessage,
@@ -32,20 +32,15 @@ interface SessionDeps {
 }
 
 function createSessionDeps(): SessionDeps {
+  const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY ?? "";
   return {
     apiKey: process.env.ASSEMBLYAI_API_KEY ?? "",
-    ttsApiKey: process.env.ASSEMBLYAI_TTS_API_KEY ?? "",
+    ttsApiKey,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
-      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_WSS_URL,
-      apiKey: process.env.ASSEMBLYAI_TTS_API_KEY ?? "",
-      voice: "jess",
-      maxTokens: 2000,
-      bufferSize: 105,
-      repetitionPenalty: 1.2,
-      temperature: 0.6,
-      topP: 0.9,
-      sampleRate: 24000,
+      ...DEFAULT_TTS_CONFIG,
+      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
+      apiKey: ttsApiKey,
     },
     model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
     customerSecrets: {},
