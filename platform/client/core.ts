@@ -95,7 +95,7 @@ export async function startMicCapture(
   };
 }
 
-// ── Audio playback (PCM16 buffer queue) ─────────────────────────
+// ── Audio playback (PCM16 via AudioWorklet) ─────────────────────
 
 export interface AudioPlayer {
   enqueue(pcm16Buffer: ArrayBuffer): void;
@@ -103,36 +103,63 @@ export interface AudioPlayer {
   close(): void;
 }
 
-export function createAudioPlayer(sampleRate: number): AudioPlayer {
-  let ctx = new AudioContext({ sampleRate });
-  let nextTime = 0;
+export async function createAudioPlayer(
+  sampleRate: number
+): Promise<AudioPlayer> {
+  const ctx = new AudioContext({ sampleRate });
+
+  const workletCode = `
+    class PCM16PlaybackProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this._buf = new Float32Array(0);
+        this.port.onmessage = (e) => {
+          if (e.data === "flush") {
+            this._buf = new Float32Array(0);
+            return;
+          }
+          // Append new samples to buffer
+          const incoming = e.data;
+          const merged = new Float32Array(this._buf.length + incoming.length);
+          merged.set(this._buf);
+          merged.set(incoming, this._buf.length);
+          this._buf = merged;
+        };
+      }
+      process(_inputs, outputs) {
+        const output = outputs[0][0];
+        if (!output) return true;
+        const n = Math.min(this._buf.length, output.length);
+        if (n > 0) {
+          output.set(this._buf.subarray(0, n));
+          this._buf = this._buf.subarray(n);
+        }
+        // Silence for any remaining samples
+        for (let i = n; i < output.length; i++) output[i] = 0;
+        return true;
+      }
+    }
+    registerProcessor("pcm16-playback", PCM16PlaybackProcessor);
+  `;
+
+  const blob = new Blob([workletCode], { type: "application/javascript" });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+
+  const worklet = new AudioWorkletNode(ctx, "pcm16-playback");
+  worklet.connect(ctx.destination);
 
   return {
     enqueue(pcm16Buffer: ArrayBuffer) {
       if (ctx.state === "closed") return;
-
       const int16 = new Int16Array(pcm16Buffer);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
         float32[i] = int16[i] / 32768;
       }
-
-      const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate);
-      audioBuffer.getChannelData(0).set(float32);
-
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-
-      const now = ctx.currentTime;
-      const startTime = Math.max(now, nextTime);
-      source.start(startTime);
-      nextTime = startTime + audioBuffer.duration;
+      worklet.port.postMessage(float32, [float32.buffer]);
     },
     flush() {
-      ctx.close().catch(() => {});
-      ctx = new AudioContext({ sampleRate });
-      nextTime = 0;
+      worklet.port.postMessage("flush");
     },
     close() {
       ctx.close().catch(() => {});
@@ -201,11 +228,14 @@ export class VoiceSession {
       const msg = JSON.parse(event.data as string);
       switch (msg.type) {
         case "ready": {
-          this.player = createAudioPlayer(msg.ttsSampleRate ?? 24000);
-          startMicCapture(ws, msg.sampleRate ?? 16000).then((cleanup) => {
-            this.micCleanup = cleanup;
+          Promise.all([
+            createAudioPlayer(msg.ttsSampleRate ?? 24000),
+            startMicCapture(ws, msg.sampleRate ?? 16000),
+          ]).then(([player, micCleanup]) => {
+            this.player = player;
+            this.micCleanup = micCleanup;
+            this.callbacks.onStateChange("listening");
           });
-          this.callbacks.onStateChange("listening");
           break;
         }
         case "greeting":
