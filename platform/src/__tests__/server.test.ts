@@ -6,10 +6,10 @@ import { tmpdir } from "os";
 import { randomBytes } from "crypto";
 
 import { startServer, loadSecretsFile, type ServerHandle, type ServerOptions } from "../server.js";
-import type { SessionOverrides } from "../session.js";
+import type { SessionDeps } from "../session.js";
 
-/** Create mock overrides that prevent real STT/TTS/LLM API calls. */
-function mockOverrides(): SessionOverrides {
+/** Create mock session deps that prevent real STT/TTS/LLM API calls. */
+function mockSessionDeps(): Partial<SessionDeps> {
   return {
     connectStt: vi.fn().mockResolvedValue({
       send: vi.fn(),
@@ -26,6 +26,15 @@ function mockOverrides(): SessionOverrides {
         },
       ],
     }),
+    ttsClient: {
+      synthesize: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(),
+    } as any,
+    sandbox: {
+      execute: vi.fn().mockResolvedValue("mock result"),
+      dispose: vi.fn(),
+    } as any,
+    normalizeVoiceText: vi.fn((text: string) => text) as any,
   };
 }
 
@@ -33,7 +42,7 @@ function mockOverrides(): SessionOverrides {
 function startTestServer(opts: Partial<ServerOptions> = {}): Promise<ServerHandle> {
   return startServer({
     port: 0,
-    sessionOverrides: mockOverrides(),
+    sessionDepsOverride: mockSessionDeps(),
     ...opts,
   });
 }
@@ -199,7 +208,6 @@ describe("server", () => {
         }
       });
 
-      // Send configure without authenticate first
       ws.send(JSON.stringify({ type: "configure" }));
 
       await vi.waitFor(() => {
@@ -272,7 +280,6 @@ describe("server", () => {
       });
 
       ws.send(JSON.stringify({ type: "authenticate", apiKey: "pk_test" }));
-      // Wait a tick for auth processing
       await new Promise((r) => setTimeout(r, 50));
       ws.send(JSON.stringify({ type: "not_configure" }));
 
@@ -317,7 +324,6 @@ describe("server", () => {
 
       const messages = await authAndConfigure(ws);
 
-      // Cancel
       ws.send(JSON.stringify({ type: "cancel" }));
 
       await vi.waitFor(
@@ -327,7 +333,6 @@ describe("server", () => {
         { timeout: 5000 }
       );
 
-      // Reset
       ws.send(JSON.stringify({ type: "reset" }));
 
       await vi.waitFor(
@@ -479,7 +484,6 @@ describe("server", () => {
 
       await new Promise((r) => setTimeout(r, 100));
 
-      // Connection should still be alive
       const messages = await authAndConfigure(ws);
       expect(messages.some((m) => m.type === "ready")).toBe(true);
 
@@ -551,10 +555,10 @@ describe("server", () => {
     });
 
     it("relays binary audio to session after configure", async () => {
-      const overrides = mockOverrides();
+      const overrides = mockSessionDeps();
       server = await startServer({
         port: 0,
-        sessionOverrides: overrides,
+        sessionDepsOverride: overrides,
       });
 
       const ws = new WebSocket(`ws://localhost:${server.port}/session`);

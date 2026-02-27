@@ -1,7 +1,10 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: {},
+  test: {
+    include: ["src/__tests__/**/*.test.ts"],
+    exclude: ["dist/**", "node_modules/**"],
+  },
   // Treat .worklet.js files as raw text (same as esbuild text loader)
   assetsInclude: [],
   plugins: [

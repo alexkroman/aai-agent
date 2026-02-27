@@ -19,12 +19,12 @@ export interface PlatformConfig {
 }
 
 /**
- * Load platform configuration from environment variables.
+ * Load platform configuration from an explicit env object.
  * Falls back to defaults for optional values.
  */
-export function loadPlatformConfig(): PlatformConfig {
-  const apiKey = process.env.ASSEMBLYAI_API_KEY;
-  const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY;
+export function loadPlatformConfig(env: Record<string, string | undefined>): PlatformConfig {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  const ttsApiKey = env.ASSEMBLYAI_TTS_API_KEY;
 
   if (!apiKey) {
     throw new Error("ASSEMBLYAI_API_KEY environment variable is required");
@@ -39,10 +39,10 @@ export function loadPlatformConfig(): PlatformConfig {
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
       ...DEFAULT_TTS_CONFIG,
-      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
+      wssUrl: env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
       apiKey: ttsApiKey,
     },
-    model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
-    llmGatewayBase: process.env.LLM_GATEWAY_BASE ?? "https://llm-gateway.assemblyai.com/v1",
+    model: env.LLM_MODEL ?? DEFAULT_MODEL,
+    llmGatewayBase: env.LLM_GATEWAY_BASE ?? "https://llm-gateway.assemblyai.com/v1",
   };
 }

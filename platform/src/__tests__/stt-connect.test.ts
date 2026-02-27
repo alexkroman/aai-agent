@@ -260,7 +260,7 @@ describe("connectStt", () => {
     const events = makeEvents();
     const handle = await connectStt("key", sttConfig, events);
 
-    lastWs().readyState = 3; // CLOSED
+    lastWs().readyState = 3;
     handle.send(Buffer.from([1]));
 
     expect(lastWs().sent).toEqual([]);
@@ -273,5 +273,10 @@ describe("connectStt", () => {
     lastWs().emit("message", JSON.stringify({ type: "Transcript" }));
 
     expect(events.transcripts).toEqual([{ text: "", isFinal: false }]);
+  });
+
+  it("uses 10s connection timeout constant", async () => {
+    const { TIMEOUTS } = await import("../constants.js");
+    expect(TIMEOUTS.STT_CONNECTION).toBe(10_000);
   });
 });

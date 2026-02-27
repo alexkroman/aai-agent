@@ -34,6 +34,15 @@ vi.mock("ws", () => {
       this.readyState = 3;
       this.emit("close");
     }
+
+    removeAllListeners() {
+      super.removeAllListeners();
+      return this;
+    }
+
+    on(event: string, fn: (...args: any[]) => void) {
+      return super.on(event, fn);
+    }
   }
 
   return { default: MockWS };
@@ -76,7 +85,6 @@ describe("TtsClient", () => {
     await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
 
     const p = client.synthesize("hello", vi.fn());
-    // Uses the warm connection
     expect(instances.length).toBe(1);
     const ws = instances[0];
     await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
@@ -206,7 +214,6 @@ describe("TtsClient", () => {
     const ws = instances[0];
     await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
 
-    // First is config JSON, then words, then __END__
     const words = ws.sent.slice(1, -1);
     expect(words).toEqual(["hello", "beautiful", "world"]);
 
@@ -220,11 +227,9 @@ describe("TtsClient", () => {
     const client = new TtsClient(config);
     expect(instances.length).toBe(1);
 
-    // Wait for the warm connection to open
     await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
 
     const p = client.synthesize("hello", vi.fn());
-    // Should NOT have created a second connection yet
     expect(instances.length).toBe(1);
 
     const ws = instances[0];
@@ -244,11 +249,9 @@ describe("TtsClient", () => {
     const ws = instances[0];
     await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
 
-    // Server closes the connection after synthesis
     ws.emit("close");
     await p;
 
-    // Should have pre-warmed a new connection
     expect(instances.length).toBe(2);
 
     client.close();
@@ -258,11 +261,9 @@ describe("TtsClient", () => {
     const client = new TtsClient(config);
     expect(instances.length).toBe(1);
 
-    // Simulate warm connection error
     instances[0].emit("error", new Error("warm failed"));
 
     const p = client.synthesize("hello", vi.fn());
-    // Should have created a fresh connection (instance 2)
     expect(instances.length).toBe(2);
 
     const ws = instances[1];
@@ -277,19 +278,16 @@ describe("TtsClient", () => {
     const client = new TtsClient(config);
     await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
 
-    // First synthesis
     const p1 = client.synthesize("first", vi.fn());
     await vi.waitFor(() => expect(instances[0].sent.length).toBeGreaterThan(0));
     instances[0].emit("close");
     await p1;
 
-    // Pre-warmed connection should be ready (instance 1)
     expect(instances.length).toBe(2);
     await vi.waitFor(() => expect(instances[1].readyState).toBe(1));
 
-    // Second synthesis uses the pre-warmed connection
     const p2 = client.synthesize("second", vi.fn());
-    expect(instances.length).toBe(2); // No new connection created
+    expect(instances.length).toBe(2);
     await vi.waitFor(() => expect(instances[1].sent.length).toBeGreaterThan(0));
     instances[1].emit("close");
     await p2;
@@ -303,8 +301,7 @@ describe("TtsClient", () => {
 
     client.close();
 
-    // Warm connection should be closed
-    expect(instances[0].readyState).toBe(3); // closed
+    expect(instances[0].readyState).toBe(3);
   });
 
   it("does not pre-warm if no API key", () => {
@@ -320,28 +317,23 @@ describe("TtsClient", () => {
     const firstWarm = instances[0];
     await vi.waitFor(() => expect(firstWarm.readyState).toBe(1));
 
-    // First synthesis — takes the warm connection, triggers warmUp on close
     const p = client.synthesize("hello", vi.fn());
     await vi.waitFor(() => expect(firstWarm.sent.length).toBeGreaterThan(0));
     firstWarm.emit("close");
     await p;
 
-    // Second warm connection created
     expect(instances.length).toBe(2);
     const secondWarm = instances[1];
 
-    // Now synthesize again — takes second warm, closes it on completion, creates third
     await vi.waitFor(() => expect(secondWarm.readyState).toBe(1));
     const p2 = client.synthesize("world", vi.fn());
     await vi.waitFor(() => expect(secondWarm.sent.length).toBeGreaterThan(0));
     secondWarm.emit("close");
     await p2;
 
-    // Third warm connection
     expect(instances.length).toBe(3);
 
     client.close();
-    // Third warm should be closed
     expect(instances[2].readyState).toBe(3);
   });
 });

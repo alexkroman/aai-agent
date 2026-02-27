@@ -5,14 +5,20 @@ import { readFile } from "fs/promises";
 import { join, extname } from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
+import { loadPlatformConfig } from "./config.js";
 import { MSG, PATHS } from "./constants.js";
 import { ERR } from "./errors.js";
+import { callLLM } from "./llm.js";
+import { Sandbox } from "./sandbox.js";
+import { connectStt } from "./stt.js";
+import { TtsClient } from "./tts.js";
 import {
   AuthenticateMessageSchema,
   ConfigureMessageSchema,
   ControlMessageSchema,
 } from "./types.js";
-import { VoiceSession, type SessionOverrides } from "./session.js";
+import { VoiceSession, type SessionDeps } from "./session.js";
+import { normalizeVoiceText } from "./voice-cleaner.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
@@ -28,8 +34,8 @@ export interface ServerOptions {
   port: number;
   clientDir?: string;
   secretsFile?: string;
-  /** Injectable overrides passed to every VoiceSession (for testing). */
-  sessionOverrides?: SessionOverrides;
+  /** Injectable overrides for session deps (for testing). */
+  sessionDepsOverride?: Partial<SessionDeps>;
 }
 
 export interface ServerHandle {
@@ -57,6 +63,9 @@ export async function loadSecretsFile(path: string): Promise<SecretsStore> {
  */
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
   const sessions = new Map<string, VoiceSession>();
+
+  // Load platform config once (composition root)
+  const platformConfig = loadPlatformConfig(process.env);
 
   // Load per-customer secrets
   const secrets: SecretsStore = options.secretsFile
@@ -241,18 +250,26 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
 
         const cfg = parsed.data;
         const customerSecrets = secrets[apiKey] ?? {};
-        session = new VoiceSession(
-          sessionId,
-          ws,
-          {
-            instructions: cfg.instructions ?? "",
-            greeting: cfg.greeting ?? "",
-            voice: cfg.voice ?? "jess",
-            tools: cfg.tools ?? [],
-          },
-          customerSecrets,
-          options.sessionOverrides ?? {}
-        );
+        const agentConfig = {
+          instructions: cfg.instructions ?? "",
+          greeting: cfg.greeting ?? "",
+          voice: cfg.voice ?? "jess",
+          tools: cfg.tools ?? [],
+        };
+
+        // Build SessionDeps — the composition root
+        const deps: SessionDeps = {
+          config: { ...platformConfig, ttsConfig: { ...platformConfig.ttsConfig } },
+          connectStt: options.sessionDepsOverride?.connectStt ?? connectStt,
+          callLLM: options.sessionDepsOverride?.callLLM ?? callLLM,
+          ttsClient:
+            options.sessionDepsOverride?.ttsClient ?? new TtsClient(platformConfig.ttsConfig),
+          sandbox:
+            options.sessionDepsOverride?.sandbox ?? new Sandbox(agentConfig.tools, customerSecrets),
+          normalizeVoiceText: options.sessionDepsOverride?.normalizeVoiceText ?? normalizeVoiceText,
+        };
+
+        session = new VoiceSession(sessionId, ws, agentConfig, deps);
         sessions.set(sessionId, session);
         configured = true;
 
