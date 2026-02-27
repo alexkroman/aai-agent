@@ -109,9 +109,7 @@ export function useVoiceAgent({
   const {
     connect: sessionConnect,
     startCapture,
-    initPlayer,
     disconnect: sessionDisconnect,
-    generationRef,
   } = useSessionSocket();
 
   // ── message helpers ────────────────────────────────────────────────
@@ -168,25 +166,16 @@ export function useVoiceAgent({
 
     let thinkingId: MessageId | null = null;
 
-    // Capture the generation at connect time so async init steps
-    // (initPlayer, startCapture) can detect if disconnect was called.
-    const gen = generationRef.current;
-
     const handlers: SessionHandlers = {
-      onReady: async (sampleRate, ttsSampleRate) => {
+      onReady: async (sampleRate) => {
         if (phaseRef.current !== "connecting") return;
         try {
-          await initPlayer(ttsSampleRate, gen);
-          await startCapture(sampleRate, gen);
-          // Check generation — if disconnect ran during the awaits above,
-          // the generation will have changed and we should bail out.
-          if (gen !== generationRef.current) return;
+          await startCapture(sampleRate);
           if (phaseRef.current !== "connecting") return;
           setPhase("active", "listening");
           onConnectRef.current?.();
         } catch (err) {
-          // If session was torn down, don't report errors
-          if (gen !== generationRef.current) return;
+          if (phaseRef.current === "idle") return;
 
           const isMicDenied =
             err instanceof DOMException &&
@@ -251,7 +240,6 @@ export function useVoiceAgent({
         }
       },
       onClose: () => {
-        // Server closed the WebSocket — reset to idle
         if (phaseRef.current !== "idle") {
           setPhase("idle", "listening");
           onDisconnectRef.current?.();
@@ -276,8 +264,6 @@ export function useVoiceAgent({
     baseUrl,
     sessionConnect,
     startCapture,
-    initPlayer,
-    generationRef,
     stopRecording,
     addMessage,
     removeMessage,

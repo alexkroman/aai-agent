@@ -139,7 +139,6 @@ def start(
     Production mode is also auto-detected when FLY_APP_NAME, RAILWAY_ENVIRONMENT,
     or PORT environment variables are set.
     """
-    import logging
     import os
     import sys
 
@@ -162,13 +161,6 @@ def start(
         reload = not is_prod
 
     log_level = "debug" if debug else "info"
-
-    # Configure the aai_agent logger so SDK logs (session connect/disconnect,
-    # chat errors, TTS relay, etc.) are visible in the terminal.
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format="%(levelname)s:     %(name)s - %(message)s",
-    )
 
     # Ensure the current directory is importable so uvicorn can find server.py
     cwd = str(Path.cwd())

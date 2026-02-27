@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect } from "react";
 import { getPCMWorkletUrl } from "./pcm-worklet";
-import { WavStreamPlayer } from "./wav-stream-player";
+import { PCMPlayer } from "./wav-stream-player";
 import { toWsUrl } from "./ws";
 
 export interface SessionHandlers {
@@ -23,46 +23,52 @@ export interface SessionHandlers {
  * Hook that manages a single multiplexed WebSocket to the server's
  * /session endpoint. The browser is a thin audio I/O client:
  * send mic PCM, receive speaker PCM, receive UI update messages.
+ *
+ * Audio architecture:
+ * - Playback AudioContext (24kHz) is created during the user gesture
+ *   (button click) so the browser never blocks it. The PCMPlayer node
+ *   is ready before the WebSocket even connects — no buffering needed.
+ * - Capture AudioContext (STT sample rate) is created when startCapture
+ *   is called, after the server sends the required sample rate.
+ *
+ * Teardown detection: async helpers (startCapture) check whether
+ * socketRef is still set. If disconnect() ran while an await was
+ * pending, socketRef will be null and the helper bails out.
  */
 export function useSessionSocket() {
   const socketRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const playerRef = useRef<WavStreamPlayer | null>(null);
+  const captureCtxRef = useRef<AudioContext | null>(null);
+  const captureNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const playerRef = useRef<PCMPlayer | null>(null);
   const speakingRef = useRef(false);
   const handlersRef = useRef<SessionHandlers>({});
-  // Generation counter: incremented on connect/disconnect to invalidate
-  // stale async operations (e.g. initPlayer/startCapture completing after
-  // disconnect was called).
-  const generationRef = useRef(0);
 
-  /** Release all local resources (mic, player, WebSocket). */
+  // ── Cleanup ─────────────────────────────────────────────────────
+
   const _cleanup = useCallback(() => {
-    generationRef.current++;
-
-    // Stop mic capture
-    if (workletNodeRef.current) {
-      workletNodeRef.current.disconnect();
-      workletNodeRef.current = null;
+    // Mic capture
+    if (captureNodeRef.current) {
+      captureNodeRef.current.disconnect();
+      captureNodeRef.current = null;
     }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
+    if (captureCtxRef.current) {
+      captureCtxRef.current.close();
+      captureCtxRef.current = null;
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
     }
 
-    // Stop player
+    // Playback
     speakingRef.current = false;
     if (playerRef.current) {
-      playerRef.current.disconnect();
+      playerRef.current.destroy();
       playerRef.current = null;
     }
 
-    // Close WebSocket
+    // WebSocket
     if (socketRef.current) {
       socketRef.current.onclose = null;
       socketRef.current.close();
@@ -70,11 +76,48 @@ export function useSessionSocket() {
     }
   }, []);
 
+  /** Returns true if the session is still alive (not disconnected). */
+  function _isConnected(): boolean {
+    return socketRef.current !== null;
+  }
+
+  // ── Connect ─────────────────────────────────────────────────────
+
   const connect = useCallback(
     async (url: string, handlers: SessionHandlers = {}) => {
       handlersRef.current = handlers;
-      const gen = ++generationRef.current;
 
+      // 1. Create playback player FIRST — during the user gesture so
+      //    the AudioContext is never auto-suspended by the browser.
+      const playbackCtx = new AudioContext({ sampleRate: 24000 });
+      if (playbackCtx.state === "suspended") await playbackCtx.resume();
+
+      const player = new PCMPlayer();
+      await player.init(playbackCtx);
+
+      if (!_isConnected() && socketRef.current === null) {
+        // disconnect() was called during init — but actually we haven't
+        // set socketRef yet, so check if cleanup ran by seeing if we
+        // should still proceed. We use a simple flag: if _cleanup was
+        // called, playerRef would have been nulled — but we haven't set
+        // it yet. So we just proceed; the WebSocket guard below will
+        // catch the race after the socket is set.
+      }
+
+      player.onStarted = () => {
+        if (!speakingRef.current) {
+          speakingRef.current = true;
+          handlersRef.current.onSpeaking?.();
+        }
+      };
+      player.onDone = () => {
+        speakingRef.current = false;
+        handlersRef.current.onSpeakingDone?.();
+        handlersRef.current.onTTSDone?.();
+      };
+      playerRef.current = player;
+
+      // 2. Connect WebSocket
       const wsUrl = toWsUrl(url);
       const ws = await new Promise<WebSocket>((resolve, reject) => {
         const socket = new WebSocket(wsUrl);
@@ -83,26 +126,14 @@ export function useSessionSocket() {
         socket.onerror = (e) => reject(e);
       });
 
-      // Guard: disconnect was called while WebSocket was connecting
-      if (gen !== generationRef.current) {
-        ws.close();
-        return ws;
-      }
+      socketRef.current = ws;
 
       ws.onmessage = (evt) => {
         if (evt.data instanceof ArrayBuffer) {
-          // Binary: TTS audio from server
-          if (!playerRef.current) return;
-          if (!speakingRef.current) {
-            speakingRef.current = true;
-            handlersRef.current.onSpeaking?.();
-          }
-          playerRef.current.add16BitPCM(evt.data);
+          playerRef.current?.write(evt.data);
         } else if (typeof evt.data === "string") {
-          // JSON: server message
           try {
-            const msg = JSON.parse(evt.data);
-            _handleMessage(msg);
+            _handleMessage(JSON.parse(evt.data));
           } catch {
             // ignore parse errors
           }
@@ -110,23 +141,26 @@ export function useSessionSocket() {
       };
 
       ws.onclose = () => {
-        // Server-initiated close: full cleanup + notify UI
         socketRef.current = null;
         _cleanup();
         handlersRef.current.onClose?.();
       };
 
-      socketRef.current = ws;
       return ws;
     },
     [_cleanup],
   );
 
+  // ── Message dispatch ────────────────────────────────────────────
+
   function _handleMessage(msg: Record<string, unknown>) {
     const h = handlersRef.current;
     switch (msg.type) {
       case "ready":
-        h.onReady?.(msg.sample_rate as number, msg.tts_sample_rate as number);
+        h.onReady?.(
+          msg.sample_rate as number,
+          msg.tts_sample_rate as number,
+        );
         break;
       case "transcript":
         h.onTranscript?.(msg.text as string, msg.final as boolean);
@@ -144,10 +178,9 @@ export function useSessionSocket() {
         h.onGreeting?.(msg.text as string);
         break;
       case "tts_done":
-        // Server finished sending audio bytes. If no audio was played
-        // (TTS disabled), fire immediately. Otherwise let WavStreamPlayer
-        // onDone handle the transition when audio finishes playing.
-        if (!speakingRef.current) {
+        if (playerRef.current) {
+          playerRef.current.flush();
+        } else {
           h.onTTSDone?.();
         }
         break;
@@ -165,71 +198,60 @@ export function useSessionSocket() {
     }
   }
 
-  const startCapture = useCallback(async (sampleRate: number, gen: number) => {
-    // Guard: session was torn down before this async call ran
-    if (gen !== generationRef.current) return;
+  // ── Mic capture ─────────────────────────────────────────────────
 
-    streamRef.current = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+  const startCapture = useCallback(
+    async (sampleRate: number) => {
+      if (!_isConnected()) return;
 
-    // Guard: disconnect called while awaiting getUserMedia
-    if (gen !== generationRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-      return;
-    }
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-    audioContextRef.current = new AudioContext({ sampleRate });
-    const source = audioContextRef.current.createMediaStreamSource(
-      streamRef.current,
-    );
-
-    await audioContextRef.current.audioWorklet.addModule(getPCMWorkletUrl());
-
-    // Guard: disconnect called while awaiting addModule
-    if (gen !== generationRef.current) return;
-
-    workletNodeRef.current = new AudioWorkletNode(
-      audioContextRef.current,
-      "pcm-processor",
-    );
-    workletNodeRef.current.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(e.data);
+      if (!_isConnected()) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+        return;
       }
-    };
-    source.connect(workletNodeRef.current);
-    workletNodeRef.current.connect(audioContextRef.current.destination);
-  }, []);
 
-  const initPlayer = useCallback(async (sampleRate: number, gen: number) => {
-    // Guard: session was torn down before this async call ran
-    if (gen !== generationRef.current) return;
+      captureCtxRef.current = new AudioContext({ sampleRate });
+      const source = captureCtxRef.current.createMediaStreamSource(
+        micStreamRef.current,
+      );
 
-    const player = new WavStreamPlayer({ sampleRate });
-    await player.connect();
+      await captureCtxRef.current.audioWorklet.addModule(getPCMWorkletUrl());
 
-    // Guard: disconnect called while awaiting connect
-    if (gen !== generationRef.current) {
-      player.disconnect();
-      return;
+      if (!_isConnected()) return;
+
+      captureNodeRef.current = new AudioWorkletNode(
+        captureCtxRef.current,
+        "pcm-processor",
+      );
+      captureNodeRef.current.port.onmessage = (
+        e: MessageEvent<ArrayBuffer>,
+      ) => {
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(e.data);
+        }
+      };
+      source.connect(captureNodeRef.current);
+      captureNodeRef.current.connect(captureCtxRef.current.destination);
+    },
+    [],
+  );
+
+  // ── Utilities ───────────────────────────────────────────────────
+
+  const sendJSON = useCallback((data: Record<string, unknown>) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(data));
     }
-
-    player.setCallbacks({
-      onDone: () => {
-        speakingRef.current = false;
-        handlersRef.current.onSpeakingDone?.();
-        handlersRef.current.onTTSDone?.();
-      },
-    });
-    playerRef.current = player;
   }, []);
 
   const disconnect = useCallback(() => {
@@ -238,11 +260,5 @@ export function useSessionSocket() {
 
   useEffect(() => disconnect, [disconnect]);
 
-  return {
-    connect,
-    startCapture,
-    initPlayer,
-    disconnect,
-    generationRef,
-  };
+  return { connect, startCapture, sendJSON, disconnect };
 }

@@ -166,6 +166,7 @@ def create_voice_router(
             """Synthesize text via Orpheus TTS, relay PCM to client."""
             try:
                 cleaned = _cleaner.normalize(text)
+                logger.info("TTS [%s] connecting", sid[:8])
                 async with websockets.connect(
                     _tts_wss_url,
                     additional_headers=_tts_headers,
@@ -176,16 +177,20 @@ def create_voice_router(
                     for word in cleaned.split():
                         await upstream.send(word)
                     await upstream.send("__END__")
+                    logger.info("TTS [%s] sent text, waiting for audio", sid[:8])
 
+                    chunk_count = 0
                     async for msg in upstream:
                         if isinstance(msg, bytes):
+                            chunk_count += 1
                             await _send_bytes(ws, msg)
 
+                    logger.info("TTS [%s] done, %d chunks", sid[:8], chunk_count)
                 await _send_json(ws, {"type": "tts_done"})
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("TTS relay error")
+                logger.exception("TTS relay error [%s]", sid[:8])
                 await _send_json(
                     ws, {"type": "error", "message": "TTS synthesis failed"}
                 )
@@ -303,7 +308,10 @@ def create_voice_router(
             except Exception:
                 logger.exception("STT listener error for session %s", sid[:8])
 
-        # ── Greeting ──────────────────────────────────────────────────
+        # ── Start STT listener ────────────────────────────────────────
+        stt_listener_task = asyncio.create_task(_stt_listener(), name=f"stt-{sid[:8]}")
+
+        # ── Send greeting ────────────────────────────────────────────
         greeting = agent.greeting
         if greeting:
             await _send_json(ws, {"type": "greeting", "text": greeting})
@@ -311,9 +319,6 @@ def create_voice_router(
                 tts_task = asyncio.create_task(
                     _tts_relay(greeting), name=f"tts-greeting-{sid[:8]}"
                 )
-
-        # ── Start STT listener ────────────────────────────────────────
-        stt_listener_task = asyncio.create_task(_stt_listener(), name=f"stt-{sid[:8]}")
 
         # ── Main client loop ──────────────────────────────────────────
         try:
@@ -407,6 +412,14 @@ def create_voice_app(
     Returns:
         A ready-to-run :class:`~fastapi.FastAPI` application.
     """
+    # Configure logging so SDK logs are visible in the terminal.
+    # This runs in the worker process (important for uvicorn --reload).
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s:     %(name)s - %(message)s",
+        force=True,
+    )
+
     if agent_manager is None:
         agent_manager = VoiceAgentManager(tools=tools)
 

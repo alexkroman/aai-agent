@@ -1,134 +1,77 @@
-import { getStreamProcessorUrl } from "./stream-processor-worklet";
-
-export interface StreamPlayerCallbacks {
-  onSpeaking?: () => void;
-  onDone?: () => void;
-}
+import { getPlaybackWorkletUrl } from "./stream-processor-worklet";
 
 /**
- * Plays streaming PCM16 audio via an AudioWorklet.
- * Ported from OpenAI's wavtools WavStreamPlayer — stripped of
- * AudioAnalysis and frequency helpers we don't need.
+ * Plays streaming PCM16 audio via a persistent AudioWorklet node.
+ *
+ * The node stays alive for the entire session. Each TTS response is
+ * a write/flush cycle — the worklet resets automatically after each
+ * stream finishes, ready for the next one.
  *
  * Usage:
- *   const player = new WavStreamPlayer({ sampleRate: 24000 });
- *   await player.connect();
- *   player.setCallbacks({ onSpeaking, onDone });
- *   player.add16BitPCM(chunk);   // call for each binary frame
- *   player.clear();               // instant barge-in
- *   player.disconnect();          // full cleanup
+ *   const player = new PCMPlayer();
+ *   await player.init(audioContext);
+ *   player.write(chunk);        // feed PCM16 data
+ *   player.flush();             // signal end of stream
+ *   player.clear();             // barge-in, drop queued audio
+ *   player.destroy();           // full cleanup
  */
-export class WavStreamPlayer {
-  private sampleRate: number;
+export class PCMPlayer {
+  private node: AudioWorkletNode | null = null;
   private context: AudioContext | null = null;
-  private stream: AudioWorkletNode | null = null;
-  private trackSampleOffsets: Record<
-    string,
-    { trackId: string; offset: number; currentTime: number }
-  > = {};
-  private interruptedTrackIds: Record<string, boolean> = {};
-  private callbacks: StreamPlayerCallbacks = {};
+  onStarted: (() => void) | null = null;
+  onDone: (() => void) | null = null;
 
-  constructor({ sampleRate = 24000 }: { sampleRate?: number } = {}) {
-    this.sampleRate = sampleRate;
-  }
-
-  /** Initialize AudioContext and load the worklet module. */
-  async connect(): Promise<void> {
-    this.context = new AudioContext({ sampleRate: this.sampleRate });
-    if (this.context.state === "suspended") {
-      await this.context.resume();
+  /**
+   * Load the worklet module and create the persistent playback node.
+   * Call this with an AudioContext created during a user gesture.
+   */
+  async init(context: AudioContext): Promise<void> {
+    this.context = context;
+    if (context.state === "suspended") {
+      await context.resume();
     }
-    await this.context.audioWorklet.addModule(getStreamProcessorUrl());
-  }
+    await context.audioWorklet.addModule(getPlaybackWorkletUrl());
 
-  /** Set callbacks fired when playback starts / finishes. */
-  setCallbacks(callbacks: StreamPlayerCallbacks): void {
-    this.callbacks = callbacks;
-  }
-
-  /** Create a new AudioWorkletNode for a playback session. */
-  private _start(): void {
-    if (!this.context) throw new Error("Not connected");
-    this.interruptedTrackIds = {};
-    const node = new AudioWorkletNode(this.context, "stream_processor");
-    node.connect(this.context.destination);
+    const node = new AudioWorkletNode(context, "playback_processor");
+    node.connect(context.destination);
     node.port.onmessage = (e: MessageEvent) => {
-      const { event, requestId, trackId, offset } = e.data;
-      if (event === "stop") {
-        node.disconnect();
-        this.stream = null;
-        this.callbacks.onDone?.();
-      } else if (event === "offset") {
-        const currentTime = offset / this.sampleRate;
-        this.trackSampleOffsets[requestId] = { trackId, offset, currentTime };
-      }
+      if (e.data.event === "started") this.onStarted?.();
+      else if (e.data.event === "done") this.onDone?.();
     };
-    this.stream = node;
-    this.callbacks.onSpeaking?.();
+    this.node = node;
   }
 
-  /**
-   * Feed PCM16 data to the player. Accepts Int16Array or raw ArrayBuffer.
-   * Auto-starts a new stream worklet node on the first chunk.
-   */
-  add16BitPCM(
-    arrayBuffer: ArrayBuffer | Int16Array,
-    trackId = "default",
-  ): void {
-    if (this.interruptedTrackIds[trackId]) return;
-    if (!this.stream) this._start();
-    const buffer =
-      arrayBuffer instanceof Int16Array
-        ? arrayBuffer
-        : new Int16Array(arrayBuffer);
-    this.stream!.port.postMessage({ event: "write", buffer, trackId });
+  /** Feed a PCM16 chunk (ArrayBuffer or Int16Array) to the player. */
+  write(data: ArrayBuffer | Int16Array): void {
+    if (!this.node) return;
+    const samples =
+      data instanceof Int16Array ? data : new Int16Array(data);
+    this.node.port.postMessage({ event: "write", samples });
   }
 
-  /**
-   * Interrupt playback and return the current sample offset.
-   * Async — waits for the worklet to report its position.
-   */
-  async interrupt(): Promise<{
-    trackId: string | null;
-    offset: number;
-    currentTime: number;
-  } | null> {
-    if (!this.stream) return null;
-    const requestId = crypto.randomUUID();
-    this.stream.port.postMessage({ event: "interrupt", requestId });
-    let result:
-      | { trackId: string; offset: number; currentTime: number }
-      | undefined;
-    while (!result) {
-      result = this.trackSampleOffsets[requestId];
-      if (!result) await new Promise((r) => setTimeout(r, 1));
-    }
-    const { trackId } = result;
-    if (trackId) this.interruptedTrackIds[trackId] = true;
-    return result;
+  /** Signal that no more data is coming for this stream.
+   *  The worklet will play remaining audio then fire onDone. */
+  flush(): void {
+    this.node?.port.postMessage({ event: "flush" });
   }
 
-  /**
-   * Immediately stop all output (synchronous).
-   * Use this for barge-in where latency matters.
-   */
+  /** Drop all queued audio immediately (barge-in). */
   clear(): void {
-    if (this.stream) {
-      this.stream.port.onmessage = null;
-      this.stream.disconnect();
-      this.stream = null;
-    }
-    this.interruptedTrackIds = {};
+    this.node?.port.postMessage({ event: "clear" });
   }
 
-  /** Full cleanup — close AudioContext and release all resources. */
-  disconnect(): void {
-    this.clear();
+  /** Full cleanup — disconnect node and close context. */
+  destroy(): void {
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.disconnect();
+      this.node = null;
+    }
     if (this.context && this.context.state !== "closed") {
       this.context.close();
     }
     this.context = null;
-    this.trackSampleOffsets = {};
+    this.onStarted = null;
+    this.onDone = null;
   }
 }

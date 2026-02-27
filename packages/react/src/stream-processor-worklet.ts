@@ -1,115 +1,110 @@
 /**
- * Stream processor AudioWorklet — ported from OpenAI's wavtools.
- * Inlined as a string so it can be loaded via Blob URL (no static
- * file hosting required).
+ * Playback AudioWorklet — receives Int16 PCM from the main thread,
+ * converts to Float32, and plays through the audio output.
  *
- * Design: incoming Int16 PCM is converted to Float32 and pre-sliced
- * into 128-sample buffers (matching the Web Audio render quantum).
- * process() shifts one buffer per call — no partial fills, no pops.
- * Auto-stops when the queue drains after playback has started.
+ * Inlined as a string so it can be loaded via Blob URL.
+ *
+ * Design: a simple FIFO queue of Float32 sample arrays. process()
+ * drains the queue directly into the output buffer — no intermediate
+ * 128-sample slicing. The node stays alive for the whole session;
+ * it resets automatically after each stream finishes.
  *
  * Messages FROM main thread:
- *   { event: "write", buffer: Int16Array, trackId: string }
- *   { event: "offset", requestId: string }
- *   { event: "interrupt", requestId: string }
+ *   { event: "write", samples: Int16Array }  — add audio data
+ *   { event: "flush" }                       — no more data coming
+ *   { event: "clear" }                       — barge-in, drop all
  *
  * Messages TO main thread:
- *   { event: "stop" }
- *   { event: "offset", requestId, trackId, offset }
+ *   { event: "started" }  — first samples are being output
+ *   { event: "done" }     — all queued audio has been played
  */
-const STREAM_PROCESSOR_SOURCE = /* js */ `
-class StreamProcessor extends AudioWorkletProcessor {
+const PLAYBACK_WORKLET_SOURCE = /* js */ `
+class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.hasStarted = false;
-    this.hasInterrupted = false;
-    this.outputBuffers = [];
-    this.bufferLength = 128;
-    this.write = { buffer: new Float32Array(this.bufferLength), trackId: null };
-    this.writeOffset = 0;
-    this.trackSampleOffsets = {};
-    this.port.onmessage = (event) => {
-      if (event.data) {
-        const payload = event.data;
-        if (payload.event === 'write') {
-          const int16Array = payload.buffer;
-          const float32Array = new Float32Array(int16Array.length);
-          for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 0x8000;
-          }
-          this.writeData(float32Array, payload.trackId);
-        } else if (
-          payload.event === 'offset' ||
-          payload.event === 'interrupt'
-        ) {
-          const requestId = payload.requestId;
-          const trackId = this.write.trackId;
-          const offset = this.trackSampleOffsets[trackId] || 0;
-          this.port.postMessage({
-            event: 'offset',
-            requestId,
-            trackId,
-            offset,
-          });
-          if (payload.event === 'interrupt') {
-            this.hasInterrupted = true;
-          }
+    this.queue = [];
+    this.current = null;
+    this.offset = 0;
+    this.started = false;
+    this.finished = false;
+
+    this.port.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.event === 'write') {
+        const int16 = msg.samples;
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / 32768;
         }
+        this.queue.push(float32);
+      } else if (msg.event === 'flush') {
+        this.finished = true;
+      } else if (msg.event === 'clear') {
+        this.queue = [];
+        this.current = null;
+        this.offset = 0;
+        this.started = false;
+        this.finished = false;
       }
     };
   }
 
-  writeData(float32Array, trackId = null) {
-    let { buffer } = this.write;
-    let offset = this.writeOffset;
-    for (let i = 0; i < float32Array.length; i++) {
-      buffer[offset++] = float32Array[i];
-      if (offset >= buffer.length) {
-        this.outputBuffers.push(this.write);
-        this.write = { buffer: new Float32Array(this.bufferLength), trackId };
-        buffer = this.write.buffer;
-        offset = 0;
-      }
-    }
-    this.writeOffset = offset;
-    return true;
-  }
-
   process(inputs, outputs) {
-    const output = outputs[0];
-    const outputChannelData = output[0];
-    if (this.hasInterrupted) {
-      this.port.postMessage({ event: 'stop' });
-      return false;
-    } else if (this.outputBuffers.length) {
-      this.hasStarted = true;
-      const { buffer, trackId } = this.outputBuffers.shift();
-      for (let i = 0; i < outputChannelData.length; i++) {
-        outputChannelData[i] = buffer[i] || 0;
+    const output = outputs[0][0];
+    if (!output) return true;
+
+    let written = 0;
+
+    while (written < output.length) {
+      // Need a new chunk from the queue?
+      if (!this.current || this.offset >= this.current.length) {
+        if (this.queue.length > 0) {
+          this.current = this.queue.shift();
+          this.offset = 0;
+          if (!this.started) {
+            this.started = true;
+            this.port.postMessage({ event: 'started' });
+          }
+        } else {
+          // Queue empty — check if stream is done
+          if (this.finished) {
+            this.started = false;
+            this.finished = false;
+            this.current = null;
+            this.offset = 0;
+            this.port.postMessage({ event: 'done' });
+          }
+          // Fill remaining output with silence
+          for (let i = written; i < output.length; i++) {
+            output[i] = 0;
+          }
+          return true;
+        }
       }
-      if (trackId) {
-        this.trackSampleOffsets[trackId] =
-          this.trackSampleOffsets[trackId] || 0;
-        this.trackSampleOffsets[trackId] += buffer.length;
+
+      // Copy samples from current chunk to output
+      const available = this.current.length - this.offset;
+      const needed = output.length - written;
+      const count = Math.min(available, needed);
+      for (let i = 0; i < count; i++) {
+        output[written + i] = this.current[this.offset + i];
       }
-      return true;
-    } else if (this.hasStarted) {
-      this.port.postMessage({ event: 'stop' });
-      return false;
-    } else {
-      return true;
+      written += count;
+      this.offset += count;
     }
+
+    return true;
   }
 }
 
-registerProcessor('stream_processor', StreamProcessor);
+registerProcessor('playback_processor', PlaybackProcessor);
 `;
 
 let workletUrl: string | null = null;
 
-export function getStreamProcessorUrl(): string {
+export function getPlaybackWorkletUrl(): string {
   if (!workletUrl) {
-    const blob = new Blob([STREAM_PROCESSOR_SOURCE], {
+    const blob = new Blob([PLAYBACK_WORKLET_SOURCE], {
       type: "application/javascript",
     });
     workletUrl = URL.createObjectURL(blob);
