@@ -104,7 +104,7 @@ The backend configures the agent and handles tool execution.
     {
       name: "get_weather",
       description: "Get current weather for a city",
-      parameters: { city: "string" }                    // simplified format
+      parameters: { city: "string" }                    // simplified format, platform converts to JSON Schema
     }
   ]
 }
@@ -145,7 +145,7 @@ platform/
 │   ├── llm.ts                # LLM client (AssemblyAI LLM Gateway, OpenAI-compat)
 │   ├── voice-cleaner.ts      # Text normalization for TTS
 │   ├── types.ts              # All TypeScript interfaces and message types
-│   └── protocol.ts           # Message parsing, validation (zod schemas)
+│   └── protocol.ts           # Message parsing, validation, simplified→JSON Schema conversion
 ```
 
 ### Key Dependencies
@@ -317,7 +317,8 @@ customer-frontend/
 ## Adding a tool
 Edit `agent.ts` and add an entry to the `tools` object. Each tool has:
 - `description`: what the tool does (the LLM sees this)
-- `parameters`: zod schema for the arguments
+- `parameters`: object mapping param names to types ("string", "number", "boolean",
+  append "?" for optional, e.g. "string?")
 - `handler`: async function that returns a string
 
 ## Changing the agent's behavior
@@ -333,12 +334,12 @@ transcript, cancel(), reset().
 ```json
 {
   "dependencies": {
-    "ws": "^8.0.0",
-    "zod": "^3.0.0",
-    "zod-to-json-schema": "^3.0.0"
+    "ws": "^8.0.0"
   }
 }
 ```
+
+One dependency. No zod, no schema converters, no SDK.
 
 ---
 
@@ -348,20 +349,20 @@ This is the only backend file. No entry point, no boilerplate, no relay.
 Claude Code edits the `tools` object and config. The rest is ~15 lines of
 WebSocket plumbing that never changes.
 
+**Parameters use a simplified format** — `{ city: "string" }` instead of
+JSON Schema or zod. The platform converts this to proper JSON Schema before
+sending to the LLM. Append `?` for optional: `{ service: "string?" }`.
+
 ```typescript
 // agent.ts — the entire customer backend
 import { WebSocket } from "ws";
-import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 // ── Tools ───────────────────────────────────────────────────────────
 
 const tools = {
   get_weather: {
     description: "Get current weather for a city",
-    parameters: z.object({
-      city: z.string().describe("City name"),
-    }),
+    parameters: { city: "string" },
     handler: async (args: { city: string }) => {
       const resp = await fetch(
         `https://api.weather.com/current?city=${args.city}`
@@ -388,7 +389,7 @@ ws.on("open", () => {
       tools: Object.entries(tools).map(([name, t]) => ({
         name,
         description: t.description,
-        parameters: zodToJsonSchema(t.parameters),
+        parameters: t.parameters,
       })),
     })
   );
@@ -399,7 +400,7 @@ ws.on("message", async (raw) => {
   if (msg.type === "tool_call") {
     const tool = tools[msg.name as keyof typeof tools];
     const result = tool
-      ? await tool.handler(tool.parameters.parse(msg.args))
+      ? await tool.handler(msg.args)
       : `Unknown tool: ${msg.name}`;
     ws.send(JSON.stringify({ type: "tool_result", callId: msg.callId, result }));
   }
@@ -416,11 +417,7 @@ Claude Code adds one entry to the `tools` object. Nothing else changes:
 ```typescript
   book_appointment: {
     description: "Book an appointment on the user's calendar",
-    parameters: z.object({
-      date: z.string().describe("Date in YYYY-MM-DD format"),
-      time: z.string().describe("Time in HH:MM format"),
-      service: z.string().describe("Type of appointment").optional(),
-    }),
+    parameters: { date: "string", time: "string", service: "string?" },
     handler: async (args: { date: string; time: string; service?: string }) => {
       const result = await calendarApi.book(args);
       return `Booked ${args.service ?? "appointment"} for ${args.date} at ${args.time}`;
@@ -428,8 +425,25 @@ Claude Code adds one entry to the `tools` object. Nothing else changes:
   },
 ```
 
-One entry. Schema, validation, handler — all in one place. Zod validates at
-runtime; the type annotation on `args` gives IDE autocomplete.
+One entry. Simplified schema, handler, type annotation — all in one place.
+The platform converts `{ date: "string", time: "string", service: "string?" }`
+to proper JSON Schema with required/optional fields before sending to the LLM.
+
+### Simplified parameter format (platform converts to JSON Schema)
+
+The platform's `protocol.ts` handles the conversion:
+
+```
+Customer sends:                    Platform converts to JSON Schema:
+{ city: "string" }          →     { type: "object", properties: { city: { type: "string" } }, required: ["city"] }
+{ query: "string",          →     { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } },
+  limit: "number?" }                required: ["query"] }
+```
+
+Supported types: `"string"`, `"number"`, `"boolean"`. Append `?` for optional.
+This covers ~95% of tool parameter use cases. If a customer needs nested objects
+or arrays, they can pass raw JSON Schema directly instead — the platform detects
+which format is being used.
 
 ---
 
