@@ -84,7 +84,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     this.cancelling = false;
     this.connectionId++;
     const platformUrl = toWebSocketUrl(
-      this.options.platformUrl ?? "wss://platform.example.com"
+      this.options.platformUrl || window.location.origin
     );
     const ws = new WebSocket(`${platformUrl}/session`);
     this.ws = ws;

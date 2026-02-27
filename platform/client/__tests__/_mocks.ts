@@ -131,4 +131,7 @@ export function stubBrowserGlobals() {
     }
   );
   vi.stubGlobal("Blob", class Blob {});
+  vi.stubGlobal("window", {
+    location: { origin: "https://platform.example.com" },
+  });
 }

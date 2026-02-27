@@ -7,13 +7,12 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "tsc --noEmit && tsx watch src/index.ts",
-    "dev:serve": "tsc --noEmit && node scripts/build-client.js && CLIENT_DIR=dist tsx watch src/index.ts",
+    "dev": "tsc --noEmit && node scripts/dev.js",
     "start": "node dist/index.js",
     "build": "tsc && node scripts/build-client.js",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/ client/__tests__/",
+    "lint": "eslint src/ client/__tests__/ && cd .. && NODE_PATH=platform/node_modules platform/node_modules/.bin/eslint examples/",
     "format": "prettier --check src/ client/__tests__/ ../examples/",
     "format:fix": "prettier --write src/ client/__tests__/ ../examples/",
     "check": "npm run typecheck && npm run lint && npm run format && npm run test -- run",
@@ -41,6 +40,7 @@
     "@types/ws": "^8.18.1",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
+    "globals": "^17.3.0",
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "pino-pretty": "^13.1.3",
