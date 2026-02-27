@@ -1,26 +1,27 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" href="/favicon.svg" />
-  <title>Travel Concierge — Voice Agent Demo</title>
-  <script src="/config.js"></script>
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module">
-    const PLATFORM = window.__PLATFORM_URL__ || window.location.origin;
-    const { VoiceAgent } = await import(`${PLATFORM}/client.js`);
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" />
+    <title>Travel Concierge — Voice Agent Demo</title>
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      const PLATFORM = window.__PLATFORM_URL__ || window.location.origin;
+      const { VoiceAgent } = await import(`${PLATFORM}/client.js`);
 
-    VoiceAgent.start({
-      element: "#app",
-      platformUrl: PLATFORM,
-      apiKey: "pk_your_publishable_key",
+      VoiceAgent.start({
+        element: "#app",
+        platformUrl: PLATFORM,
+        apiKey: "pk_your_publishable_key",
 
-      prompt: "Transcribe travel-related terms accurately including city names, airport codes like JFK SFO LAX CDG, airline names, hotel chains, currencies like USD EUR GBP JPY, and dates.",
+        prompt:
+          "Transcribe travel-related terms accurately including city names, airport codes like JFK SFO LAX CDG, airline names, hotel chains, currencies like USD EUR GBP JPY, and dates.",
 
-      instructions: `You are Aria, a luxury travel concierge. You help customers plan trips,
+        instructions: `You are Aria, a luxury travel concierge. You help customers plan trips,
 find flights and hotels, check weather at destinations, and convert currencies.
 
 Rules:
@@ -30,157 +31,222 @@ Rules:
 - Be warm and enthusiastic but concise — this is a voice conversation
 - If the customer hasn't specified dates, ask for them before searching flights`,
 
-      greeting:
-        "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
+        greeting:
+          "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
 
-      voice: "tara",
+        voice: "tara",
 
-      tools: {
-        search_flights: {
-          description:
-            "Search for available flights between two cities on a given date",
-          parameters: {
-            origin: { type: "string", description: "Departure city or airport code (e.g. 'SFO', 'New York')" },
-            destination: { type: "string", description: "Arrival city or airport code" },
-            date: { type: "string", description: "Departure date in YYYY-MM-DD format" },
-            passengers: { type: "number?", description: "Number of passengers (default 1)" },
-          },
-          handler: async (args, ctx) => {
-            const params = new URLSearchParams({
-              origin: args.origin,
-              destination: args.destination,
-              date: args.date,
-              passengers: String(args.passengers ?? 1),
-            });
-            const resp = ctx.fetch(
-              `https://api.example.com/flights/search?${params}`,
-              { headers: { Authorization: `Bearer ${ctx.secrets.FLIGHTS_API_KEY}` } }
-            );
-            if (!resp.ok)
-              return { error: `Flight search failed: ${resp.statusText}` };
-            return resp.json();
-          },
-        },
-
-        search_hotels: {
-          description:
-            "Search for hotels in a city with check-in and check-out dates",
-          parameters: {
-            city: { type: "string", description: "City to search hotels in" },
-            check_in: { type: "string", description: "Check-in date (YYYY-MM-DD)" },
-            check_out: { type: "string", description: "Check-out date (YYYY-MM-DD)" },
-            guests: { type: "number?", description: "Number of guests (default 2)" },
-            max_price: { type: "number?", description: "Maximum price per night in USD" },
-          },
-          handler: async (args, ctx) => {
-            const resp = ctx.fetch("https://api.example.com/hotels/search", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${ctx.secrets.HOTELS_API_KEY}`,
-                "Content-Type": "application/json",
+        tools: {
+          search_flights: {
+            description:
+              "Search for available flights between two cities on a given date",
+            parameters: {
+              origin: {
+                type: "string",
+                description:
+                  "Departure city or airport code (e.g. 'SFO', 'New York')",
               },
-              body: JSON.stringify({
-                city: args.city,
-                check_in: args.check_in,
-                check_out: args.check_out,
-                guests: args.guests ?? 2,
-                max_price_usd: args.max_price,
-              }),
-            });
-            if (!resp.ok)
-              return { error: `Hotel search failed: ${resp.statusText}` };
-            return resp.json();
-          },
-        },
-
-        get_weather_forecast: {
-          description:
-            "Get a 7-day weather forecast for a destination city",
-          parameters: {
-            city: { type: "string", description: "City name" },
-          },
-          handler: async (args, ctx) => {
-            const resp = ctx.fetch(
-              `https://api.example.com/weather/forecast?city=${encodeURIComponent(args.city)}&days=7`,
-              { headers: { "X-Api-Key": ctx.secrets.WEATHER_API_KEY } }
-            );
-            if (!resp.ok)
-              return { error: `Weather lookup failed: ${resp.statusText}` };
-            return resp.json();
-          },
-        },
-
-        convert_currency: {
-          description:
-            "Convert an amount from one currency to another using live exchange rates",
-          parameters: {
-            amount: { type: "number", description: "Amount to convert" },
-            from: { type: "string", description: "Source currency code (e.g. 'USD')" },
-            to: { type: "string", description: "Target currency code (e.g. 'EUR')" },
-          },
-          handler: async (args, ctx) => {
-            const resp = ctx.fetch(
-              `https://api.example.com/fx/convert?amount=${args.amount}&from=${args.from}&to=${args.to}`,
-              { headers: { Authorization: `Bearer ${ctx.secrets.FX_API_KEY}` } }
-            );
-            if (!resp.ok)
-              return { error: `Currency conversion failed: ${resp.statusText}` };
-            return resp.json();
-          },
-        },
-
-        get_local_recommendations: {
-          description:
-            "Get restaurant, attraction, and experience recommendations for a destination",
-          parameters: {
-            city: { type: "string", description: "City to get recommendations for" },
-            category: {
-              type: "string?",
-              description: "Category filter: 'restaurants', 'attractions', 'nightlife', or 'all' (default 'all')",
+              destination: {
+                type: "string",
+                description: "Arrival city or airport code",
+              },
+              date: {
+                type: "string",
+                description: "Departure date in YYYY-MM-DD format",
+              },
+              passengers: {
+                type: "number?",
+                description: "Number of passengers (default 1)",
+              },
+            },
+            handler: async (args, ctx) => {
+              const params = new URLSearchParams({
+                origin: args.origin,
+                destination: args.destination,
+                date: args.date,
+                passengers: String(args.passengers ?? 1),
+              });
+              const resp = ctx.fetch(
+                `https://api.example.com/flights/search?${params}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${ctx.secrets.FLIGHTS_API_KEY}`,
+                  },
+                },
+              );
+              if (!resp.ok)
+                return { error: `Flight search failed: ${resp.statusText}` };
+              return resp.json();
             },
           },
-          handler: async (args, ctx) => {
-            const category = args.category ?? "all";
-            const resp = ctx.fetch(
-              `https://api.example.com/travel/recommendations?city=${encodeURIComponent(args.city)}&category=${category}`,
-              { headers: { Authorization: `Bearer ${ctx.secrets.TRAVEL_API_KEY}` } }
-            );
-            if (!resp.ok)
-              return { error: `Recommendations lookup failed: ${resp.statusText}` };
-            return resp.json();
-          },
-        },
 
-        create_itinerary: {
-          description:
-            "Save a trip itinerary with flight, hotel, and activity details for the customer",
-          parameters: {
-            destination: { type: "string", description: "Trip destination city" },
-            start_date: { type: "string", description: "Trip start date (YYYY-MM-DD)" },
-            end_date: { type: "string", description: "Trip end date (YYYY-MM-DD)" },
-            notes: { type: "string", description: "Summary of planned flights, hotel, and activities" },
-          },
-          handler: async (args, ctx) => {
-            const resp = ctx.fetch("https://api.example.com/itineraries", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${ctx.secrets.TRAVEL_API_KEY}`,
-                "Content-Type": "application/json",
+          search_hotels: {
+            description:
+              "Search for hotels in a city with check-in and check-out dates",
+            parameters: {
+              city: { type: "string", description: "City to search hotels in" },
+              check_in: {
+                type: "string",
+                description: "Check-in date (YYYY-MM-DD)",
               },
-              body: JSON.stringify({
-                destination: args.destination,
-                start_date: args.start_date,
-                end_date: args.end_date,
-                notes: args.notes,
-              }),
-            });
-            if (!resp.ok)
-              return { error: `Failed to save itinerary: ${resp.statusText}` };
-            return resp.json();
+              check_out: {
+                type: "string",
+                description: "Check-out date (YYYY-MM-DD)",
+              },
+              guests: {
+                type: "number?",
+                description: "Number of guests (default 2)",
+              },
+              max_price: {
+                type: "number?",
+                description: "Maximum price per night in USD",
+              },
+            },
+            handler: async (args, ctx) => {
+              const resp = ctx.fetch("https://api.example.com/hotels/search", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${ctx.secrets.HOTELS_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  city: args.city,
+                  check_in: args.check_in,
+                  check_out: args.check_out,
+                  guests: args.guests ?? 2,
+                  max_price_usd: args.max_price,
+                }),
+              });
+              if (!resp.ok)
+                return { error: `Hotel search failed: ${resp.statusText}` };
+              return resp.json();
+            },
+          },
+
+          get_weather_forecast: {
+            description: "Get a 7-day weather forecast for a destination city",
+            parameters: {
+              city: { type: "string", description: "City name" },
+            },
+            handler: async (args, ctx) => {
+              const resp = ctx.fetch(
+                `https://api.example.com/weather/forecast?city=${encodeURIComponent(args.city)}&days=7`,
+                { headers: { "X-Api-Key": ctx.secrets.WEATHER_API_KEY } },
+              );
+              if (!resp.ok)
+                return { error: `Weather lookup failed: ${resp.statusText}` };
+              return resp.json();
+            },
+          },
+
+          convert_currency: {
+            description:
+              "Convert an amount from one currency to another using live exchange rates",
+            parameters: {
+              amount: { type: "number", description: "Amount to convert" },
+              from: {
+                type: "string",
+                description: "Source currency code (e.g. 'USD')",
+              },
+              to: {
+                type: "string",
+                description: "Target currency code (e.g. 'EUR')",
+              },
+            },
+            handler: async (args, ctx) => {
+              const resp = ctx.fetch(
+                `https://api.example.com/fx/convert?amount=${args.amount}&from=${args.from}&to=${args.to}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${ctx.secrets.FX_API_KEY}`,
+                  },
+                },
+              );
+              if (!resp.ok)
+                return {
+                  error: `Currency conversion failed: ${resp.statusText}`,
+                };
+              return resp.json();
+            },
+          },
+
+          get_local_recommendations: {
+            description:
+              "Get restaurant, attraction, and experience recommendations for a destination",
+            parameters: {
+              city: {
+                type: "string",
+                description: "City to get recommendations for",
+              },
+              category: {
+                type: "string?",
+                description:
+                  "Category filter: 'restaurants', 'attractions', 'nightlife', or 'all' (default 'all')",
+              },
+            },
+            handler: async (args, ctx) => {
+              const category = args.category ?? "all";
+              const resp = ctx.fetch(
+                `https://api.example.com/travel/recommendations?city=${encodeURIComponent(args.city)}&category=${category}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${ctx.secrets.TRAVEL_API_KEY}`,
+                  },
+                },
+              );
+              if (!resp.ok)
+                return {
+                  error: `Recommendations lookup failed: ${resp.statusText}`,
+                };
+              return resp.json();
+            },
+          },
+
+          create_itinerary: {
+            description:
+              "Save a trip itinerary with flight, hotel, and activity details for the customer",
+            parameters: {
+              destination: {
+                type: "string",
+                description: "Trip destination city",
+              },
+              start_date: {
+                type: "string",
+                description: "Trip start date (YYYY-MM-DD)",
+              },
+              end_date: {
+                type: "string",
+                description: "Trip end date (YYYY-MM-DD)",
+              },
+              notes: {
+                type: "string",
+                description:
+                  "Summary of planned flights, hotel, and activities",
+              },
+            },
+            handler: async (args, ctx) => {
+              const resp = ctx.fetch("https://api.example.com/itineraries", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${ctx.secrets.TRAVEL_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  destination: args.destination,
+                  start_date: args.start_date,
+                  end_date: args.end_date,
+                  notes: args.notes,
+                }),
+              });
+              if (!resp.ok)
+                return {
+                  error: `Failed to save itinerary: ${resp.statusText}`,
+                };
+              return resp.json();
+            },
           },
         },
-      },
-    });
-  </script>
-</body>
+      });
+    </script>
+  </body>
 </html>

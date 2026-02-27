@@ -14,8 +14,8 @@
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ client/__tests__/",
-    "format": "prettier --check src/ client/__tests__/",
-    "format:fix": "prettier --write src/ client/__tests__/",
+    "format": "prettier --check src/ client/__tests__/ ../examples/",
+    "format:fix": "prettier --write src/ client/__tests__/ ../examples/",
     "check": "npm run typecheck && npm run lint && npm run format && npm run test -- run",
     "prepare": "cd .. && husky"
   },
