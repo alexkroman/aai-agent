@@ -151,15 +151,26 @@ export class VoiceSession {
       ttsSampleRate: this.deps.config.ttsConfig.sampleRate,
     });
 
-    // Send greeting
+    // Defer greeting until client signals audio_ready.
     const greeting = this.agentConfig.greeting ?? DEFAULT_GREETING;
     if (greeting) {
-      this.trySendJson({ type: MSG.GREETING, text: greeting });
-      this.ttsRelay(greeting);
+      this.pendingGreeting = greeting;
     }
   }
 
   private audioFrameCount = 0;
+  private pendingGreeting: string | null = null;
+
+  /**
+   * Client's audio worklet is ready — safe to send greeting TTS.
+   */
+  onAudioReady(): void {
+    if (this.pendingGreeting) {
+      this.trySendJson({ type: MSG.GREETING, text: this.pendingGreeting });
+      this.ttsRelay(this.pendingGreeting);
+      this.pendingGreeting = null;
+    }
+  }
 
   /**
    * Handle incoming binary audio from the browser — relay to STT.

@@ -180,7 +180,9 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
       const parsed = ControlMessageSchema.safeParse(json);
       if (!parsed.success) return;
 
-      if (parsed.data.type === MSG.CANCEL) {
+      if (parsed.data.type === MSG.AUDIO_READY) {
+        session?.onAudioReady();
+      } else if (parsed.data.type === MSG.CANCEL) {
         await session?.onCancel();
       } else if (parsed.data.type === MSG.RESET) {
         await session?.onReset();

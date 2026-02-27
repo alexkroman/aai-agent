@@ -289,7 +289,7 @@ describe("server", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    it("configures session and sends ready + greeting", async () => {
+    it("configures session and sends ready, then greeting on audio_ready", async () => {
       server = await startTestServer();
 
       const ws = new WebSocket(`ws://localhost:${server.port}/session`);
@@ -304,8 +304,17 @@ describe("server", () => {
       expect(readyMsg.sampleRate).toBe(16000);
       expect(readyMsg.ttsSampleRate).toBe(24000);
 
-      const greetingMsg = messages.find((m) => m.type === "greeting");
-      expect(greetingMsg.text).toBe("Hello!");
+      // Greeting is deferred until audio_ready
+      expect(messages.find((m) => m.type === "greeting")).toBeUndefined();
+
+      ws.send(JSON.stringify({ type: "audio_ready" }));
+      await vi.waitFor(
+        () => {
+          const greetingMsg = messages.find((m) => m.type === "greeting");
+          expect(greetingMsg.text).toBe("Hello!");
+        },
+        { timeout: 5000 }
+      );
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));

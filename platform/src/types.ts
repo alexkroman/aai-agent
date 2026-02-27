@@ -171,8 +171,9 @@ export const ConfigureMessageSchema = z.object({
     .optional(),
 });
 
-/** Schema for browser control messages (cancel, reset). */
+/** Schema for browser control messages (audio_ready, cancel, reset). */
 export const ControlMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("audio_ready") }),
   z.object({ type: z.literal("cancel") }),
   z.object({ type: z.literal("reset") }),
 ]);

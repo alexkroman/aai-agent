@@ -20,25 +20,32 @@ describe("VoiceSession", () => {
   });
 
   describe("start()", () => {
-    it("connects STT, sends ready and greeting", async () => {
+    it("connects STT, sends ready but defers greeting until audio_ready", async () => {
       const { deps, getSttEvents } = createTestDeps();
       const session = new VoiceSession("sess-1", browserWs as any, DEFAULT_AGENT_CONFIG, deps);
       await session.start();
 
       expect(getSttEvents()).not.toBeNull();
 
+      const msgsBeforeReady = getJsonMessages(browserWs);
+      expect(msgsBeforeReady[0]).toMatchObject({ type: "ready" });
+      expect(msgsBeforeReady[0]).toHaveProperty("sampleRate");
+      expect(msgsBeforeReady[0]).toHaveProperty("ttsSampleRate");
+      expect(msgsBeforeReady.some((m) => m.type === "greeting")).toBe(false);
+
+      session.onAudioReady();
       const msgs = getJsonMessages(browserWs);
-      expect(msgs[0]).toMatchObject({ type: "ready" });
-      expect(msgs[0]).toHaveProperty("sampleRate");
-      expect(msgs[0]).toHaveProperty("ttsSampleRate");
       expect(msgs[1]).toMatchObject({ type: "greeting", text: "Hello!" });
     });
 
-    it("starts TTS for greeting", async () => {
+    it("starts TTS for greeting on audio_ready", async () => {
       const { deps, mocks } = createTestDeps();
       const session = new VoiceSession("sess-1", browserWs as any, DEFAULT_AGENT_CONFIG, deps);
       await session.start();
 
+      expect(mocks.ttsClient.synthesize).not.toHaveBeenCalled();
+
+      session.onAudioReady();
       expect(mocks.ttsClient.synthesize).toHaveBeenCalledOnce();
       expect(mocks.ttsClient.synthesize.mock.calls[0][0]).toBe("Hello!");
     });

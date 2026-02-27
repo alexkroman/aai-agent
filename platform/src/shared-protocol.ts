@@ -20,6 +20,7 @@ export const MSG = {
   // Browser -> server
   AUTHENTICATE: "authenticate",
   CONFIGURE: "configure",
+  AUDIO_READY: "audio_ready",
   CANCEL: "cancel",
   PING: "ping",
 } as const;
@@ -127,6 +128,10 @@ export interface ConfigureMessage {
   }[];
 }
 
+export interface AudioReadyMessage {
+  type: "audio_ready";
+}
+
 export interface CancelMessage {
   type: "cancel";
 }
@@ -143,6 +148,7 @@ export interface PingMessage {
 export type ClientMessage =
   | AuthenticateMessage
   | ConfigureMessage
+  | AudioReadyMessage
   | CancelMessage
   | ResetClientMessage
   | PingMessage;

@@ -169,6 +169,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
           }
           this.player = player;
           this.micCleanup = micCleanup;
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: CLIENT_MSG.AUDIO_READY }));
+          }
           this.emit("audioReady");
           this.changeState("listening");
           this.emit("connected");
