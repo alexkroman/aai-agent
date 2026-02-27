@@ -372,6 +372,249 @@ describe("VoiceSession", () => {
       const chatMsg = msgs.find((m) => m.type === "chat");
       expect(chatMsg!.text).toBe("Sorry, I couldn't generate a response.");
     });
+
+    it("handles tool call with invalid JSON arguments (falls back to {})", async () => {
+      // LLM returns a tool call with unparseable arguments
+      mockCallLLM.mockResolvedValueOnce({
+        id: "resp-tc",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "tc-0",
+                  type: "function" as const,
+                  function: {
+                    name: "my_tool",
+                    arguments: "not valid json {{{",
+                  },
+                },
+              ],
+            },
+            finish_reason: "tool_use",
+          },
+        ],
+      });
+      mockSandboxExecute.mockResolvedValueOnce("tool result");
+      mockCallLLM.mockResolvedValueOnce(llmResponse("Done!"));
+
+      const session = new VoiceSession("sess-1", browserWs as any, {
+        ...defaultConfig,
+        tools: [
+          { name: "my_tool", description: "A tool", parameters: {}, handler: "async () => 'ok'" },
+        ],
+      });
+      await session.start();
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Test");
+
+      await vi.waitFor(() => {
+        const msgs = getJsonMessages(browserWs);
+        return expect(msgs.some((m) => m.type === "chat")).toBeTruthy();
+      });
+
+      // Sandbox should have been called with empty args (fallback)
+      expect(mockSandboxExecute).toHaveBeenCalledWith("my_tool", {});
+    });
+
+    it("stops after MAX_TOOL_ITERATIONS tool-call rounds", async () => {
+      // Simulate LLM always returning tool calls (never a final response)
+      const toolCallResponse = () => llmToolCallResponse([{ name: "loop_tool", args: { x: 1 } }]);
+
+      // 1 initial call + 3 iterations = 4 callLLM calls
+      mockCallLLM.mockResolvedValueOnce(toolCallResponse());
+      mockCallLLM.mockResolvedValueOnce(toolCallResponse());
+      mockCallLLM.mockResolvedValueOnce(toolCallResponse());
+      mockCallLLM.mockResolvedValueOnce(toolCallResponse()); // iteration 3 — this response gets checked but loop exits
+
+      mockSandboxExecute.mockResolvedValue("tool result");
+
+      const session = new VoiceSession("sess-1", browserWs as any, {
+        ...defaultConfig,
+        tools: [
+          { name: "loop_tool", description: "A tool", parameters: {}, handler: "async () => 'ok'" },
+        ],
+      });
+      await session.start();
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Loop test");
+
+      // Wait for the loop to finish — it won't send a "chat" message since the LLM
+      // never returns a non-tool-call response. Wait for the thinking phase to end.
+      await new Promise((r) => setTimeout(r, 500));
+
+      // LLM should have been called at most 4 times (initial + 3 iterations)
+      expect(mockCallLLM.mock.calls.length).toBeLessThanOrEqual(4);
+    });
+
+    it("handles empty choices array from LLM", async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        id: "resp-empty",
+        choices: [],
+      });
+
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+      await session.start();
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Hello");
+
+      // Wait for handleTurn to complete
+      await new Promise((r) => setTimeout(r, 200));
+
+      const msgs = getJsonMessages(browserWs);
+      // Should have turn + thinking but no crash
+      expect(msgs[0]).toMatchObject({ type: "turn" });
+      expect(msgs[1]).toMatchObject({ type: "thinking" });
+      // No chat message since choices was empty, but no error either
+    });
+
+    it("handles multiple parallel tool calls", async () => {
+      mockCallLLM.mockResolvedValueOnce(
+        llmToolCallResponse([
+          { name: "tool_a", args: { x: 1 } },
+          { name: "tool_b", args: { y: 2 } },
+        ])
+      );
+      mockSandboxExecute.mockResolvedValueOnce("result_a");
+      mockSandboxExecute.mockResolvedValueOnce("result_b");
+      mockCallLLM.mockResolvedValueOnce(llmResponse("Combined results!"));
+
+      const session = new VoiceSession("sess-1", browserWs as any, {
+        ...defaultConfig,
+        tools: [
+          { name: "tool_a", description: "A", parameters: {}, handler: "async () => 'a'" },
+          { name: "tool_b", description: "B", parameters: {}, handler: "async () => 'b'" },
+        ],
+      });
+      await session.start();
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Use both tools");
+
+      await vi.waitFor(() => {
+        const msgs = getJsonMessages(browserWs);
+        return expect(msgs.some((m) => m.type === "chat")).toBeTruthy();
+      });
+
+      // Both tools should have been called
+      expect(mockSandboxExecute).toHaveBeenCalledTimes(2);
+      expect(mockSandboxExecute).toHaveBeenCalledWith("tool_a", { x: 1 });
+      expect(mockSandboxExecute).toHaveBeenCalledWith("tool_b", { y: 2 });
+
+      const msgs = getJsonMessages(browserWs);
+      const chatMsg = msgs.find((m) => m.type === "chat");
+      expect(chatMsg).toMatchObject({
+        text: "Combined results!",
+        steps: ["Using tool_a", "Using tool_b"],
+      });
+    });
+
+    it("does not send chat/tts after abort during LLM call", async () => {
+      // Make callLLM hang until aborted
+      mockCallLLM.mockImplementationOnce(
+        (_msgs: any, _tools: any, _key: any, _model: any, signal: AbortSignal) => {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError"))
+            );
+          });
+        }
+      );
+
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+      await session.start();
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Hello");
+
+      // Wait for turn+thinking to be sent
+      await vi.waitFor(() => {
+        const msgs = getJsonMessages(browserWs);
+        return expect(msgs.some((m) => m.type === "thinking")).toBeTruthy();
+      });
+
+      // Cancel mid-flight
+      await session.onCancel();
+
+      await new Promise((r) => setTimeout(r, 200));
+
+      const msgs = getJsonMessages(browserWs);
+      // Should NOT have a "chat" message
+      expect(msgs.some((m) => m.type === "chat")).toBe(false);
+      // Should NOT have an "error" message (abort is not an error)
+      expect(msgs.filter((m) => m.type === "error")).toHaveLength(0);
+    });
+
+    it("handles TTS synthesis error", async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResponse("Hello there!"));
+      mockTtsSynthesize.mockRejectedValueOnce(new Error("TTS connection failed"));
+
+      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+      await session.start();
+      // Clear greeting TTS call and startup messages
+      mockTtsSynthesize.mockClear();
+      mockTtsSynthesize.mockRejectedValueOnce(new Error("TTS connection failed"));
+      browserWs.sent.length = 0;
+
+      capturedSttEvents!.onTurn("Hi");
+
+      await vi.waitFor(() => {
+        const msgs = getJsonMessages(browserWs);
+        return expect(msgs.some((m) => m.type === "chat")).toBeTruthy();
+      });
+
+      // Wait for TTS error to propagate
+      await new Promise((r) => setTimeout(r, 200));
+
+      const msgs = getJsonMessages(browserWs);
+      const errMsg = msgs.find((m) => m.type === "error");
+      expect(errMsg).toMatchObject({ message: "TTS synthesis failed" });
+
+      consoleSpy.mockRestore();
+    });
+  }); // close handleTurn
+
+  describe("sendJson/sendBytes when WS is closed", () => {
+    it("sendJson is safe when WS is not OPEN", async () => {
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+      await session.start();
+
+      // Close the WS
+      browserWs.readyState = 3; // CLOSED
+      browserWs.sent.length = 0;
+
+      // Should not throw
+      await session.onCancel();
+
+      // Nothing should have been sent
+      expect(browserWs.sent).toHaveLength(0);
+    });
+
+    it("sendBytes is safe when WS send throws", async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResponse("Hello!"));
+
+      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
+      await session.start();
+
+      // Make send throw
+      browserWs.send = vi.fn(() => {
+        throw new Error("WS closed");
+      });
+
+      // Trigger a turn — should not crash
+      capturedSttEvents!.onTurn("Hi");
+
+      await new Promise((r) => setTimeout(r, 200));
+      // No crash = success
+    });
   });
 
   describe("onAudio", () => {

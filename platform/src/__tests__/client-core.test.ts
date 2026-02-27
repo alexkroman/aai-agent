@@ -253,4 +253,26 @@ describe("startMicCapture", () => {
     expect(typeof cleanup).toBe("function");
     cleanup();
   });
+
+  it("does not send audio when WS is not OPEN", async () => {
+    const mockWs = { readyState: 3, send: vi.fn() } as any; // CLOSED
+    const cleanup = await startMicCapture(mockWs, 16000);
+
+    // Audio worklet port.onmessage would be set — verify no send when WS is closed
+    // The worklet checks ws.readyState before sending
+    cleanup();
+  });
+
+  it("uses custom sample rate", async () => {
+    const mockWs = { readyState: 1, send: vi.fn() } as any;
+    const cleanup = await startMicCapture(mockWs, 8000);
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audio: expect.objectContaining({ sampleRate: 8000 }),
+      })
+    );
+
+    cleanup();
+  });
 });

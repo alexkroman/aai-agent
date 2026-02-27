@@ -414,6 +414,105 @@ describe("VoiceSession", () => {
     });
   });
 
+  describe("config precedence", () => {
+    it("config object overrides top-level instructions/greeting/voice", async () => {
+      const { session, stateChanges } = createSession({
+        instructions: "top-level instructions",
+        greeting: "top-level greeting",
+        voice: "top-level-voice",
+        config: {
+          instructions: "config instructions",
+          greeting: "config greeting",
+          voice: "config-voice",
+        },
+      });
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      const configMsg = JSON.parse(lastWs().sent[0] as string);
+      expect(configMsg.instructions).toBe("config instructions");
+      expect(configMsg.greeting).toBe("config greeting");
+      expect(configMsg.voice).toBe("config-voice");
+    });
+
+    it("falls back to top-level options when config is absent", async () => {
+      const { session, stateChanges } = createSession({
+        instructions: "top instructions",
+        greeting: "top greeting",
+        voice: "top-voice",
+      });
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      const configMsg = JSON.parse(lastWs().sent[0] as string);
+      expect(configMsg.instructions).toBe("top instructions");
+      expect(configMsg.greeting).toBe("top greeting");
+      expect(configMsg.voice).toBe("top-voice");
+    });
+
+    it("uses default platformUrl when none specified", async () => {
+      const { session, stateChanges } = createSession({ platformUrl: undefined });
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      expect(lastWs().url).toContain("wss://platform.example.com/session");
+    });
+  });
+
+  describe("edge cases", () => {
+    it("unknown message type does not crash", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // Send unknown message type — should not throw
+      lastWs().simulateMessage({ type: "unknown_type", data: "test" });
+
+      // Verify session still works
+      lastWs().simulateMessage({ type: "thinking" });
+      expect(stateChanges).toContain("thinking");
+    });
+
+    it("binary data before player is created does not crash", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // Send binary BEFORE 'ready' message creates the player
+      const audioData = new Int16Array([100, 200, 300]).buffer;
+      lastWs().simulateBinary(audioData);
+
+      // Should not throw — player?.enqueue is safe because player is null
+    });
+
+    it("cancel before connect is safe (no WS yet)", () => {
+      const { session } = createSession();
+      // Don't connect — cancel should not throw
+      session.cancel();
+    });
+
+    it("reset before connect is safe (no WS yet)", () => {
+      const { session } = createSession();
+      session.reset();
+    });
+
+    it("disconnect before connect is safe (no WS yet)", () => {
+      const { session } = createSession();
+      session.disconnect();
+    });
+
+    it("onclose fires connecting state change", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // Simulate server-side close
+      lastWs().close();
+
+      expect(stateChanges[stateChanges.length - 1]).toBe("connecting");
+    });
+  });
+
   describe("full message flow", () => {
     it("simulates a complete conversation turn", async () => {
       const { session, stateChanges, receivedMessages, transcripts } = createSession();
