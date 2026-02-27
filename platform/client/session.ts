@@ -298,10 +298,15 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   }
 
   reset(): void {
+    this.player?.flush();
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: CLIENT_MSG.RESET }));
+    } else {
+      // Not connected — emit reset locally and reconnect for a fresh session
+      this.emit("reset");
+      this.disconnect();
+      this.connect();
     }
-    this.player?.flush();
   }
 
   disconnect(): void {

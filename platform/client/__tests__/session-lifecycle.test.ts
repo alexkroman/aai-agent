@@ -97,6 +97,63 @@ describe("VoiceSession — reset", () => {
     });
     expect(resetMsg).toBeDefined();
   });
+
+  it("emits reset and reconnects when WebSocket is not open", async () => {
+    const { session, stateChanges } = createSession();
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Disconnect so WebSocket is closed
+    session.disconnect();
+
+    const resetEvents: string[] = [];
+    session.on("reset", () => resetEvents.push("reset"));
+
+    const wsBefore = wsInstances.length;
+
+    session.reset();
+
+    // Should have emitted reset locally
+    expect(resetEvents).toHaveLength(1);
+
+    // Should have created a new WebSocket (reconnected)
+    expect(wsInstances.length).toBe(wsBefore + 1);
+
+    // New connection should reach ready state
+    await vi.waitFor(() =>
+      expect(stateChanges.filter((s) => s === "ready").length).toBeGreaterThanOrEqual(2)
+    );
+  });
+
+  it("emits reset and reconnects when in error state with closed WebSocket", async () => {
+    vi.useFakeTimers();
+    const { session, stateChanges } = createSession();
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    // Exhaust reconnect attempts to reach error state with no open WS
+    for (let i = 0; i < 5; i++) {
+      lastWs().close();
+      await vi.advanceTimersByTimeAsync(20000);
+    }
+    lastWs().close();
+    expect(stateChanges).toContain("error");
+
+    const resetEvents: string[] = [];
+    session.on("reset", () => resetEvents.push("reset"));
+
+    const wsBefore = wsInstances.length;
+
+    session.reset();
+
+    // Should have emitted reset locally
+    expect(resetEvents).toHaveLength(1);
+
+    // Should have created a new WebSocket (reconnected)
+    expect(wsInstances.length).toBe(wsBefore + 1);
+
+    vi.useRealTimers();
+  });
 });
 
 describe("VoiceSession — disconnect", () => {
