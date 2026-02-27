@@ -7,8 +7,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
 import { loadPlatformConfig } from "./config.js";
 import { MSG, PATHS } from "./constants.js";
-import { ERR } from "./errors.js";
+import { ERR, formatZodErrors } from "./errors.js";
 import { callLLM } from "./llm.js";
+import { createLogger } from "./logger.js";
 import { Sandbox } from "./sandbox.js";
 import { connectStt } from "./stt.js";
 import { TtsClient } from "./tts.js";
@@ -20,6 +21,8 @@ import {
 import { VoiceSession, type SessionDeps } from "./session.js";
 import { normalizeVoiceText } from "./voice-cleaner.js";
 
+const log = createLogger("server");
+
 const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
   ".mjs": "application/javascript",
@@ -30,6 +33,7 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+/** Options for creating a platform server instance. */
 export interface ServerOptions {
   port: number;
   clientDir?: string;
@@ -38,6 +42,7 @@ export interface ServerOptions {
   sessionDepsOverride?: Partial<SessionDeps>;
 }
 
+/** Handle returned by startServer, providing the port and a close method. */
 export interface ServerHandle {
   port: number;
   close: () => Promise<void>;
@@ -46,14 +51,15 @@ export interface ServerHandle {
 /** Per-customer secrets store, keyed by API key. */
 type SecretsStore = Record<string, Record<string, string>>;
 
+/** Load a JSON secrets file mapping API keys to per-customer secret maps. */
 export async function loadSecretsFile(path: string): Promise<SecretsStore> {
   try {
     const content = await readFile(path, "utf-8");
     const parsed = JSON.parse(content);
-    console.log(`[server] Loaded secrets for ${Object.keys(parsed).length} customer(s)`);
+    log.info({ count: Object.keys(parsed).length }, "Loaded customer secrets");
     return parsed as SecretsStore;
   } catch (err) {
-    console.warn(`[server] Failed to load secrets file: ${err}`);
+    log.warn({ err }, "Failed to load secrets file");
     return {};
   }
 }
@@ -119,7 +125,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         } catch (err: unknown) {
           // ENOENT is expected (file not found → fall through to 404)
           if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
-            console.warn(`[server] Unexpected error reading ${pathname}:`, err);
+            log.warn({ err, pathname }, "Unexpected error reading file");
           }
         }
       }
@@ -149,6 +155,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
 
   wss.on("connection", (ws: WebSocket, _req: IncomingMessage) => {
     const sessionId = randomBytes(16).toString("hex");
+    const sid = sessionId.slice(0, 8);
 
     let apiKey = "";
     let authenticated = false;
@@ -164,7 +171,13 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         return;
       }
 
-      const parsed = ControlMessageSchema.safeParse(JSON.parse(raw.toString()));
+      let json;
+      try {
+        json = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      const parsed = ControlMessageSchema.safeParse(json);
       if (!parsed.success) return;
 
       if (parsed.data.type === MSG.CANCEL) {
@@ -197,7 +210,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
       try {
         data = JSON.parse(raw.toString());
       } catch {
-        console.warn("[server] Unparseable JSON from client");
+        log.warn({ sid }, "Unparseable JSON from client");
         return;
       }
 
@@ -226,12 +239,10 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
 
         // NOTE: We log all connections. Unrecognized keys still work (they just get no secrets).
         if (Object.keys(secrets).length > 0 && !secrets[apiKey]) {
-          console.warn(`[server] Unrecognized API key: ${apiKey.slice(0, 8)}...`);
+          log.warn({ sid, key: apiKey.slice(0, 8) }, "Unrecognized API key");
         }
 
-        console.log(
-          `[server] Authenticated key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
-        );
+        log.info({ sid, key: apiKey.slice(0, 8) }, "Authenticated");
         return;
       }
 
@@ -243,6 +254,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
             JSON.stringify({
               type: MSG.ERROR,
               message: ERR.INVALID_CONFIGURE,
+              details: formatZodErrors(parsed.error),
             })
           );
           return;
@@ -273,9 +285,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         sessions.set(sessionId, session);
         configured = true;
 
-        console.log(
-          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`
-        );
+        log.info({ sid, tools: cfg.tools?.length ?? 0 }, "Session configured");
 
         await session.start();
         ready = true;
@@ -293,7 +303,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     });
 
     ws.on("close", async () => {
-      console.log(`[server] Session ${sessionId.slice(0, 8)} disconnected`);
+      log.info({ sid }, "Session disconnected");
       if (session) {
         await session.stop();
         sessions.delete(sessionId);
@@ -301,7 +311,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     });
 
     ws.on("error", (err) => {
-      console.error(`[server] WS error session=${sessionId.slice(0, 8)}:`, err.message);
+      log.error({ sid, err }, "WebSocket error");
     });
   });
 
@@ -311,13 +321,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     httpServer.listen(options.port, () => {
       const addr = httpServer.address();
       const p = typeof addr === "object" && addr ? addr.port : options.port;
-      console.log(`[server] Platform running on port ${p}`);
-      console.log(`[server] WebSocket endpoint: ws://localhost:${p}/session`);
-      if (options.clientDir) {
-        console.log(`[server] Client library: http://localhost:${p}/client.js`);
-        console.log(`[server] React hook: http://localhost:${p}/react.js`);
-      }
-      console.log(`[server] Health check: http://localhost:${p}/health`);
+      log.info({ port: p, ws: `/session`, health: `/health` }, "Platform running");
       resolve(p);
     });
   });
@@ -325,7 +329,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
   // ── Graceful shutdown ──────────────────────────────────────────
 
   const close = async () => {
-    console.log("\n[server] Shutting down...");
+    log.info("Shutting down...");
     process.removeListener("SIGINT", shutdown);
     process.removeListener("SIGTERM", shutdown);
     for (const [id, sess] of sessions) {

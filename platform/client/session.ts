@@ -13,6 +13,7 @@ import {
   DEFAULT_VOICE,
   PING_INTERVAL_MS,
   serializeTools,
+  toWebSocketUrl,
 } from "./types.js";
 
 import { TypedEmitter, type SessionEventMap } from "./emitter.js";
@@ -76,8 +77,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
 
   connect(): void {
     this.intentionalDisconnect = false;
-    const platformUrl =
-      this.options.platformUrl ?? "wss://platform.example.com";
+    const platformUrl = toWebSocketUrl(
+      this.options.platformUrl ?? "wss://platform.example.com"
+    );
     const ws = new WebSocket(`${platformUrl}/session`);
     this.ws = ws;
     ws.binaryType = "arraybuffer";
@@ -91,11 +93,10 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         })
       );
 
-      // Build config from options
-      const config = this.options.config ?? {};
-      const instructions = config.instructions ?? "";
-      const greeting = config.greeting ?? "";
-      const voice = config.voice ?? DEFAULT_VOICE;
+      // Read flat config fields from options
+      const instructions = this.options.instructions ?? "";
+      const greeting = this.options.greeting ?? "";
+      const voice = this.options.voice ?? DEFAULT_VOICE;
 
       // Serialize tools and send configure message
       const tools = this.options.tools
@@ -196,14 +197,19 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
       case CLIENT_MSG.PONG:
         this.pongReceived = true;
         break;
-      case CLIENT_MSG.ERROR:
-        console.error("Agent error:", msg.message);
+      case CLIENT_MSG.ERROR: {
+        const details = (msg as import("./protocol.js").ErrorMessage).details;
+        const fullMessage = details?.length
+          ? `${msg.message}: ${details.join(", ")}`
+          : msg.message;
+        console.error("Agent error:", fullMessage);
         this.emit(
           "error",
-          new SessionError(SessionErrorCode.SERVER_ERROR, msg.message)
+          new SessionError(SessionErrorCode.SERVER_ERROR, fullMessage)
         );
         this.changeState("error");
         break;
+      }
     }
   }
 
