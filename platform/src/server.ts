@@ -270,6 +270,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
           voice: cfg.voice ?? "jess",
           tools: cfg.tools ?? [],
           prompt: cfg.prompt,
+          builtinTools: cfg.builtinTools,
         };
 
         // Build SessionDeps — the composition root

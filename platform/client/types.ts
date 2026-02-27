@@ -51,6 +51,8 @@ export interface AgentOptions {
   voice?: string;
   prompt?: string;
   tools?: Record<string, ToolDef>;
+  /** Names of built-in server-side tools to enable (e.g., ["web_search"]). */
+  builtinTools?: string[];
 }
 
 // ── Tool context (for typing handler arguments) ───────────────

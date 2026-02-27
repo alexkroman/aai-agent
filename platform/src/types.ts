@@ -142,6 +142,8 @@ export interface AgentConfig {
   tools: ToolDef[];
   /** Optional transcription prompt to guide STT. */
   prompt?: string;
+  /** Names of built-in server-side tools to enable (e.g., ["web_search"]). */
+  builtinTools?: string[];
 }
 
 // ── Zod Schemas for incoming messages ──────────────────────────────
@@ -169,6 +171,7 @@ export const ConfigureMessageSchema = z.object({
       })
     )
     .optional(),
+  builtinTools: z.array(z.string()).optional(),
 });
 
 /** Schema for browser control messages (audio_ready, cancel, reset). */

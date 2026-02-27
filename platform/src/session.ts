@@ -11,6 +11,7 @@ import type { Sandbox } from "./sandbox.js";
 import type { connectStt as connectSttType, SttEvents, SttHandle } from "./stt.js";
 import type { TtsClient } from "./tts.js";
 import type { normalizeVoiceText as normalizeVoiceTextType } from "./voice-cleaner.js";
+import { executeBuiltinTool, getBuiltinToolSchemas } from "./builtin-tools.js";
 import {
   DEFAULT_GREETING,
   DEFAULT_INSTRUCTIONS,
@@ -72,7 +73,10 @@ export class VoiceSession {
       },
     };
 
-    this.toolSchemas = toolDefsToSchemas(agentConfig.tools);
+    this.toolSchemas = [
+      ...toolDefsToSchemas(agentConfig.tools),
+      ...getBuiltinToolSchemas(agentConfig.builtinTools ?? []),
+    ];
 
     // Initialize system message
     const instructions = agentConfig.instructions || DEFAULT_INSTRUCTIONS;
@@ -323,7 +327,11 @@ export class VoiceSession {
               const validationError = validateToolArgs(tc.function.name, args, this.toolSchemas);
               if (validationError) return validationError;
               this.logger.debug({ tool: tc.function.name, args }, "tool call");
-              const result = await this.deps.sandbox.execute(tc.function.name, args);
+
+              // Try built-in tools first, then fall back to sandbox
+              const builtinResult = await executeBuiltinTool(tc.function.name, args);
+              const result =
+                builtinResult ?? (await this.deps.sandbox.execute(tc.function.name, args));
               this.logger.debug(
                 { tool: tc.function.name, resultLength: result.length },
                 "tool result"

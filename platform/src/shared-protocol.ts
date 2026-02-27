@@ -126,6 +126,8 @@ export interface ConfigureMessage {
     parameters: Record<string, unknown>;
     handler: string;
   }[];
+  /** Names of built-in server-side tools to enable (e.g., ["web_search"]). */
+  builtinTools?: string[];
 }
 
 export interface AudioReadyMessage {

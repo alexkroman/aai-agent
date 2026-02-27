@@ -20,6 +20,7 @@
     "prepare": "cd .. && husky"
   },
   "dependencies": {
+    "duck-duck-scrape": "^2.2.7",
     "isolated-vm": "^6.0.2",
     "number-to-words": "^1.2.4",
     "pino": "^10.3.1",

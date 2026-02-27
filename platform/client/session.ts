@@ -110,6 +110,8 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         ? serializeTools(this.options.tools)
         : [];
 
+      const builtinTools = this.options.builtinTools;
+
       ws.send(
         JSON.stringify({
           type: CLIENT_MSG.CONFIGURE,
@@ -118,6 +120,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
           voice,
           ...(prompt ? { prompt } : {}),
           tools,
+          ...(builtinTools?.length ? { builtinTools } : {}),
         })
       );
       this.changeState("ready");
