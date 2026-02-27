@@ -1,6 +1,21 @@
 // core.ts — Shared: WS protocol, tool serialization, audio capture + playback.
 // This is bundled into client.js and react.js served by the platform.
 
+import {
+  CLIENT_MSG,
+  parseServerMessage,
+  type ServerMessage,
+} from "./protocol.js";
+
+// Worklet source is inlined as text by esbuild (text loader for .worklet.js)
+// @ts-expect-error — esbuild text import
+import pcm16CaptureWorklet from "./worklets/pcm16-capture.worklet.js";
+// @ts-expect-error — esbuild text import
+import pcm16PlaybackWorklet from "./worklets/pcm16-playback.worklet.js";
+
+export { CLIENT_MSG, parseServerMessage };
+export type { ServerMessage };
+
 export type AgentState =
   | "connecting"
   | "ready"
@@ -8,6 +23,16 @@ export type AgentState =
   | "thinking"
   | "speaking"
   | "error";
+
+/** Valid state transitions. Each key maps to the set of states it can transition to. */
+const VALID_TRANSITIONS: Record<AgentState, Set<AgentState>> = {
+  connecting: new Set(["ready", "error"]),
+  ready: new Set(["listening", "error", "connecting"]),
+  listening: new Set(["thinking", "speaking", "error", "connecting"]),
+  thinking: new Set(["speaking", "listening", "error", "connecting"]),
+  speaking: new Set(["listening", "thinking", "error", "connecting"]),
+  error: new Set(["connecting", "ready"]),
+};
 
 export interface Message {
   role: "user" | "assistant";
@@ -24,9 +49,6 @@ export interface ToolDef {
 export interface AgentOptions {
   apiKey: string;
   platformUrl?: string;
-  instructions?: string;
-  greeting?: string;
-  voice?: string;
   config?: { instructions?: string; greeting?: string; voice?: string };
   tools?: Record<string, ToolDef>;
 }
@@ -67,46 +89,16 @@ export async function startMicCapture(
   // Buffer ~100ms of audio (1600 samples at 16kHz) before sending.
   // AssemblyAI requires frames between 50-1000ms; AudioWorklet's
   // process() fires every 128 samples (8ms) which is too small.
-  const MIN_SAMPLES = Math.floor(sampleRate * 0.1);
-  const workletCode = `
-    class PCM16Processor extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this._buf = [];
-        this._len = 0;
-        this._min = ${MIN_SAMPLES};
-      }
-      process(inputs) {
-        const input = inputs[0][0];
-        if (input) {
-          this._buf.push(input.slice());
-          this._len += input.length;
-          if (this._len >= this._min) {
-            const merged = new Float32Array(this._len);
-            let off = 0;
-            for (const chunk of this._buf) {
-              merged.set(chunk, off);
-              off += chunk.length;
-            }
-            const int16 = new Int16Array(this._len);
-            for (let i = 0; i < this._len; i++) {
-              int16[i] = Math.max(-32768, Math.min(32767, merged[i] * 32768));
-            }
-            this.port.postMessage(int16.buffer, [int16.buffer]);
-            this._buf = [];
-            this._len = 0;
-          }
-        }
-        return true;
-      }
-    }
-    registerProcessor("pcm16", PCM16Processor);
-  `;
-  const blob = new Blob([workletCode], { type: "application/javascript" });
-  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+  const minSamples = Math.floor(sampleRate * 0.1);
+  const blob = new Blob([pcm16CaptureWorklet], { type: "application/javascript" });
+  const blobUrl = URL.createObjectURL(blob);
+  await ctx.audioWorklet.addModule(blobUrl);
+  URL.revokeObjectURL(blobUrl);
 
   let frameCount = 0;
-  const worklet = new AudioWorkletNode(ctx, "pcm16");
+  const worklet = new AudioWorkletNode(ctx, "pcm16", {
+    processorOptions: { minSamples },
+  });
   worklet.port.onmessage = (e) => {
     frameCount++;
     if (frameCount <= 3) {
@@ -139,42 +131,10 @@ export async function createAudioPlayer(
   const ctx = new AudioContext({ sampleRate });
   await ctx.resume(); // Ensure AudioContext is not suspended (autoplay policy)
 
-  const workletCode = `
-    class PCM16PlaybackProcessor extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this._buf = new Float32Array(0);
-        this.port.onmessage = (e) => {
-          if (e.data === "flush") {
-            this._buf = new Float32Array(0);
-            return;
-          }
-          // Append new samples to buffer
-          const incoming = e.data;
-          const merged = new Float32Array(this._buf.length + incoming.length);
-          merged.set(this._buf);
-          merged.set(incoming, this._buf.length);
-          this._buf = merged;
-        };
-      }
-      process(_inputs, outputs) {
-        const output = outputs[0][0];
-        if (!output) return true;
-        const n = Math.min(this._buf.length, output.length);
-        if (n > 0) {
-          output.set(this._buf.subarray(0, n));
-          this._buf = this._buf.subarray(n);
-        }
-        // Silence for any remaining samples
-        for (let i = n; i < output.length; i++) output[i] = 0;
-        return true;
-      }
-    }
-    registerProcessor("pcm16-playback", PCM16PlaybackProcessor);
-  `;
-
-  const blob = new Blob([workletCode], { type: "application/javascript" });
-  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+  const blob = new Blob([pcm16PlaybackWorklet], { type: "application/javascript" });
+  const blobUrl = URL.createObjectURL(blob);
+  await ctx.audioWorklet.addModule(blobUrl);
+  URL.revokeObjectURL(blobUrl);
 
   const worklet = new AudioWorkletNode(ctx, "pcm16-playback");
   worklet.connect(ctx.destination);
@@ -207,32 +167,68 @@ export interface SessionCallbacks {
   onError: (message: string) => void;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const PING_INTERVAL_MS = 30_000;
+
 export class VoiceSession {
   private ws: WebSocket | null = null;
   private player: AudioPlayer | null = null;
   private micCleanup: (() => void) | null = null;
   private callbacks: SessionCallbacks;
   private options: AgentOptions;
+  private currentState: AgentState = "connecting";
+
+  // Reconnection state
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private intentionalDisconnect = false;
+
+  // Heartbeat state
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private pongReceived = true;
 
   constructor(options: AgentOptions, callbacks: SessionCallbacks) {
     this.options = options;
     this.callbacks = callbacks;
   }
 
+  private changeState(newState: AgentState): void {
+    if (newState === this.currentState) return;
+    if (
+      typeof process !== "undefined" &&
+      process.env?.NODE_ENV !== "production" &&
+      !VALID_TRANSITIONS[this.currentState].has(newState)
+    ) {
+      console.warn(
+        `[VoiceSession] Invalid state transition: ${this.currentState} -> ${newState}`
+      );
+    }
+    this.currentState = newState;
+    this.callbacks.onStateChange(newState);
+  }
+
   connect(): void {
+    this.intentionalDisconnect = false;
     const platformUrl =
       this.options.platformUrl ?? "wss://platform.example.com";
-    const ws = new WebSocket(`${platformUrl}/session?key=${this.options.apiKey}`);
+    const ws = new WebSocket(`${platformUrl}/session`);
     this.ws = ws;
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
+      // Send authenticate message first
+      ws.send(
+        JSON.stringify({
+          type: CLIENT_MSG.AUTHENTICATE,
+          apiKey: this.options.apiKey,
+        })
+      );
+
       // Build config from options
       const config = this.options.config ?? {};
-      const instructions =
-        config.instructions ?? this.options.instructions ?? "";
-      const greeting = config.greeting ?? this.options.greeting ?? "";
-      const voice = config.voice ?? this.options.voice ?? "jess";
+      const instructions = config.instructions ?? "";
+      const greeting = config.greeting ?? "";
+      const voice = config.voice ?? "jess";
 
       // Serialize tools and send configure message
       const tools = this.options.tools
@@ -241,14 +237,17 @@ export class VoiceSession {
 
       ws.send(
         JSON.stringify({
-          type: "configure",
+          type: CLIENT_MSG.CONFIGURE,
           instructions,
           greeting,
           voice,
           tools,
         })
       );
-      this.callbacks.onStateChange("ready");
+      this.changeState("ready");
+
+      // Start heartbeat
+      this.startPing();
     };
 
     ws.onmessage = (event) => {
@@ -257,76 +256,145 @@ export class VoiceSession {
         return;
       }
 
-      const msg = JSON.parse(event.data as string);
+      const msg = parseServerMessage(event.data as string);
+      if (!msg) return;
+
       switch (msg.type) {
-        case "ready": {
+        case CLIENT_MSG.READY: {
+          this.reconnectAttempts = 0;
           Promise.all([
             createAudioPlayer(msg.ttsSampleRate ?? 24000),
             startMicCapture(ws, msg.sampleRate ?? 16000),
           ]).then(([player, micCleanup]) => {
             this.player = player;
             this.micCleanup = micCleanup;
-            this.callbacks.onStateChange("listening");
+            this.changeState("listening");
           }).catch((err) => {
             console.error("Audio setup failed:", err);
             this.callbacks.onError(`Microphone access failed: ${err.message}`);
-            this.callbacks.onStateChange("error");
+            this.changeState("error");
           });
           break;
         }
-        case "greeting":
+        case CLIENT_MSG.GREETING:
           this.callbacks.onMessage({ role: "assistant", text: msg.text });
-          this.callbacks.onStateChange("speaking");
+          this.changeState("speaking");
           break;
-        case "transcript":
+        case CLIENT_MSG.TRANSCRIPT:
           this.callbacks.onTranscript(msg.text);
           break;
-        case "turn":
+        case CLIENT_MSG.TURN:
           this.callbacks.onMessage({ role: "user", text: msg.text });
           this.callbacks.onTranscript("");
           break;
-        case "thinking":
-          this.callbacks.onStateChange("thinking");
+        case CLIENT_MSG.THINKING:
+          this.changeState("thinking");
           break;
-        case "chat":
+        case CLIENT_MSG.CHAT:
           this.callbacks.onMessage({
             role: "assistant",
             text: msg.text,
             steps: msg.steps,
           });
-          this.callbacks.onStateChange("speaking");
+          this.changeState("speaking");
           break;
-        case "tts_done":
-          this.callbacks.onStateChange("listening");
+        case CLIENT_MSG.TTS_DONE:
+          this.changeState("listening");
           break;
-        case "cancelled":
+        case CLIENT_MSG.CANCELLED:
           this.player?.flush();
-          this.callbacks.onStateChange("listening");
+          this.changeState("listening");
           break;
-        case "error":
+        case CLIENT_MSG.PONG:
+          this.pongReceived = true;
+          break;
+        case CLIENT_MSG.ERROR:
           console.error("Agent error:", msg.message);
           this.callbacks.onError(msg.message);
-          this.callbacks.onStateChange("error");
+          this.changeState("error");
           break;
       }
     };
 
-    ws.onclose = () => this.callbacks.onStateChange("connecting");
+    ws.onclose = () => {
+      this.stopPing();
+      if (this.intentionalDisconnect) {
+        this.changeState("connecting");
+        return;
+      }
+      this.cleanupAudio();
+      this.scheduleReconnect();
+    };
+  }
+
+  private startPing(): void {
+    this.stopPing();
+    this.pongReceived = true;
+    this.pingInterval = setInterval(() => {
+      if (!this.pongReceived) {
+        // No pong received since last ping — connection is dead
+        this.ws?.close();
+        return;
+      }
+      this.pongReceived = false;
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: CLIENT_MSG.PING }));
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPing(): void {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.callbacks.onError("Connection lost. Please refresh.");
+      this.changeState("error");
+      return;
+    }
+    const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 16000);
+    this.reconnectAttempts++;
+    this.changeState("connecting");
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private cleanupAudio(): void {
+    this.micCleanup?.();
+    this.micCleanup = null;
+    this.player?.close();
+    this.player = null;
   }
 
   cancel(): void {
-    this.ws?.send(JSON.stringify({ type: "cancel" }));
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: CLIENT_MSG.CANCEL }));
+    }
     this.player?.flush();
   }
 
   reset(): void {
-    this.ws?.send(JSON.stringify({ type: "reset" }));
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "reset" }));
+    }
     this.player?.flush();
   }
 
   disconnect(): void {
-    this.micCleanup?.();
-    this.player?.close();
+    this.intentionalDisconnect = true;
+    this.stopPing();
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.cleanupAudio();
     this.ws?.close();
+    this.ws = null;
   }
 }

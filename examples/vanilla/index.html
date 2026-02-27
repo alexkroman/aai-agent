@@ -18,7 +18,8 @@
       platformUrl: PLATFORM.replace("http", "ws"),
       apiKey: "pk_your_publishable_key",
 
-      instructions: `You are Aria, a luxury travel concierge. You help customers plan trips,
+      config: {
+        instructions: `You are Aria, a luxury travel concierge. You help customers plan trips,
 find flights and hotels, check weather at destinations, and convert currencies.
 
 Rules:
@@ -28,10 +29,11 @@ Rules:
 - Be warm and enthusiastic but concise — this is a voice conversation
 - If the customer hasn't specified dates, ask for them before searching flights`,
 
-      greeting:
-        "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
+        greeting:
+          "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
 
-      voice: "tara",
+        voice: "tara",
+      },
 
       tools: {
         search_flights: {

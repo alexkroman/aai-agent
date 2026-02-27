@@ -133,7 +133,13 @@ export interface AgentConfig {
 
 // ── Zod Schemas for incoming messages ──────────────────────────────
 
-/** Schema for the browser's initial configure message. */
+/** Schema for the browser's authenticate message (must be first). */
+export const AuthenticateMessageSchema = z.object({
+  type: z.literal("authenticate"),
+  apiKey: z.string().min(1),
+});
+
+/** Schema for the browser's configure message. */
 export const ConfigureMessageSchema = z.object({
   type: z.literal("configure"),
   instructions: z.string().optional(),

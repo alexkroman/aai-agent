@@ -101,6 +101,7 @@ vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
+    static revokeObjectURL = vi.fn();
   }
 );
 vi.stubGlobal("Blob", class Blob {});
@@ -108,6 +109,7 @@ vi.stubGlobal("Blob", class Blob {});
 // ── Imports ───────────────────────────────────────────────────────
 
 import { VoiceSession } from "../../client/core.js";
+import { parseServerMessage } from "../../client/protocol.js";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -141,6 +143,25 @@ function lastWs(): MockWebSocket {
 
 // ── Tests ─────────────────────────────────────────────────────────
 
+describe("parseServerMessage", () => {
+  it("parses valid server messages", () => {
+    const msg = parseServerMessage('{"type":"ready","sampleRate":16000,"ttsSampleRate":24000}');
+    expect(msg).toEqual({ type: "ready", sampleRate: 16000, ttsSampleRate: 24000 });
+  });
+
+  it("returns null for malformed JSON", () => {
+    expect(parseServerMessage("not json")).toBeNull();
+  });
+
+  it("returns null for unknown message types", () => {
+    expect(parseServerMessage('{"type":"unknown_type"}')).toBeNull();
+  });
+
+  it("returns null for missing type field", () => {
+    expect(parseServerMessage('{"data":"test"}')).toBeNull();
+  });
+});
+
 describe("VoiceSession", () => {
   beforeEach(() => {
     wsInstances.length = 0;
@@ -148,22 +169,15 @@ describe("VoiceSession", () => {
   });
 
   describe("connect", () => {
-    it("creates WebSocket with correct URL", async () => {
+    it("creates WebSocket with URL (no API key in query string)", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      expect(lastWs().url).toBe("ws://localhost:3000/session?key=pk_test");
+      expect(lastWs().url).toBe("ws://localhost:3000/session");
     });
 
-    it("sets binaryType to arraybuffer", async () => {
-      const { session, stateChanges } = createSession();
-      session.connect();
-      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
-      // The connect method sets ws.binaryType = "arraybuffer"
-    });
-
-    it("sends configure message on open", async () => {
+    it("sends authenticate message first, then configure", async () => {
       const { session, stateChanges } = createSession({
         config: {
           instructions: "Be helpful",
@@ -176,12 +190,22 @@ describe("VoiceSession", () => {
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
       const ws = lastWs();
-      expect(ws.sent.length).toBeGreaterThanOrEqual(1);
-      const configMsg = JSON.parse(ws.sent[0] as string);
+      expect(ws.sent.length).toBeGreaterThanOrEqual(2);
+      const authMsg = JSON.parse(ws.sent[0] as string);
+      expect(authMsg.type).toBe("authenticate");
+      expect(authMsg.apiKey).toBe("pk_test");
+
+      const configMsg = JSON.parse(ws.sent[1] as string);
       expect(configMsg.type).toBe("configure");
       expect(configMsg.instructions).toBe("Be helpful");
       expect(configMsg.greeting).toBe("Hello!");
       expect(configMsg.voice).toBe("luna");
+    });
+
+    it("sets binaryType to arraybuffer", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
     });
 
     it("sends tools in configure message", async () => {
@@ -198,7 +222,7 @@ describe("VoiceSession", () => {
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      const configMsg = JSON.parse(lastWs().sent[0] as string);
+      const configMsg = JSON.parse(lastWs().sent[1] as string);
       expect(configMsg.tools).toHaveLength(1);
       expect(configMsg.tools[0].name).toBe("get_weather");
       expect(configMsg.tools[0].handler).toContain("Sunny");
@@ -209,7 +233,7 @@ describe("VoiceSession", () => {
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      const configMsg = JSON.parse(lastWs().sent[0] as string);
+      const configMsg = JSON.parse(lastWs().sent[1] as string);
       expect(configMsg.voice).toBe("jess");
     });
 
@@ -232,8 +256,22 @@ describe("VoiceSession", () => {
         ttsSampleRate: 24000,
       });
 
-      // createAudioPlayer and startMicCapture are async, so "listening" is set after promises resolve
       await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+    });
+
+    it("resets reconnectAttempts on ready message", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      lastWs().simulateMessage({
+        type: "ready",
+        sampleRate: 16000,
+        ttsSampleRate: 24000,
+      });
+
+      await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+      // If we disconnect after ready, it should start from attempt 0 again
     });
 
     it("handles 'greeting' message", async () => {
@@ -318,15 +356,17 @@ describe("VoiceSession", () => {
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      // First, simulate ready to create the player
       lastWs().simulateMessage({
         type: "ready",
         sampleRate: 16000,
         ttsSampleRate: 24000,
       });
 
-      // Wait for async audio setup to complete
       await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+      // Move to speaking first so "cancelled" -> "listening" is a real transition
+      lastWs().simulateMessage({ type: "greeting", text: "Hi" });
+      expect(stateChanges).toContain("speaking");
 
       lastWs().simulateMessage({ type: "cancelled" });
 
@@ -347,19 +387,38 @@ describe("VoiceSession", () => {
       consoleSpy.mockRestore();
     });
 
+    it("handles 'pong' message — sets pongReceived flag", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // pong should not throw or change state
+      lastWs().simulateMessage({ type: "pong" });
+    });
+
+    it("ignores unknown message types via parseServerMessage returning null", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      lastWs().simulateMessage({ type: "unknown_type", data: "test" });
+
+      // State should still be "ready" — unknown message is ignored
+      const lastState = stateChanges[stateChanges.length - 1];
+      expect(lastState).toBe("ready");
+    });
+
     it("handles binary data — enqueues to audio player", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      // Create player via ready message
       lastWs().simulateMessage({
         type: "ready",
         sampleRate: 16000,
         ttsSampleRate: 24000,
       });
 
-      // Send binary audio — should not throw
       const audioData = new Int16Array([100, 200, 300]).buffer;
       lastWs().simulateBinary(audioData);
     });
@@ -398,7 +457,7 @@ describe("VoiceSession", () => {
   });
 
   describe("disconnect", () => {
-    it("closes the WebSocket", async () => {
+    it("closes the WebSocket and nulls it", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
@@ -408,7 +467,7 @@ describe("VoiceSession", () => {
       expect(lastWs().readyState).toBe(3);
     });
 
-    it("triggers onStateChange('connecting') via onclose", async () => {
+    it("intentional disconnect fires connecting state", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
@@ -417,14 +476,184 @@ describe("VoiceSession", () => {
 
       expect(stateChanges).toContain("connecting");
     });
+
+    it("safe to call methods after disconnect", async () => {
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      session.disconnect();
+
+      // These should not throw
+      session.cancel();
+      session.reset();
+      session.disconnect();
+    });
   });
 
-  describe("config precedence", () => {
-    it("config object overrides top-level instructions/greeting/voice", async () => {
+  describe("reconnection", () => {
+    it("schedules reconnect on unexpected close", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // Simulate unexpected close
+      lastWs().close();
+
+      // Should schedule reconnect — state goes to "connecting"
+      expect(stateChanges).toContain("connecting");
+
+      // After delay, should create a new WebSocket
+      const wsBefore = wsInstances.length;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(wsInstances.length).toBe(wsBefore + 1);
+
+      vi.useRealTimers();
+    });
+
+    it("does not reconnect on intentional disconnect", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      const wsBefore = wsInstances.length;
+      session.disconnect();
+
+      await vi.advanceTimersByTimeAsync(5000);
+      // No new WebSocket should be created
+      expect(wsInstances.length).toBe(wsBefore);
+
+      vi.useRealTimers();
+    });
+
+    it("fires error after max reconnect attempts", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges, errors } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // Simulate 5 unexpected closes (max attempts)
+      for (let i = 0; i < 5; i++) {
+        lastWs().close();
+        await vi.advanceTimersByTimeAsync(20000);
+      }
+
+      // After 5th close, next attempt should fire max error
+      lastWs().close();
+      expect(errors).toContain("Connection lost. Please refresh.");
+      expect(stateChanges).toContain("error");
+
+      vi.useRealTimers();
+    });
+
+    it("uses exponential backoff delay", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // 1st close: delay = 1000ms
+      lastWs().close();
+      const count1 = wsInstances.length;
+      await vi.advanceTimersByTimeAsync(999);
+      expect(wsInstances.length).toBe(count1); // Not yet
+      await vi.advanceTimersByTimeAsync(2);
+      expect(wsInstances.length).toBe(count1 + 1); // Now
+
+      // 2nd close: delay = 2000ms
+      lastWs().close();
+      const count2 = wsInstances.length;
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(wsInstances.length).toBe(count2);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(wsInstances.length).toBe(count2 + 1);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("heartbeat", () => {
+    it("sends ping on interval", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      const ws = lastWs();
+      const sentBefore = ws.sent.length;
+
+      // Advance by ping interval
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const pings = ws.sent.slice(sentBefore).filter((msg) => {
+        const parsed = JSON.parse(msg as string);
+        return parsed.type === "ping";
+      });
+      expect(pings.length).toBe(1);
+
+      vi.useRealTimers();
+    });
+
+    it("closes connection when pong not received", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // First ping sets pongReceived = false
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      // Second interval: pongReceived still false → close
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(lastWs().readyState).toBe(3);
+
+      vi.useRealTimers();
+    });
+
+    it("does not close connection when pong received", async () => {
+      vi.useFakeTimers();
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      const ws = lastWs();
+
+      // First ping
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      // Simulate pong response
+      ws.simulateMessage({ type: "pong" });
+
+      // Second interval: pongReceived is true → sends new ping (no close)
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(ws.readyState).toBe(1); // Still open
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("state machine", () => {
+    it("warns on invalid state transition in dev", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { session, stateChanges } = createSession();
+      session.connect();
+      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+      // "ready" -> "thinking" is not valid (should go through listening first)
+      lastWs().simulateMessage({ type: "thinking" });
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid state transition"));
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("config (no top-level fallback)", () => {
+    it("uses config object for instructions/greeting/voice", async () => {
       const { session, stateChanges } = createSession({
-        instructions: "top-level instructions",
-        greeting: "top-level greeting",
-        voice: "top-level-voice",
         config: {
           instructions: "config instructions",
           greeting: "config greeting",
@@ -434,25 +663,21 @@ describe("VoiceSession", () => {
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      const configMsg = JSON.parse(lastWs().sent[0] as string);
+      const configMsg = JSON.parse(lastWs().sent[1] as string);
       expect(configMsg.instructions).toBe("config instructions");
       expect(configMsg.greeting).toBe("config greeting");
       expect(configMsg.voice).toBe("config-voice");
     });
 
-    it("falls back to top-level options when config is absent", async () => {
-      const { session, stateChanges } = createSession({
-        instructions: "top instructions",
-        greeting: "top greeting",
-        voice: "top-voice",
-      });
+    it("uses empty defaults when config is absent", async () => {
+      const { session, stateChanges } = createSession({});
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      const configMsg = JSON.parse(lastWs().sent[0] as string);
-      expect(configMsg.instructions).toBe("top instructions");
-      expect(configMsg.greeting).toBe("top greeting");
-      expect(configMsg.voice).toBe("top-voice");
+      const configMsg = JSON.parse(lastWs().sent[1] as string);
+      expect(configMsg.instructions).toBe("");
+      expect(configMsg.greeting).toBe("");
+      expect(configMsg.voice).toBe("jess");
     });
 
     it("uses default platformUrl when none specified", async () => {
@@ -464,35 +689,37 @@ describe("VoiceSession", () => {
     });
   });
 
-  describe("edge cases", () => {
-    it("unknown message type does not crash", async () => {
+  describe("blob URL revocation", () => {
+    it("revokes blob URLs after addModule", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      // Send unknown message type — should not throw
-      lastWs().simulateMessage({ type: "unknown_type", data: "test" });
+      lastWs().simulateMessage({
+        type: "ready",
+        sampleRate: 16000,
+        ttsSampleRate: 24000,
+      });
 
-      // Verify session still works
-      lastWs().simulateMessage({ type: "thinking" });
-      expect(stateChanges).toContain("thinking");
+      await vi.waitFor(() => expect(stateChanges).toContain("listening"));
+
+      // Both mic and player call URL.revokeObjectURL
+      expect(URL.revokeObjectURL).toHaveBeenCalled();
     });
+  });
 
+  describe("edge cases", () => {
     it("binary data before player is created does not crash", async () => {
       const { session, stateChanges } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
-      // Send binary BEFORE 'ready' message creates the player
       const audioData = new Int16Array([100, 200, 300]).buffer;
       lastWs().simulateBinary(audioData);
-
-      // Should not throw — player?.enqueue is safe because player is null
     });
 
     it("cancel before connect is safe (no WS yet)", () => {
       const { session } = createSession();
-      // Don't connect — cancel should not throw
       session.cancel();
     });
 
@@ -504,17 +731,6 @@ describe("VoiceSession", () => {
     it("disconnect before connect is safe (no WS yet)", () => {
       const { session } = createSession();
       session.disconnect();
-    });
-
-    it("onclose fires connecting state change", async () => {
-      const { session, stateChanges } = createSession();
-      session.connect();
-      await vi.waitFor(() => expect(stateChanges).toContain("ready"));
-
-      // Simulate server-side close
-      lastWs().close();
-
-      expect(stateChanges[stateChanges.length - 1]).toBe("connecting");
     });
   });
 

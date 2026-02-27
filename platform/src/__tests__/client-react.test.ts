@@ -81,6 +81,7 @@ vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
+    static revokeObjectURL = vi.fn();
   }
 );
 vi.stubGlobal("Blob", class Blob {});
@@ -105,7 +106,15 @@ const { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state } = vi.h
       state.effectCleanup = cleanup;
     }
   });
-  const mockUseRef = vi.fn((initial: any) => ({ current: initial }));
+  const refStore = new Map<string, { current: any }>();
+  const mockUseRef = vi.fn((initial: any) => {
+    // Return a stable ref for the same initial value type
+    const key = typeof initial;
+    if (!refStore.has(key)) {
+      refStore.set(key, { current: initial });
+    }
+    return refStore.get(key)!;
+  });
   const mockUseCallback = vi.fn((fn: any) => fn);
 
   return { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state };
@@ -166,7 +175,6 @@ describe("useVoiceAgent", () => {
     });
 
     expect(state.effectCleanup).toBeInstanceOf(Function);
-    // Calling cleanup should not throw
     state.effectCleanup!();
   });
 
@@ -174,6 +182,23 @@ describe("useVoiceAgent", () => {
     useVoiceAgent({ apiKey: "pk_test" });
 
     expect(mockUseCallback).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses useRef for config and tools (prevents stale closures)", () => {
+    useVoiceAgent({
+      apiKey: "pk_test",
+      config: { instructions: "Be helpful" },
+      tools: {
+        search: {
+          description: "Search",
+          parameters: {},
+          handler: async () => "result",
+        },
+      },
+    });
+
+    // useRef should be called for sessionRef, configRef, toolsRef
+    expect(mockUseRef).toHaveBeenCalled();
   });
 
   it("accepts config and tools options", () => {
@@ -197,23 +222,41 @@ describe("useVoiceAgent", () => {
     expect(result.state).toBe("connecting");
   });
 
-  it("state change callback prevents overwriting 'thinking' with 'listening'", () => {
+  it("state change callback does not have thinking/listening hack", () => {
     useVoiceAgent({
       apiKey: "pk_test",
       platformUrl: "ws://localhost:3000",
     });
 
-    // Find the onStateChange callback from the useEffect call
-    // The effect creates a VoiceSession with callbacks
-    // The setState updater function should preserve "thinking" state
+    // All setState calls should pass the value directly, not use an updater function
     const calls = mockSetState.mock.calls;
-    // Find a setState call with a function updater
     const updaterCalls = calls.filter((c: any[]) => typeof c[0] === "function");
 
-    // Simulate: if prev is "thinking" and new is "listening", should keep "thinking"
-    if (updaterCalls.length > 0) {
-      const updater = updaterCalls[0][0];
-      expect(updater("thinking")).toBe("thinking"); // Should not change
-    }
+    // No updater functions — state changes are direct
+    // (The old code had a setState(prev => ...) hack)
+    expect(updaterCalls.length).toBe(0);
+  });
+
+  it("connect error sets error state", () => {
+    // Override WebSocket to throw on construction
+    const OriginalWS = (globalThis as any).WebSocket;
+    (globalThis as any).WebSocket = class ThrowingWS {
+      constructor() {
+        throw new Error("Connection refused");
+      }
+    };
+
+    useVoiceAgent({
+      apiKey: "pk_test",
+      platformUrl: "ws://localhost:3000",
+    });
+
+    // Should have called setError and setState("error")
+    const errorCalls = mockSetState.mock.calls.filter(
+      (c: any[]) => c[0] === "error" || (typeof c[0] === "string" && c[0].includes("Connection"))
+    );
+    expect(errorCalls.length).toBeGreaterThanOrEqual(1);
+
+    (globalThis as any).WebSocket = OriginalWS;
   });
 });

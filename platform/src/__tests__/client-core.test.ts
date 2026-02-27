@@ -60,7 +60,6 @@ class MockAudioWorkletNode {
   connect = vi.fn();
 }
 
-// Track WebSocket instances for testing
 const wsInstances: MockWebSocket[] = [];
 
 class MockWebSocket {
@@ -90,7 +89,6 @@ class MockWebSocket {
     this.onclose?.();
   }
 
-  // Test helper: simulate receiving a message
   simulateMessage(data: string | ArrayBuffer) {
     this.onmessage?.({ data });
   }
@@ -111,6 +109,7 @@ vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
+    static revokeObjectURL = vi.fn();
   }
 );
 vi.stubGlobal("Blob", class Blob {});
@@ -193,15 +192,18 @@ describe("createAudioPlayer", () => {
     expect(player).toHaveProperty("close");
   });
 
+  it("revokes blob URL after addModule", async () => {
+    await createAudioPlayer(24000);
+
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+  });
+
   it("enqueue converts PCM16 to float32 and schedules playback", async () => {
     const player = await createAudioPlayer(24000);
 
-    // Create a small PCM16 buffer (4 samples)
     const pcm16 = new Int16Array([0, 16384, 32767, -32768]);
     player.enqueue(pcm16.buffer);
-
-    // Player should have created a buffer source and started it
-    // (verified by not throwing)
   });
 
   it("flush resets playback by recreating AudioContext", async () => {
@@ -209,20 +211,17 @@ describe("createAudioPlayer", () => {
     player.enqueue(new Int16Array([100, 200]).buffer);
     player.flush();
 
-    // After flush, should be able to enqueue again
     player.enqueue(new Int16Array([300, 400]).buffer);
   });
 
   it("close calls ctx.close()", async () => {
     const player = await createAudioPlayer(24000);
     player.close();
-    // Should not throw when closing
   });
 
   it("enqueue after close is a no-op", async () => {
     const player = await createAudioPlayer(24000);
     player.close();
-    // Enqueue after close should not throw
     player.enqueue(new Int16Array([100]).buffer);
   });
 });
@@ -248,6 +247,16 @@ describe("startMicCapture", () => {
     cleanup();
   });
 
+  it("revokes blob URL after addModule", async () => {
+    const mockWs = { readyState: 1, send: vi.fn() } as any;
+    const cleanup = await startMicCapture(mockWs, 16000);
+
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+
+    cleanup();
+  });
+
   it("returns a cleanup function that stops tracks and closes context", async () => {
     const mockWs = { readyState: 1, send: vi.fn() } as any;
     const cleanup = await startMicCapture(mockWs, 16000);
@@ -257,11 +266,9 @@ describe("startMicCapture", () => {
   });
 
   it("does not send audio when WS is not OPEN", async () => {
-    const mockWs = { readyState: 3, send: vi.fn() } as any; // CLOSED
+    const mockWs = { readyState: 3, send: vi.fn() } as any;
     const cleanup = await startMicCapture(mockWs, 16000);
 
-    // Audio worklet port.onmessage would be set — verify no send when WS is closed
-    // The worklet checks ws.readyState before sending
     cleanup();
   });
 

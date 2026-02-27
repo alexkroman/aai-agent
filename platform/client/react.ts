@@ -25,26 +25,28 @@ export interface VoiceAgentOptions {
 
 export function useVoiceAgent(opts: VoiceAgentOptions) {
   const sessionRef = useRef<VoiceSession | null>(null);
+  const configRef = useRef(opts.config);
+  const toolsRef = useRef(opts.tools);
   const [state, setState] = useState<AgentState>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
+
+  // Update refs on every render so useEffect always has latest values
+  configRef.current = opts.config;
+  toolsRef.current = opts.tools;
 
   useEffect(() => {
     const session = new VoiceSession(
       {
         apiKey: opts.apiKey,
         platformUrl: opts.platformUrl,
-        config: opts.config,
-        tools: opts.tools,
+        config: configRef.current,
+        tools: toolsRef.current,
       },
       {
         onStateChange(newState: AgentState) {
-          setState((prev: AgentState) => {
-            // Don't overwrite "thinking" with "listening" from transcript events
-            if (newState === "listening" && prev === "thinking") return prev;
-            return newState;
-          });
+          setState(newState);
         },
         onMessage(msg: Message) {
           setMessages((m: Message[]) => [...m, msg]);
@@ -59,7 +61,12 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
     );
 
     sessionRef.current = session;
-    session.connect();
+    try {
+      session.connect();
+    } catch (err: any) {
+      setError(err.message ?? "Connection failed");
+      setState("error");
+    }
 
     return () => {
       session.disconnect();

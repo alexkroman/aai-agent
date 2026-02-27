@@ -14,9 +14,13 @@ export const MSG = {
   ERROR: "error",
   RESET: "reset",
 
+  PONG: "pong",
+
   // Browser → server
+  AUTHENTICATE: "authenticate",
   CONFIGURE: "configure",
   CANCEL: "cancel",
+  PING: "ping",
 } as const;
 
 /** Timeout durations in milliseconds. */

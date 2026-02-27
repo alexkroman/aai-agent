@@ -39,6 +39,34 @@ function startTestServer(opts: Partial<ServerOptions> = {}): Promise<ServerHandl
   });
 }
 
+/** Helper: authenticate + configure a WS connection. Returns collected messages. */
+async function authAndConfigure(
+  ws: WebSocket,
+  apiKey = "pk_test",
+  configOverrides: Record<string, unknown> = {}
+): Promise<any[]> {
+  const messages: any[] = [];
+  ws.on("message", (data) => {
+    try {
+      messages.push(JSON.parse(data.toString()));
+    } catch {
+      // skip binary
+    }
+  });
+
+  ws.send(JSON.stringify({ type: "authenticate", apiKey }));
+  ws.send(JSON.stringify({ type: "configure", ...configOverrides }));
+
+  await vi.waitFor(
+    () => {
+      expect(messages.some((m) => m.type === "ready")).toBe(true);
+    },
+    { timeout: 5000 }
+  );
+
+  return messages;
+}
+
 // ── loadSecretsFile unit tests ──────────────────────────────────
 
 describe("loadSecretsFile", () => {
@@ -156,26 +184,11 @@ describe("server", () => {
     });
   });
 
-  describe("WebSocket", () => {
-    it("rejects connection without API key", async () => {
+  describe("WebSocket authentication", () => {
+    it("rejects connection without authenticate message", async () => {
       server = await startTestServer();
 
       const ws = new WebSocket(`ws://localhost:${server.port}/session`);
-
-      const msg = await new Promise<any>((resolve) => {
-        ws.on("message", (data) => {
-          resolve(JSON.parse(data.toString()));
-        });
-      });
-
-      expect(msg.type).toBe("error");
-      expect(msg.message).toBe("Missing API key");
-    });
-
-    it("rejects invalid configure message", async () => {
-      server = await startTestServer();
-
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
@@ -187,6 +200,81 @@ describe("server", () => {
         }
       });
 
+      // Send configure without authenticate first
+      ws.send(JSON.stringify({ type: "configure" }));
+
+      await vi.waitFor(() => {
+        expect(messages.some((m) => m.type === "error")).toBe(true);
+      });
+
+      const errMsg = messages.find((m) => m.type === "error");
+      expect(errMsg.message).toBe("Missing API key");
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("rejects authenticate with empty apiKey", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(JSON.stringify({ type: "authenticate", apiKey: "" }));
+
+      await vi.waitFor(() => {
+        expect(messages.some((m) => m.type === "error")).toBe(true);
+      });
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("accepts authenticate then configure", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages = await authAndConfigure(ws);
+
+      const readyMsg = messages.find((m) => m.type === "ready");
+      expect(readyMsg.sampleRate).toBe(16000);
+      expect(readyMsg.ttsSampleRate).toBe(24000);
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+  });
+
+  describe("WebSocket", () => {
+    it("rejects invalid configure message after authenticate", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(JSON.stringify({ type: "authenticate", apiKey: "pk_test" }));
+      // Wait a tick for auth processing
+      await new Promise((r) => setTimeout(r, 50));
       ws.send(JSON.stringify({ type: "not_configure" }));
 
       await vi.waitFor(() => {
@@ -203,34 +291,13 @@ describe("server", () => {
     it("configures session and sends ready + greeting", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip binary
-        }
+      const messages = await authAndConfigure(ws, "pk_test", {
+        instructions: "Be helpful",
+        greeting: "Hello!",
       });
-
-      ws.send(
-        JSON.stringify({
-          type: "configure",
-          instructions: "Be helpful",
-          greeting: "Hello!",
-        })
-      );
-
-      // Wait for ready and greeting messages
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-          expect(messages.some((m) => m.type === "greeting")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
 
       const readyMsg = messages.find((m) => m.type === "ready");
       expect(readyMsg.sampleRate).toBe(16000);
@@ -246,27 +313,10 @@ describe("server", () => {
     it("handles cancel and reset commands", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
-
-      // Configure first
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
+      const messages = await authAndConfigure(ws);
 
       // Cancel
       ws.send(JSON.stringify({ type: "cancel" }));
@@ -295,10 +345,52 @@ describe("server", () => {
     it("gracefully handles session disconnect", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      ws.send(JSON.stringify({ type: "configure" }));
+      await authAndConfigure(ws);
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 100));
+    });
+  });
+
+  describe("ping/pong", () => {
+    it("responds to ping with pong", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      await authAndConfigure(ws);
+
+      const pongMessages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === "pong") pongMessages.push(msg);
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(JSON.stringify({ type: "ping" }));
+
+      await vi.waitFor(() => {
+        expect(pongMessages.length).toBe(1);
+      });
+
+      expect(pongMessages[0].type).toBe("pong");
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("responds to ping even before authenticate", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+      await new Promise<void>((resolve) => ws.on("open", resolve));
 
       const messages: any[] = [];
       ws.on("message", (data) => {
@@ -309,16 +401,14 @@ describe("server", () => {
         }
       });
 
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
+      ws.send(JSON.stringify({ type: "ping" }));
 
-      // Close the connection — should clean up without errors
+      await vi.waitFor(() => {
+        expect(messages.some((m) => m.type === "pong")).toBe(true);
+      });
+
       ws.close();
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 50));
     });
   });
 
@@ -360,7 +450,7 @@ describe("server", () => {
     });
 
     it("returns 404 for client.js when clientDir is not configured", async () => {
-      server = await startTestServer(); // no clientDir
+      server = await startTestServer();
 
       const resp = await fetch(`http://localhost:${server.port}/client.js`);
       expect(resp.status).toBe(404);
@@ -369,7 +459,6 @@ describe("server", () => {
     it("returns 404 for missing file in clientDir", async () => {
       const tmpDir = join(tmpdir(), `aai-test-${randomBytes(4).toString("hex")}`);
       await mkdir(tmpDir, { recursive: true });
-      // Don't create client.js
 
       server = await startTestServer({ clientDir: tmpDir });
 
@@ -384,33 +473,16 @@ describe("server", () => {
     it("silently ignores binary data before configure", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      // Send binary data before any configure message
       ws.send(Buffer.from([0x00, 0x01, 0x02]));
 
-      // Wait a bit to ensure no crash
       await new Promise((r) => setTimeout(r, 100));
 
-      // Connection should still be alive — send configure and verify it works
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip binary
-        }
-      });
-
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
+      // Connection should still be alive
+      const messages = await authAndConfigure(ws);
+      expect(messages.some((m) => m.type === "ready")).toBe(true);
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
@@ -419,33 +491,15 @@ describe("server", () => {
     it("silently ignores invalid JSON messages", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      // Send invalid JSON
       ws.send("not valid json {{{");
 
-      // Wait a bit — should not crash
       await new Promise((r) => setTimeout(r, 100));
 
-      // Connection should still be alive
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
-
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
+      const messages = await authAndConfigure(ws);
+      expect(messages.some((m) => m.type === "ready")).toBe(true);
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
@@ -454,48 +508,27 @@ describe("server", () => {
     it("handles WS close without configure (no session to clean up)", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      // Close immediately without configuring
       ws.close();
       await new Promise((r) => setTimeout(r, 100));
-      // Should not throw or leave dangling resources
     });
 
     it("ignores unrecognized control messages after configure", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
+      const messages = await authAndConfigure(ws);
+      const errorsBefore = messages.filter((m) => m.type === "error").length;
 
-      // Configure first
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
-
-      // Send unrecognized control message — should be silently ignored
       ws.send(JSON.stringify({ type: "unknown_command", data: "test" }));
 
-      // Wait and confirm no error
       await new Promise((r) => setTimeout(r, 100));
 
-      // No error message should have been sent
-      expect(messages.filter((m) => m.type === "error")).toHaveLength(0);
+      expect(messages.filter((m) => m.type === "error").length).toBe(errorsBefore);
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
@@ -504,47 +537,17 @@ describe("server", () => {
     it("cleans up multiple sessions on server close", async () => {
       server = await startTestServer();
 
-      // Open two sessions
-      const ws1 = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test1`);
-      const ws2 = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test2`);
+      const ws1 = new WebSocket(`ws://localhost:${server.port}/session`);
+      const ws2 = new WebSocket(`ws://localhost:${server.port}/session`);
 
       await Promise.all([
         new Promise<void>((resolve) => ws1.on("open", resolve)),
         new Promise<void>((resolve) => ws2.on("open", resolve)),
       ]);
 
-      const messages1: any[] = [];
-      const messages2: any[] = [];
-      ws1.on("message", (data) => {
-        try {
-          messages1.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
-      ws2.on("message", (data) => {
-        try {
-          messages2.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
+      await Promise.all([authAndConfigure(ws1, "pk_test1"), authAndConfigure(ws2, "pk_test2")]);
 
-      ws1.send(JSON.stringify({ type: "configure" }));
-      ws2.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages1.some((m) => m.type === "ready")).toBe(true);
-          expect(messages2.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
-
-      // Close server — should clean up both sessions
       await server.close();
-
-      // Prevent afterEach from double-closing
       server = null as any;
     });
 
@@ -555,33 +558,15 @@ describe("server", () => {
         sessionOverrides: overrides,
       });
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
+      await authAndConfigure(ws);
 
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
-
-      // Send binary audio data — should be relayed to STT
       ws.send(Buffer.from([0x00, 0x01, 0x02, 0x03]));
 
       await new Promise((r) => setTimeout(r, 100));
 
-      // The mock STT's send should have been called with the audio data
       const sttHandle = await (overrides.connectStt as ReturnType<typeof vi.fn>).mock.results[0]
         .value;
       expect(sttHandle.send).toHaveBeenCalled();
@@ -607,44 +592,24 @@ describe("server", () => {
 
       server = await startTestServer({ secretsFile: secretsPath });
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_customer_abc`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
+      await authAndConfigure(ws, "pk_customer_abc", {
+        instructions: "Test",
+        tools: [
+          {
+            name: "use_secret",
+            description: "Use a secret",
+            parameters: {},
+            handler: "async (args, ctx) => ctx.secrets.WEATHER_API_KEY",
+          },
+        ],
       });
-
-      ws.send(
-        JSON.stringify({
-          type: "configure",
-          instructions: "Test",
-          tools: [
-            {
-              name: "use_secret",
-              description: "Use a secret",
-              parameters: {},
-              handler: "async (args, ctx) => ctx.secrets.WEATHER_API_KEY",
-            },
-          ],
-        })
-      );
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
 
-      // Cleanup
       await unlink(secretsPath);
       await rmdir(tmpDir);
     });
@@ -652,26 +617,10 @@ describe("server", () => {
     it("starts without secrets file", async () => {
       server = await startTestServer();
 
-      const ws = new WebSocket(`ws://localhost:${server.port}/session?key=pk_test`);
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
       await new Promise<void>((resolve) => ws.on("open", resolve));
 
-      const messages: any[] = [];
-      ws.on("message", (data) => {
-        try {
-          messages.push(JSON.parse(data.toString()));
-        } catch {
-          // skip
-        }
-      });
-
-      ws.send(JSON.stringify({ type: "configure" }));
-
-      await vi.waitFor(
-        () => {
-          expect(messages.some((m) => m.type === "ready")).toBe(true);
-        },
-        { timeout: 5000 }
-      );
+      await authAndConfigure(ws);
 
       ws.close();
       await new Promise((r) => setTimeout(r, 50));

@@ -27,6 +27,11 @@ writeFileSync("dist/index.html", `<!DOCTYPE html>
 `);
 console.log("Wrote dist/index.html");
 
+// Shared esbuild loader: inline worklet JS files as text strings
+const workletLoader = {
+  ".worklet.js": "text",
+};
+
 // Vanilla JS bundle — self-contained, no external dependencies
 await build({
   entryPoints: ["client/client.ts"],
@@ -36,6 +41,7 @@ await build({
   minify: true,
   sourcemap: true,
   target: "es2022",
+  loader: workletLoader,
 });
 
 console.log("Built dist/client.js");
@@ -50,6 +56,7 @@ await build({
   sourcemap: true,
   target: "es2022",
   external: ["react"],
+  loader: workletLoader,
 });
 
 console.log("Built dist/react.js");

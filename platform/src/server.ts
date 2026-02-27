@@ -7,7 +7,11 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
 import { MSG, PATHS } from "./constants.js";
 import { ERR } from "./errors.js";
-import { ConfigureMessageSchema, ControlMessageSchema } from "./types.js";
+import {
+  AuthenticateMessageSchema,
+  ConfigureMessageSchema,
+  ControlMessageSchema,
+} from "./types.js";
 import { VoiceSession, type SessionOverrides } from "./session.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -131,22 +135,11 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     path: PATHS.WEBSOCKET,
   });
 
-  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-    const apiKey = url.searchParams.get("key") ?? "";
+  wss.on("connection", (ws: WebSocket, _req: IncomingMessage) => {
     const sessionId = randomBytes(16).toString("hex");
 
-    console.log(
-      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
-    );
-
-    // TODO: Validate API key against customer database
-    if (!apiKey) {
-      ws.send(JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }));
-      ws.close();
-      return;
-    }
-
+    let apiKey = "";
+    let authenticated = false;
     let session: VoiceSession | null = null;
     let configured = false;
 
@@ -159,7 +152,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         return;
       }
 
-      // JSON frame: control or configure message
+      // JSON frame
       let data: Record<string, unknown>;
       try {
         data = JSON.parse(raw.toString());
@@ -167,7 +160,36 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
         return;
       }
 
-      // First message must be "configure"
+      // Handle ping → pong
+      if (data.type === MSG.PING) {
+        ws.send(JSON.stringify({ type: MSG.PONG }));
+        return;
+      }
+
+      // First message must be "authenticate"
+      if (!authenticated) {
+        const parsed = AuthenticateMessageSchema.safeParse(data);
+        if (!parsed.success) {
+          ws.send(
+            JSON.stringify({
+              type: MSG.ERROR,
+              message: ERR.MISSING_API_KEY,
+            })
+          );
+          ws.close();
+          return;
+        }
+
+        apiKey = parsed.data.apiKey;
+        authenticated = true;
+
+        console.log(
+          `[server] Authenticated key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
+        );
+        return;
+      }
+
+      // Second message must be "configure"
       if (!configured) {
         const parsed = ConfigureMessageSchema.safeParse(data);
         if (!parsed.success) {
