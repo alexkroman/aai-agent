@@ -43,18 +43,6 @@ class AssemblyAISTT:
         resp.raise_for_status()
         return resp.json()["token"]
 
-    @property
-    def sample_rate(self) -> int:
-        return self.config.sample_rate
-
-    @property
-    def wss_base(self) -> str:
-        return self.config.wss_base
-
-    @property
-    def speech_model(self) -> str:
-        return self.config.speech_model
-
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()

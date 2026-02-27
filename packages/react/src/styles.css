@@ -222,23 +222,3 @@
   }
 }
 
-/* ── status text ───────────────────────────────────────────────────────── */
-
-.aai-status {
-  font-size: 12px;
-  color: #666;
-  letter-spacing: 0.3px;
-  transition: color 0.3s;
-}
-
-.aai-status.aai-listening {
-  color: #e03131;
-}
-
-.aai-status.aai-processing {
-  color: #f59f00;
-}
-
-.aai-status.aai-speaking {
-  color: #51cf66;
-}

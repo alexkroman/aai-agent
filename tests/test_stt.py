@@ -21,11 +21,11 @@ class TestAssemblyAISTT:
         assert stt.config.sample_rate == 8000
         assert stt.config.speech_model == "nano"
 
-    def test_properties(self):
+    def test_config_defaults(self):
         stt = AssemblyAISTT("test-key")
-        assert stt.sample_rate == 16000
-        assert stt.wss_base == "wss://streaming.assemblyai.com/v3/ws"
-        assert stt.speech_model == "u3-pro"
+        assert stt.config.sample_rate == 16000
+        assert stt.config.wss_base == "wss://streaming.assemblyai.com/v3/ws"
+        assert stt.config.speech_model == "u3-pro"
 
     @pytest.mark.anyio
     async def test_create_token(self):

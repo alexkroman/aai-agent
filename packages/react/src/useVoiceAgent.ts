@@ -147,6 +147,13 @@ export function useVoiceAgent({
     dispatch({ type: "CLEAR_MESSAGES" });
   }, []);
 
+  const clearThinking = useCallback(() => {
+    if (thinkingIdRef.current) {
+      removeMessage(thinkingIdRef.current);
+      thinkingIdRef.current = null;
+    }
+  }, [removeMessage]);
+
   const setPhase = useCallback((phase: Phase, turnPhase?: TurnPhase) => {
     phaseRef.current = phase;
     dispatch({ type: "SET_PHASE", phase, turnPhase });
@@ -283,10 +290,7 @@ export function useVoiceAgent({
           setPhase("active", "processing");
           break;
         case "chat":
-          if (thinkingIdRef.current) {
-            removeMessage(thinkingIdRef.current);
-            thinkingIdRef.current = null;
-          }
+          clearThinking();
           if (msg.text) addMessage(msg.text as string, "assistant");
           onTurnEndRef.current?.(msg.text as string);
           break;
@@ -299,17 +303,11 @@ export function useVoiceAgent({
           }
           break;
         case "error":
-          if (thinkingIdRef.current) {
-            removeMessage(thinkingIdRef.current);
-            thinkingIdRef.current = null;
-          }
+          clearThinking();
           setError({ code: "chat_error", message: msg.message as string });
           break;
         case "cancelled":
-          if (thinkingIdRef.current) {
-            removeMessage(thinkingIdRef.current);
-            thinkingIdRef.current = null;
-          }
+          clearThinking();
           speakingRef.current = false;
           playerRef.current?.clear();
           if (phaseRef.current === "active") setPhase("active", "listening");
@@ -386,6 +384,7 @@ export function useVoiceAgent({
     setPhase,
     setError,
     stopRecording,
+    clearThinking,
   ]);
 
   const toggleRecording = useCallback(() => {

@@ -11,13 +11,18 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
 import websockets
+import websockets.exceptions
 from fastapi import APIRouter, FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from .agent import _cancel_task
 from .manager import VoiceAgentManager
 from .voice_cleaner import VoiceCleaner
+
+_WS_CLOSED = (WebSocketDisconnect, RuntimeError, ConnectionError)
+_STT_WS_CLOSED = (websockets.exceptions.ConnectionClosed, ConnectionError)
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +34,6 @@ DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
 DEFAULT_TTS_WSS_URL = (
     "wss://model-q844y7pw.api.baseten.co/environments/production/websocket"
 )
-
-
-async def _cancel_task(task: asyncio.Task | None) -> None:
-    """Cancel a task and suppress exceptions."""
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
 
 
 def create_voice_router(
@@ -82,7 +77,7 @@ def create_voice_router(
         try:
             if ws.client_state == WebSocketState.CONNECTED:
                 await ws.send_json(data)
-        except Exception:
+        except _WS_CLOSED:
             pass
 
     async def _send_bytes(ws: WebSocket, data: bytes) -> None:
@@ -90,7 +85,7 @@ def create_voice_router(
         try:
             if ws.client_state == WebSocketState.CONNECTED:
                 await ws.send_bytes(data)
-        except Exception:
+        except _WS_CLOSED:
             pass
 
     @router.websocket("/session")
@@ -333,7 +328,7 @@ def create_voice_router(
                     try:
                         if stt_ws:
                             await stt_ws.send(msg["bytes"])
-                    except Exception:
+                    except _STT_WS_CLOSED:
                         pass
 
                 elif "text" in msg and msg["text"]:
@@ -351,7 +346,7 @@ def create_voice_router(
                         try:
                             if stt_ws:
                                 await stt_ws.send(json.dumps({"operation": "clear"}))
-                        except Exception:
+                        except _STT_WS_CLOSED:
                             pass
                         await _send_json(ws, {"type": "cancelled"})
 
@@ -378,7 +373,7 @@ def create_voice_router(
             if stt_ws:
                 try:
                     await stt_ws.close()
-                except Exception:
+                except _STT_WS_CLOSED:
                     pass
             await agent_manager.remove(sid)
 

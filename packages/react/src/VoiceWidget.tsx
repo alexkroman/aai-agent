@@ -36,7 +36,7 @@ export function VoiceWidget({
       </header>
 
       <div
-        className={`aai-conversation${active ? " aai-active" : ""}`}
+        className="aai-conversation"
         role="log"
         aria-live="polite"
         aria-label="Conversation"

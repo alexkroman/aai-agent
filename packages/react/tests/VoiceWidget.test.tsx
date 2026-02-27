@@ -153,7 +153,7 @@ describe("VoiceWidget", () => {
 
     const { container } = render(<VoiceWidget />);
     const convo = container.querySelector(".aai-conversation");
-    expect(convo!.className).toContain("aai-active");
+    expect(convo!.getAttribute("aria-hidden")).toBe("false");
   });
 
   it("passes props through to useVoiceAgent", () => {

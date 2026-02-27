@@ -9,6 +9,7 @@ import os
 import uuid
 from collections.abc import Sequence
 from typing import Any
+
 import httpx
 import logfire
 from pydantic_ai import Agent, ModelSettings, UsageLimits
@@ -25,6 +26,17 @@ from .types import (
     STTConfig,
     VoiceResponse,
 )
+
+
+async def _cancel_task(task: asyncio.Task | None) -> None:
+    """Cancel a task and suppress exceptions."""
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -113,16 +125,10 @@ class _PatchTransport(httpx.AsyncBaseTransport):
         data.setdefault("id", f"chatcmpl-{uuid.uuid4().hex[:12]}")
         data.setdefault("object", "chat.completion")
         data.setdefault("model", "unknown")
-        if data.get("usage") is None:
-            data["usage"] = {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            }
-        else:
-            data["usage"].setdefault("prompt_tokens", 0)
-            data["usage"].setdefault("completion_tokens", 0)
-            data["usage"].setdefault("total_tokens", 0)
+        usage = data.setdefault("usage", {})
+        usage.setdefault("prompt_tokens", 0)
+        usage.setdefault("completion_tokens", 0)
+        usage.setdefault("total_tokens", 0)
 
         for choice in data.get("choices", []):
             choice.setdefault("index", 0)
@@ -316,12 +322,7 @@ class VoiceAgent:
         async with self._task_lock:
             task = self._current_task
             self._current_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+        await _cancel_task(task)
 
     async def chat(self, message: str, *, reset: bool = False) -> VoiceResponse:
         """Send a text message and get a text response.

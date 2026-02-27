@@ -82,13 +82,3 @@ class TestNew:
         target = tmp_path / "proj"
         runner.invoke(app, ["new", str(target)])
         assert not (target / ".env").exists()
-
-
-class TestInitAlias:
-    """The ``init`` command is a hidden alias for ``new``."""
-
-    def test_init_still_works(self, tmp_path):
-        result = runner.invoke(app, ["init", str(tmp_path / "proj")])
-        assert result.exit_code == 0
-        assert "Created voice agent project" in result.output
-        assert (tmp_path / "proj" / "server.py").exists()

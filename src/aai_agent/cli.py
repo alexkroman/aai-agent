@@ -22,7 +22,7 @@ def callback():
 
 
 def _scaffold(directory: str, *, force: bool) -> None:
-    """Shared implementation for the ``new`` / ``init`` commands."""
+    """Shared implementation for the ``new`` command."""
     target = Path(directory).resolve()
 
     template_items = [
@@ -78,17 +78,6 @@ def new(
     Copies a ready-to-run server, .env template, and static frontend
     into the target directory.
     """
-    _scaffold(directory, force=force)
-
-
-@app.command(hidden=True)
-def init(
-    directory: str = typer.Argument(
-        ".", help="Target directory (defaults to current directory)"
-    ),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
-):
-    """Scaffold a new voice agent project (alias for 'new')."""
     _scaffold(directory, force=force)
 
 

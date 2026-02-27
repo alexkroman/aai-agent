@@ -19,7 +19,7 @@ from .types import (
 )
 from .fastapi import create_voice_app, create_voice_router
 from .tools import visit_url_tool
-from .voice_cleaner import VoiceCleaner
+from .voice_cleaner import VoiceCleaner, normalize_voice_text
 
 __all__ = [
     "DEFAULT_GREETING",
@@ -32,6 +32,7 @@ __all__ = [
     "VoiceResponse",
     "VOICE_RULES",
     "VoiceCleaner",
+    "normalize_voice_text",
     "create_voice_app",
     "create_voice_router",
     "duckduckgo_search_tool",
