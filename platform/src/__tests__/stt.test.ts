@@ -18,7 +18,7 @@ describe("createSttToken", () => {
       json: async () => ({ token: "test-token-abc" }),
     });
 
-    const token = await createSttToken("my-api-key", 480);
+    await createSttToken("my-api-key", 480);
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, opts] = mockFetch.mock.calls[0];

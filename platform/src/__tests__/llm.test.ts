@@ -28,12 +28,7 @@ describe("callLLM", () => {
       }),
     });
 
-    const result = await callLLM(
-      [{ role: "user", content: "Hi" }],
-      [],
-      "test-key",
-      "test-model"
-    );
+    const result = await callLLM([{ role: "user", content: "Hi" }], [], "test-key", "test-model");
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, opts] = mockFetch.mock.calls[0];
@@ -112,9 +107,7 @@ describe("callLLM", () => {
 
     const result = await callLLM([], [], "key", "model");
     expect(result.choices[0].message.tool_calls).toHaveLength(1);
-    expect(result.choices[0].message.tool_calls![0].function.name).toBe(
-      "test"
-    );
+    expect(result.choices[0].message.tool_calls![0].function.name).toBe("test");
   });
 
   it("sanitizes empty text content to placeholder", async () => {
@@ -154,9 +147,7 @@ describe("callLLM", () => {
       text: async () => "Unauthorized",
     });
 
-    await expect(callLLM([], [], "bad-key", "model")).rejects.toThrow(
-      "LLM request failed: 401"
-    );
+    await expect(callLLM([], [], "bad-key", "model")).rejects.toThrow("LLM request failed: 401");
   });
 
   it("passes abort signal to fetch", async () => {

@@ -10,9 +10,7 @@ import type { ToolDef, ToolSchema } from "./types.js";
  * 2. Extended: { city: { type: "string", description: "City name" } }
  * 3. Raw:      { type: "object", properties: { ... } } — pass-through
  */
-export function toJsonSchema(
-  params: Record<string, unknown>
-): Record<string, unknown> {
+export function toJsonSchema(params: Record<string, unknown>): Record<string, unknown> {
   // Raw JSON Schema — pass through if root has "type" key
   if ("type" in params && typeof params.type === "string") {
     return params;
@@ -28,11 +26,7 @@ export function toJsonSchema(
       const typeName = optional ? value.slice(0, -1) : value;
       properties[key] = { type: typeName };
       if (!optional) required.push(key);
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      "type" in value
-    ) {
+    } else if (typeof value === "object" && value !== null && "type" in value) {
       // Extended form: { type: "string", description: "...", enum: [...] }
       const ext = value as Record<string, unknown>;
       const typeStr = String(ext.type);

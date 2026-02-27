@@ -68,8 +68,7 @@ export const VOICE_RULES =
   "One to two sentences max. No markdown, no bullet points, no numbered lists, no code. " +
   "Sound like a human talking, not a document.";
 
-export const DEFAULT_GREETING =
-  "Hey there! I'm a voice assistant. What can I help you with?";
+export const DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I help you with?";
 
 // ── Tool Definition (from customer configure message) ──────────────
 

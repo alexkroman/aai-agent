@@ -11,7 +11,7 @@ describe("Sandbox", () => {
       [
         {
           name: "greet",
-          handler: 'async (args) => `Hello, ${args.name}!`',
+          handler: "async (args) => `Hello, ${args.name}!`",
         },
       ],
       {}
@@ -61,8 +61,7 @@ describe("Sandbox", () => {
       [
         {
           name: "mutate_secrets",
-          handler:
-            'async (args, ctx) => { ctx.secrets.KEY = "mutated"; return ctx.secrets.KEY; }',
+          handler: 'async (args, ctx) => { ctx.secrets.KEY = "mutated"; return ctx.secrets.KEY; }',
         },
         {
           name: "read_secret",
@@ -286,13 +285,11 @@ describe("Sandbox", () => {
       [
         {
           name: "set_global",
-          handler:
-            'async () => { globalThis.__test = "leaked"; return "set"; }',
+          handler: 'async () => { globalThis.__test = "leaked"; return "set"; }',
         },
         {
           name: "read_global",
-          handler:
-            'async () => typeof globalThis.__test === "undefined" ? "clean" : "leaked"',
+          handler: 'async () => typeof globalThis.__test === "undefined" ? "clean" : "leaked"',
         },
       ],
       {}

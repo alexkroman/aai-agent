@@ -1,11 +1,6 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
-import {
-  LLM_GATEWAY_BASE,
-  type ChatMessage,
-  type LLMResponse,
-  type ToolSchema,
-} from "./types.js";
+import { LLM_GATEWAY_BASE, type ChatMessage, type LLMResponse, type ToolSchema } from "./types.js";
 
 /**
  * Replace empty text content with "..." (gateway rejects empty text blocks).

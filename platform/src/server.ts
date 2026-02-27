@@ -21,10 +21,15 @@ interface ServerOptions {
   clientDir?: string; // Directory containing built client.js and react.js
 }
 
+export interface ServerHandle {
+  httpServer: ReturnType<typeof createServer>;
+  close: () => Promise<void>;
+}
+
 /**
  * Create and start the platform server.
  */
-export function startServer(options: ServerOptions): void {
+export function startServer(options: ServerOptions): ServerHandle {
   const sessions = new Map<string, VoiceSession>();
 
   // ── HTTP server ────────────────────────────────────────────────
@@ -43,10 +48,7 @@ export function startServer(options: ServerOptions): void {
     }
 
     // Serve client library files
-    if (
-      options.clientDir &&
-      (url.pathname === "/client.js" || url.pathname === "/react.js")
-    ) {
+    if (options.clientDir && (url.pathname === "/client.js" || url.pathname === "/react.js")) {
       try {
         const filePath = join(options.clientDir, url.pathname.slice(1));
         const content = await readFile(filePath);
@@ -88,7 +90,9 @@ export function startServer(options: ServerOptions): void {
     const apiKey = url.searchParams.get("key") ?? "";
     const sessionId = randomBytes(16).toString("hex");
 
-    console.log(`[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`);
+    console.log(
+      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
+    );
 
     // TODO: Validate API key against customer database
     if (!apiKey) {
@@ -102,7 +106,7 @@ export function startServer(options: ServerOptions): void {
 
     ws.on("message", async (raw, isBinary) => {
       // Binary frame: mic audio → relay to STT
-      if (isBinary || raw instanceof Buffer) {
+      if (isBinary) {
         if (session) {
           session.onAudio(raw as Buffer);
         }
@@ -140,7 +144,9 @@ export function startServer(options: ServerOptions): void {
         sessions.set(sessionId, session);
         configured = true;
 
-        console.log(`[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`);
+        console.log(
+          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`
+        );
 
         await session.start();
         return;
@@ -184,17 +190,25 @@ export function startServer(options: ServerOptions): void {
 
   // ── Graceful shutdown ──────────────────────────────────────────
 
-  const shutdown = async () => {
+  const close = async () => {
     console.log("\n[server] Shutting down...");
+    process.removeListener("SIGINT", shutdown);
+    process.removeListener("SIGTERM", shutdown);
     for (const [id, sess] of sessions) {
       await sess.stop();
       sessions.delete(id);
     }
     wss.close();
     httpServer.close();
+  };
+
+  const shutdown = async () => {
+    await close();
     process.exit(0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  return { httpServer, close };
 }

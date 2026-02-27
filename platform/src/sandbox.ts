@@ -27,10 +27,7 @@ export class Sandbox {
   private handlers: Map<string, CompiledHandler> = new Map();
   private secrets: Record<string, string>;
 
-  constructor(
-    tools: { name: string; handler: string }[],
-    secrets: Record<string, string>
-  ) {
+  constructor(tools: { name: string; handler: string }[], secrets: Record<string, string>) {
     this.isolate = new ivm.Isolate({ memoryLimit: ISOLATE_MEMORY_LIMIT_MB });
     this.secrets = secrets;
 
@@ -52,10 +49,7 @@ export class Sandbox {
    * ctx.fetch returns a simplified Response-like object:
    *   { ok, status, statusText, headers, text(), json() }
    */
-  async execute(
-    toolName: string,
-    args: Record<string, unknown>
-  ): Promise<string> {
+  async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
     const handler = this.handlers.get(toolName);
     if (!handler) {
       return `Error: Unknown tool "${toolName}"`;
@@ -71,23 +65,21 @@ export class Sandbox {
       // Inject a host-side fetch function as a Reference on the context global.
       // The isolate calls it via applySyncPromise which blocks the isolate
       // thread while the host performs the async HTTP request.
-      const fetchRef = new ivm.Reference(
-        async (url: string, initJson: string): Promise<string> => {
-          const init = initJson ? JSON.parse(initJson) : {};
-          const resp = await fetch(url, {
-            ...init,
-            signal: controller.signal,
-          });
-          const body = await resp.text();
-          return JSON.stringify({
-            ok: resp.ok,
-            status: resp.status,
-            statusText: resp.statusText,
-            headers: Object.fromEntries(resp.headers.entries()),
-            body,
-          });
-        }
-      );
+      const fetchRef = new ivm.Reference(async (url: string, initJson: string): Promise<string> => {
+        const init = initJson ? JSON.parse(initJson) : {};
+        const resp = await fetch(url, {
+          ...init,
+          signal: controller.signal,
+        });
+        const body = await resp.text();
+        return JSON.stringify({
+          ok: resp.ok,
+          status: resp.status,
+          statusText: resp.statusText,
+          headers: Object.fromEntries(resp.headers.entries()),
+          body,
+        });
+      });
       context.global.setSync("__fetchRef", fetchRef);
 
       // The evalClosure code:

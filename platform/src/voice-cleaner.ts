@@ -5,7 +5,7 @@ import { toWords, toWordsOrdinal } from "number-to-words";
 
 // Pre-compiled regex patterns
 const RE_CODE_BLOCKS = /```[\s\S]*?```/g;
-const RE_INDENTED_CODE = /^(?:    |\t).+$/gm;
+const RE_INDENTED_CODE = /^(?:\x20{4}|\t).+$/gm;
 const RE_INLINE_CODE = /`([^`]+)`/g;
 const RE_BOLD_ITALIC_STAR = /\*{1,3}([^*]+)\*{1,3}/g;
 const RE_BOLD_ITALIC_UNDER = /_{1,3}([^_]+)_{1,3}/g;
@@ -73,7 +73,7 @@ export function normalizeVoiceText(text: string): string {
   text = text.replace(RE_BOLD_ITALIC_STAR, "$1");
   text = text.replace(RE_BOLD_ITALIC_UNDER, "$1");
   text = text.replace(RE_HEADERS, "");
-  text = text.replace(RE_IMAGES, "");   // Must run before LINKS
+  text = text.replace(RE_IMAGES, ""); // Must run before LINKS
   text = text.replace(RE_LINKS, "$1");
   text = text.replace(RE_BULLETS, "");
   text = text.replace(RE_NUMBERED, "");

@@ -31,9 +31,6 @@ interface SessionDeps {
   customerSecrets: Record<string, string>;
 }
 
-type SendJson = (data: Record<string, unknown>) => void;
-type SendBytes = (data: Buffer) => void;
-
 function createSessionDeps(): SessionDeps {
   return {
     apiKey: process.env.ASSEMBLYAI_API_KEY ?? "",
@@ -130,8 +127,7 @@ export class VoiceSession {
    * Start the voice session: connect STT, send ready + greeting.
    */
   async start(): Promise<void> {
-    const log = (msg: string) =>
-      console.log(`[session:${this.id.slice(0, 8)}] ${msg}`);
+    const log = (msg: string) => console.log(`[session:${this.id.slice(0, 8)}] ${msg}`);
 
     // Connect to STT
     try {
@@ -150,11 +146,7 @@ export class VoiceSession {
         },
       };
 
-      this.stt = await connectStt(
-        this.deps.apiKey,
-        this.deps.sttConfig,
-        events
-      );
+      this.stt = await connectStt(this.deps.apiKey, this.deps.sttConfig, events);
     } catch (err) {
       log(`Failed to connect STT: ${err}`);
       this.sendJson({
@@ -310,8 +302,7 @@ export class VoiceSession {
           iterations++;
         } else {
           // No tool calls — we have the final response
-          const responseText =
-            msg.content ?? "Sorry, I couldn't generate a response.";
+          const responseText = msg.content ?? "Sorry, I couldn't generate a response.";
           this.messages.push({ role: "assistant", content: responseText });
 
           this.sendJson({
@@ -348,15 +339,9 @@ export class VoiceSession {
     this.ttsAbort = abort;
 
     const cleaned = normalizeVoiceText(text);
-    const log = (msg: string) =>
-      console.log(`[session:${this.id.slice(0, 8)}] TTS: ${msg}`);
+    const log = (msg: string) => console.log(`[session:${this.id.slice(0, 8)}] TTS: ${msg}`);
 
-    synthesize(
-      cleaned,
-      this.deps.ttsConfig,
-      (chunk) => this.sendBytes(chunk),
-      abort.signal
-    )
+    synthesize(cleaned, this.deps.ttsConfig, (chunk) => this.sendBytes(chunk), abort.signal)
       .then(() => {
         if (!abort.signal.aborted) {
           this.sendJson({ type: "tts_done" });
