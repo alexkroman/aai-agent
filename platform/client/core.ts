@@ -6,7 +6,8 @@ export type AgentState =
   | "ready"
   | "listening"
   | "thinking"
-  | "speaking";
+  | "speaking"
+  | "error";
 
 export interface Message {
   role: "user" | "assistant";
@@ -59,18 +60,42 @@ export async function startMicCapture(
   });
 
   const ctx = new AudioContext({ sampleRate });
+  await ctx.resume();
+  console.log("[mic] AudioContext state:", ctx.state, "sampleRate:", ctx.sampleRate);
   const source = ctx.createMediaStreamSource(stream);
 
+  // Buffer ~100ms of audio (1600 samples at 16kHz) before sending.
+  // AssemblyAI requires frames between 50-1000ms; AudioWorklet's
+  // process() fires every 128 samples (8ms) which is too small.
+  const MIN_SAMPLES = Math.floor(sampleRate * 0.1);
   const workletCode = `
     class PCM16Processor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this._buf = [];
+        this._len = 0;
+        this._min = ${MIN_SAMPLES};
+      }
       process(inputs) {
         const input = inputs[0][0];
         if (input) {
-          const int16 = new Int16Array(input.length);
-          for (let i = 0; i < input.length; i++) {
-            int16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+          this._buf.push(input.slice());
+          this._len += input.length;
+          if (this._len >= this._min) {
+            const merged = new Float32Array(this._len);
+            let off = 0;
+            for (const chunk of this._buf) {
+              merged.set(chunk, off);
+              off += chunk.length;
+            }
+            const int16 = new Int16Array(this._len);
+            for (let i = 0; i < this._len; i++) {
+              int16[i] = Math.max(-32768, Math.min(32767, merged[i] * 32768));
+            }
+            this.port.postMessage(int16.buffer, [int16.buffer]);
+            this._buf = [];
+            this._len = 0;
           }
-          this.port.postMessage(int16.buffer, [int16.buffer]);
         }
         return true;
       }
@@ -80,8 +105,13 @@ export async function startMicCapture(
   const blob = new Blob([workletCode], { type: "application/javascript" });
   await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
 
+  let frameCount = 0;
   const worklet = new AudioWorkletNode(ctx, "pcm16");
   worklet.port.onmessage = (e) => {
+    frameCount++;
+    if (frameCount <= 3) {
+      console.log("[mic] Frame", frameCount, "bytes:", e.data.byteLength, "wsReady:", ws.readyState);
+    }
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(e.data);
     }
@@ -107,6 +137,7 @@ export async function createAudioPlayer(
   sampleRate: number
 ): Promise<AudioPlayer> {
   const ctx = new AudioContext({ sampleRate });
+  await ctx.resume(); // Ensure AudioContext is not suspended (autoplay policy)
 
   const workletCode = `
     class PCM16PlaybackProcessor extends AudioWorkletProcessor {
@@ -173,6 +204,7 @@ export interface SessionCallbacks {
   onStateChange: (state: AgentState) => void;
   onMessage: (msg: Message) => void;
   onTranscript: (text: string) => void;
+  onError: (message: string) => void;
 }
 
 export class VoiceSession {
@@ -235,6 +267,10 @@ export class VoiceSession {
             this.player = player;
             this.micCleanup = micCleanup;
             this.callbacks.onStateChange("listening");
+          }).catch((err) => {
+            console.error("Audio setup failed:", err);
+            this.callbacks.onError(`Microphone access failed: ${err.message}`);
+            this.callbacks.onStateChange("error");
           });
           break;
         }
@@ -269,6 +305,8 @@ export class VoiceSession {
           break;
         case "error":
           console.error("Agent error:", msg.message);
+          this.callbacks.onError(msg.message);
+          this.callbacks.onStateChange("error");
           break;
       }
     };

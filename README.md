@@ -24,6 +24,25 @@ Browser                              Platform (managed)
 4. Platform runs handlers in a V8 sandbox with `ctx.secrets` and `ctx.fetch` injected
 5. No backend needed — deploy as a static site
 
+## Prerequisites
+
+This project requires **Node.js 22 LTS**. We recommend [fnm](https://github.com/Schniz/fnm) for managing Node versions:
+
+```bash
+# Install fnm (macOS)
+brew install fnm
+
+# Add to your shell (add this to ~/.zshrc or ~/.bashrc)
+eval "$(fnm env --use-on-cd)"
+
+# Install and use Node 22 (auto-detected from .nvmrc)
+cd platform
+fnm install
+fnm use
+```
+
+If you already have `nvm`, `fnm use` / `nvm use` will pick up the `.nvmrc` automatically.
+
 ## Running locally
 
 ```bash

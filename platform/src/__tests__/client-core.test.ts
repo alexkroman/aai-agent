@@ -51,6 +51,7 @@ class MockAudioContext {
 
   createMediaStreamSource = vi.fn(() => ({ connect: vi.fn() }));
 
+  resume = vi.fn().mockResolvedValue(undefined);
   close = vi.fn().mockResolvedValue(undefined);
 }
 
@@ -102,6 +103,7 @@ vi.stubGlobal("navigator", {
   mediaDevices: {
     getUserMedia: vi.fn().mockResolvedValue({
       getTracks: () => [{ stop: vi.fn() }],
+      getAudioTracks: () => [{ stop: vi.fn() }],
     }),
   },
 });

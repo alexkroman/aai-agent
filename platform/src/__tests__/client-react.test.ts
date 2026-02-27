@@ -143,6 +143,7 @@ describe("useVoiceAgent", () => {
     expect(result).toHaveProperty("state");
     expect(result).toHaveProperty("messages");
     expect(result).toHaveProperty("transcript");
+    expect(result).toHaveProperty("error");
     expect(result).toHaveProperty("cancel");
     expect(result).toHaveProperty("reset");
   });

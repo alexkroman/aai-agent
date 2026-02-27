@@ -22,10 +22,18 @@ export interface PlatformConfig {
  * Falls back to defaults for optional values.
  */
 export function loadPlatformConfig(): PlatformConfig {
-  const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY ?? "";
+  const apiKey = process.env.ASSEMBLYAI_API_KEY;
+  const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("ASSEMBLYAI_API_KEY environment variable is required");
+  }
+  if (!ttsApiKey) {
+    throw new Error("ASSEMBLYAI_TTS_API_KEY environment variable is required");
+  }
 
   return {
-    apiKey: process.env.ASSEMBLYAI_API_KEY ?? "",
+    apiKey,
     ttsApiKey,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {

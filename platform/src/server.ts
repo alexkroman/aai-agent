@@ -16,6 +16,8 @@ const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
   ".css": "text/css",
   ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
 };
 
 export interface ServerOptions {
@@ -62,6 +64,17 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
+    // Favicon
+    if (url.pathname === "/favicon.ico" || url.pathname === "/favicon.svg") {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="#2196F3"/><path d="M50 25c-6 0-11 5-11 11v14c0 6 5 11 11 11s11-5 11-11V36c0-6-5-11-11-11z" fill="white"/><path d="M71 50c0 11-9 21-21 21s-21-10-21-21h-6c0 14 10 25 24 27v8h6v-8c14-2 24-13 24-27h-6z" fill="white"/></svg>`;
+      res.writeHead(200, {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=86400",
+      });
+      res.end(svg);
+      return;
+    }
+
     // Health check
     if (url.pathname === PATHS.HEALTH) {
       res.writeHead(200, {
@@ -72,26 +85,28 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
       return;
     }
 
-    // Serve client library files
-    if (
-      options.clientDir &&
-      (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
-    ) {
-      try {
-        const filePath = join(options.clientDir, url.pathname.slice(1));
-        const content = await readFile(filePath);
-        const ext = extname(url.pathname);
-        res.writeHead(200, {
-          "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=3600",
-        });
-        res.end(content);
-      } catch {
-        res.writeHead(404);
-        res.end("Not found");
+    // Serve static files from clientDir
+    if (options.clientDir) {
+      // Map / to /index.html, /vanilla/ to /vanilla/index.html, etc.
+      let pathname = url.pathname;
+      if (pathname.endsWith("/")) pathname += "index.html";
+
+      const ext = extname(pathname);
+      if (ext && MIME_TYPES[ext] !== undefined) {
+        try {
+          const filePath = join(options.clientDir, pathname.slice(1));
+          const content = await readFile(filePath);
+          res.writeHead(200, {
+            "Content-Type": MIME_TYPES[ext],
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-cache",
+          });
+          res.end(content);
+          return;
+        } catch {
+          // Fall through to 404
+        }
       }
-      return;
     }
 
     // CORS preflight

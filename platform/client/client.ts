@@ -18,6 +18,7 @@ function renderUI(
   state: AgentState,
   messages: Message[],
   transcript: string,
+  error: string,
   onCancel: () => void,
   onReset: () => void
 ): void {
@@ -27,6 +28,7 @@ function renderUI(
     listening: "#2196F3",
     thinking: "#FF9800",
     speaking: "#9C27B0",
+    error: "#f44336",
   };
 
   container.innerHTML = `
@@ -35,6 +37,8 @@ function renderUI(
         <div style="width: 12px; height: 12px; border-radius: 50%; background: ${stateColor[state]}"></div>
         <span style="font-size: 14px; color: #666; text-transform: capitalize">${state}</span>
       </div>
+
+      ${error ? `<div style="background: #ffebee; color: #c62828; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px;">${escapeHtml(error)}</div>` : ""}
 
       <div style="min-height: 300px; max-height: 500px; overflow-y: auto; margin-bottom: 16px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px;">
         ${messages
@@ -114,20 +118,38 @@ export const VoiceAgent = {
     let state: AgentState = "connecting";
     const messages: Message[] = [];
     let transcript = "";
+    let error = "";
+    let started = false;
 
     let session: VoiceSession;
 
     const render = () => {
+      if (!started) {
+        (container as HTMLElement).innerHTML = `
+          <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; display: flex; align-items: center; justify-content: center; min-height: 300px;">
+            <button id="__voice-start" style="padding: 16px 32px; border: none; border-radius: 12px; background: #2196F3; color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
+              Start Conversation
+            </button>
+          </div>`;
+        (container as HTMLElement).querySelector("#__voice-start")!.addEventListener("click", () => {
+          started = true;
+          session.connect();
+          render();
+        });
+        return;
+      }
       renderUI(
         container as HTMLElement,
         state,
         messages,
         transcript,
+        error,
         () => session.cancel(),
         () => {
           session.reset();
           messages.length = 0;
           transcript = "";
+          error = "";
           render();
         }
       );
@@ -146,10 +168,13 @@ export const VoiceAgent = {
         transcript = text;
         render();
       },
+      onError(message) {
+        error = message;
+        render();
+      },
     });
 
     render();
-    session.connect();
 
     return {
       cancel: () => session.cancel(),

@@ -1,10 +1,31 @@
 // build-client.js — Bundle client library files using esbuild.
 // Produces dist/client.js (vanilla) and dist/react.js (React hook).
+// Copies example HTML files into dist/ for serving via dev:serve.
 
 import { build } from "esbuild";
-import { mkdirSync } from "fs";
+import { mkdirSync, cpSync } from "fs";
 
 mkdirSync("dist", { recursive: true });
+
+// Copy example apps into dist/ so the server can serve them
+cpSync("../examples/vanilla", "dist/vanilla", { recursive: true });
+console.log("Copied examples/vanilla → dist/vanilla/");
+
+// Write a root index page linking to examples
+import { writeFileSync } from "fs";
+writeFileSync("dist/index.html", `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><link rel="icon" href="/favicon.svg"><title>aai-agent</title></head>
+<body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px;">
+  <h1>aai-agent</h1>
+  <ul>
+    <li><a href="/vanilla/">Vanilla JS — Travel Concierge</a></li>
+    <li><a href="/health">Health check</a></li>
+  </ul>
+</body>
+</html>
+`);
+console.log("Wrote dist/index.html");
 
 // Vanilla JS bundle — self-contained, no external dependencies
 await build({

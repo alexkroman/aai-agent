@@ -82,11 +82,13 @@ class MockAudioContext {
   createBufferSource() {
     return new MockAudioBufferSource();
   }
+  resume = vi.fn().mockResolvedValue(undefined);
   close = vi.fn().mockResolvedValue(undefined);
 }
 
 const mockGetUserMedia = vi.fn().mockResolvedValue({
   getTracks: () => [{ stop: vi.fn() }],
+  getAudioTracks: () => [{ stop: vi.fn() }],
 });
 
 vi.stubGlobal("WebSocket", MockWebSocket);
@@ -113,6 +115,7 @@ function createSession(opts: Partial<ConstructorParameters<typeof VoiceSession>[
   const stateChanges: string[] = [];
   const receivedMessages: any[] = [];
   const transcripts: string[] = [];
+  const errors: string[] = [];
 
   const session = new VoiceSession(
     {
@@ -124,10 +127,11 @@ function createSession(opts: Partial<ConstructorParameters<typeof VoiceSession>[
       onStateChange: (state) => stateChanges.push(state),
       onMessage: (msg) => receivedMessages.push(msg),
       onTranscript: (text) => transcripts.push(text),
+      onError: (message) => errors.push(message),
     }
   );
 
-  return { session, stateChanges, receivedMessages, transcripts };
+  return { session, stateChanges, receivedMessages, transcripts, errors };
 }
 
 /** Get the latest MockWebSocket instance */
@@ -330,15 +334,16 @@ describe("VoiceSession", () => {
       expect(listeningCount).toBeGreaterThanOrEqual(2);
     });
 
-    it("handles 'error' message — logs to console", async () => {
+    it("handles 'error' message — calls onError and sets error state", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const { session, stateChanges } = createSession();
+      const { session, stateChanges, errors } = createSession();
       session.connect();
       await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
       lastWs().simulateMessage({ type: "error", message: "Something failed" });
 
-      expect(consoleSpy).toHaveBeenCalledWith("Agent error:", "Something failed");
+      expect(errors).toContain("Something failed");
+      expect(stateChanges).toContain("error");
       consoleSpy.mockRestore();
     });
 

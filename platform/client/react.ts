@@ -28,6 +28,7 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
   const [state, setState] = useState<AgentState>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
   const [transcript, setTranscript] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const session = new VoiceSession(
@@ -51,6 +52,9 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
         onTranscript(text: string) {
           setTranscript(text);
         },
+        onError(message: string) {
+          setError(message);
+        },
       }
     );
 
@@ -70,7 +74,8 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
     sessionRef.current?.reset();
     setMessages([]);
     setTranscript("");
+    setError("");
   }, []);
 
-  return { state, messages, transcript, cancel, reset };
+  return { state, messages, transcript, error, cancel, reset };
 }

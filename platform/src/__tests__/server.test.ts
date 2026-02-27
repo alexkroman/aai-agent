@@ -113,10 +113,17 @@ describe("loadSecretsFile", () => {
 describe("server", () => {
   let server: ServerHandle;
 
+  beforeEach(() => {
+    process.env.ASSEMBLYAI_API_KEY = "test-key";
+    process.env.ASSEMBLYAI_TTS_API_KEY = "test-tts-key";
+  });
+
   afterEach(async () => {
     if (server) {
       await server.close();
     }
+    delete process.env.ASSEMBLYAI_API_KEY;
+    delete process.env.ASSEMBLYAI_TTS_API_KEY;
   });
 
   describe("HTTP endpoints", () => {
@@ -327,7 +334,7 @@ describe("server", () => {
       expect(resp.status).toBe(200);
       expect(resp.headers.get("content-type")).toContain("application/javascript");
       expect(resp.headers.get("access-control-allow-origin")).toBe("*");
-      expect(resp.headers.get("cache-control")).toContain("max-age=3600");
+      expect(resp.headers.get("cache-control")).toBe("no-cache");
       const body = await resp.text();
       expect(body).toBe("// client bundle");
 

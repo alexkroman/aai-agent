@@ -184,15 +184,6 @@ describe("VoiceSession", () => {
       expect(msgs.some((m) => m.type === "error")).toBe(true);
     });
 
-    it("skips greeting TTS when no TTS API key", async () => {
-      delete process.env.ASSEMBLYAI_TTS_API_KEY;
-
-      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
-      await session.start();
-
-      expect(mockTtsSynthesize).not.toHaveBeenCalled();
-    });
-
     it("skips greeting when greeting is empty", async () => {
       const config = { ...defaultConfig, greeting: "" };
       const session = new VoiceSession("sess-1", browserWs as any, config);
@@ -307,22 +298,6 @@ describe("VoiceSession", () => {
       // Should call synthesize with cleaned response text
       expect(mockTtsSynthesize).toHaveBeenCalledOnce();
       expect(mockTtsSynthesize.mock.calls[0][0]).toBe("Hello there!");
-    });
-
-    it("sends tts_done when no TTS API key", async () => {
-      delete process.env.ASSEMBLYAI_TTS_API_KEY;
-      mockCallLLM.mockResolvedValueOnce(llmResponse("Response"));
-
-      const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
-      await session.start();
-      browserWs.sent.length = 0;
-
-      capturedSttEvents!.onTurn("Hi");
-
-      await vi.waitFor(() => {
-        const msgs = getJsonMessages(browserWs);
-        return expect(msgs.some((m) => m.type === "tts_done")).toBeTruthy();
-      });
     });
 
     it("sends error on LLM failure", async () => {

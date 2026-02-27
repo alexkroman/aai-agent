@@ -5,6 +5,7 @@ import { callLLM } from "../llm.js";
 const mockFetch = vi.fn();
 
 beforeEach(() => {
+  mockFetch.mockClear();
   vi.stubGlobal("fetch", mockFetch);
 });
 

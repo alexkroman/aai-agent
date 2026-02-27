@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:serve": "node scripts/build-client.js && CLIENT_DIR=dist tsx watch src/index.ts",
+    "dev": "tsc --noEmit && tsx watch src/index.ts",
+    "dev:serve": "tsc --noEmit && node scripts/build-client.js && CLIENT_DIR=dist tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc && node scripts/build-client.js",
     "test": "vitest",
@@ -16,22 +19,22 @@
     "check": "npm run typecheck && npm run lint && npm run format && npm run test -- run"
   },
   "dependencies": {
-    "isolated-vm": "^5.0.3",
+    "isolated-vm": "^6.0.2",
     "number-to-words": "^1.2.4",
-    "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.3.2",
     "@types/number-to-words": "^1.2.3",
-    "@types/ws": "^8.5.0",
-    "esbuild": "^0.24.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
     "prettier": "^3.8.1",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
-    "vitest": "^3.0.0"
+    "vitest": "^4.0.18"
   }
 }

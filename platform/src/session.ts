@@ -109,9 +109,11 @@ export class VoiceSession {
     try {
       const events: SttEvents = {
         onTranscript: (text, isFinal) => {
+          log(`Transcript: "${text}" final=${isFinal}`);
           this.sendJson({ type: MSG.TRANSCRIPT, text, final: isFinal });
         },
         onTurn: (text) => {
+          log(`Turn: "${text}"`);
           this.handleTurn(text);
         },
         onError: (err) => {
@@ -144,16 +146,22 @@ export class VoiceSession {
     const greeting = this.config.greeting ?? DEFAULT_GREETING;
     if (greeting) {
       this.sendJson({ type: MSG.GREETING, text: greeting });
-      if (this.deps.ttsApiKey) {
-        this.ttsRelay(greeting);
-      }
+      this.ttsRelay(greeting);
     }
   }
+
+  private audioFrameCount = 0;
 
   /**
    * Handle incoming binary audio from the browser — relay to STT.
    */
   onAudio(data: Buffer): void {
+    this.audioFrameCount++;
+    if (this.audioFrameCount <= 3) {
+      console.log(
+        `[session:${this.id.slice(0, 8)}] Audio frame ${this.audioFrameCount}: ${data.length} bytes, isBuffer=${Buffer.isBuffer(data)}`
+      );
+    }
     this.stt?.send(data);
   }
 
@@ -291,7 +299,7 @@ export class VoiceSession {
           });
 
           // Start TTS
-          if (this.deps.ttsApiKey && responseText) {
+          if (responseText) {
             this.ttsRelay(responseText);
           } else {
             this.sendJson({ type: MSG.TTS_DONE });

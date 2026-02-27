@@ -70,8 +70,10 @@ export async function connectStt(
           }
         },
         clear() {
+          // v3 API has no "clear buffer" operation.
+          // Force an endpoint instead, so the current partial turn is finalized.
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ operation: "clear" }));
+            ws.send(JSON.stringify({ type: "ForceEndpoint" }));
           }
         },
         close() {
@@ -80,10 +82,15 @@ export async function connectStt(
       });
     });
 
-    ws.on("message", (raw) => {
-      if (raw instanceof Buffer && raw.length > 0) return; // skip binary
+    let msgCount = 0;
+    ws.on("message", (raw, isBinary) => {
+      if (isBinary) return; // skip binary frames
       try {
         const msg = JSON.parse(raw.toString());
+        msgCount++;
+        if (msgCount <= 5) {
+          console.log(`[stt] Message #${msgCount}: type=${msg.type}`);
+        }
         if (msg.type === "Transcript") {
           events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
         } else if (msg.type === "Turn") {
@@ -106,8 +113,11 @@ export async function connectStt(
       events.onError(err);
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
       clearTimeout(timeout);
+      if (code !== 1000) {
+        console.error(`[stt] WebSocket closed: code=${code} reason=${reason?.toString() ?? ""}`);
+      }
       events.onClose();
     });
   });

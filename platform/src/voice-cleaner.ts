@@ -1,7 +1,8 @@
 // voice-cleaner.ts — Text normalization for TTS.
 // Port of the Python voice_cleaner.py.
 
-import { toWords, toWordsOrdinal } from "number-to-words";
+import numberToWords from "number-to-words";
+const { toWords, toWordsOrdinal } = numberToWords;
 
 // Pre-compiled regex patterns
 const RE_CODE_BLOCKS = /```[\s\S]*?```/g;

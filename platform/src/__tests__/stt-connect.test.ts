@@ -120,12 +120,12 @@ describe("connectStt", () => {
     expect(lastWs().sent).toEqual([audio]);
   });
 
-  it("handle.clear sends clear operation message", async () => {
+  it("handle.clear sends ForceEndpoint message", async () => {
     const events = makeEvents();
     const handle = await connectStt("key", sttConfig, events);
 
     handle.clear();
-    expect(lastWs().sent).toEqual([JSON.stringify({ operation: "clear" })]);
+    expect(lastWs().sent).toEqual([JSON.stringify({ type: "ForceEndpoint" })]);
   });
 
   it("handle.close closes the WebSocket", async () => {
