@@ -31,9 +31,13 @@ vi.mock("../stt.js", () => ({
 }));
 
 // Mock TTS
-const mockSynthesize = vi.fn().mockResolvedValue(undefined);
+const mockTtsSynthesize = vi.fn().mockResolvedValue(undefined);
+const mockTtsClose = vi.fn();
 vi.mock("../tts.js", () => ({
-  synthesize: (...args: unknown[]) => mockSynthesize(...args),
+  TtsClient: class {
+    synthesize = (...args: unknown[]) => mockTtsSynthesize(...args);
+    close = mockTtsClose;
+  },
 }));
 
 // Mock Sandbox
@@ -164,8 +168,8 @@ describe("VoiceSession", () => {
       const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
       await session.start();
 
-      expect(mockSynthesize).toHaveBeenCalledOnce();
-      expect(mockSynthesize.mock.calls[0][0]).toBe("Hello!");
+      expect(mockTtsSynthesize).toHaveBeenCalledOnce();
+      expect(mockTtsSynthesize.mock.calls[0][0]).toBe("Hello!");
     });
 
     it("sends error if STT connection fails", async () => {
@@ -185,7 +189,7 @@ describe("VoiceSession", () => {
       const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
       await session.start();
 
-      expect(mockSynthesize).not.toHaveBeenCalled();
+      expect(mockTtsSynthesize).not.toHaveBeenCalled();
     });
 
     it("skips greeting when greeting is empty", async () => {
@@ -290,7 +294,7 @@ describe("VoiceSession", () => {
 
       const session = new VoiceSession("sess-1", browserWs as any, defaultConfig);
       await session.start();
-      mockSynthesize.mockClear(); // Clear greeting TTS call
+      mockTtsSynthesize.mockClear(); // Clear greeting TTS call
 
       capturedSttEvents!.onTurn("Hi");
 
@@ -300,8 +304,8 @@ describe("VoiceSession", () => {
       });
 
       // Should call synthesize with cleaned response text
-      expect(mockSynthesize).toHaveBeenCalledOnce();
-      expect(mockSynthesize.mock.calls[0][0]).toBe("Hello there!");
+      expect(mockTtsSynthesize).toHaveBeenCalledOnce();
+      expect(mockTtsSynthesize.mock.calls[0][0]).toBe("Hello there!");
     });
 
     it("sends tts_done when no TTS API key", async () => {

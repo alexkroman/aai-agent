@@ -38,7 +38,7 @@ vi.mock("ws", () => {
   return { default: MockWS };
 });
 
-import { synthesize } from "../tts.js";
+import { synthesize, TtsClient } from "../tts.js";
 import type { TTSConfig } from "../types.js";
 
 const config: TTSConfig = {
@@ -172,5 +172,119 @@ describe("synthesize", () => {
 
     ws.emit("close");
     await p;
+  });
+});
+
+describe("TtsClient", () => {
+  beforeEach(() => {
+    instances.length = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("pre-warms a connection on construction", () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+    client.close();
+  });
+
+  it("uses pre-warmed connection for first synthesize", async () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+
+    // Wait for the warm connection to open
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hello", vi.fn());
+    // Should NOT have created a second connection yet
+    expect(instances.length).toBe(1);
+
+    const ws = instances[0];
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+    ws.emit("close");
+    await p;
+
+    client.close();
+  });
+
+  it("pre-warms next connection after synthesis completes", async () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    const p = client.synthesize("hello", vi.fn());
+    const ws = instances[0];
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+
+    // Server closes the connection after synthesis
+    ws.emit("close");
+    await p;
+
+    // Should have pre-warmed a new connection
+    expect(instances.length).toBe(2);
+
+    client.close();
+  });
+
+  it("creates fresh connection if warm one is not available", async () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+
+    // Simulate warm connection error
+    instances[0].emit("error", new Error("warm failed"));
+
+    const p = client.synthesize("hello", vi.fn());
+    // Should have created a fresh connection (instance 2)
+    expect(instances.length).toBe(2);
+
+    const ws = instances[1];
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+    ws.emit("close");
+    await p;
+
+    client.close();
+  });
+
+  it("reuses warm connection for second call", async () => {
+    const client = new TtsClient(config);
+    await vi.waitFor(() => expect(instances[0].readyState).toBe(1));
+
+    // First synthesis
+    const p1 = client.synthesize("first", vi.fn());
+    await vi.waitFor(() => expect(instances[0].sent.length).toBeGreaterThan(0));
+    instances[0].emit("close");
+    await p1;
+
+    // Pre-warmed connection should be ready (instance 1)
+    expect(instances.length).toBe(2);
+    await vi.waitFor(() => expect(instances[1].readyState).toBe(1));
+
+    // Second synthesis uses the pre-warmed connection
+    const p2 = client.synthesize("second", vi.fn());
+    expect(instances.length).toBe(2); // No new connection created
+    await vi.waitFor(() => expect(instances[1].sent.length).toBeGreaterThan(0));
+    instances[1].emit("close");
+    await p2;
+
+    client.close();
+  });
+
+  it("close() disposes warm connection and prevents new ones", async () => {
+    const client = new TtsClient(config);
+    expect(instances.length).toBe(1);
+
+    client.close();
+
+    // Warm connection should be closed
+    expect(instances[0].readyState).toBe(3); // closed
+  });
+
+  it("does not pre-warm if no API key", () => {
+    const noKeyConfig = { ...config, apiKey: "" };
+    const client = new TtsClient(noKeyConfig);
+    expect(instances.length).toBe(0);
+    client.close();
   });
 });

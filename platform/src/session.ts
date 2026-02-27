@@ -5,7 +5,7 @@ import { callLLM } from "./llm.js";
 import { toolDefsToSchemas } from "./protocol.js";
 import { Sandbox } from "./sandbox.js";
 import { connectStt, type SttEvents } from "./stt.js";
-import { synthesize } from "./tts.js";
+import { TtsClient } from "./tts.js";
 import { normalizeVoiceText } from "./voice-cleaner.js";
 import {
   DEFAULT_GREETING,
@@ -58,6 +58,7 @@ export class VoiceSession {
     clear: () => void;
     close: () => void;
   } | null = null;
+  private ttsClient: TtsClient;
   private chatAbort: AbortController | null = null;
   private ttsAbort: AbortController | null = null;
   private messages: ChatMessage[] = [];
@@ -83,6 +84,7 @@ export class VoiceSession {
     }
 
     this.sandbox = new Sandbox(config.tools, this.deps.customerSecrets);
+    this.ttsClient = new TtsClient(this.deps.ttsConfig);
     this.toolSchemas = toolDefsToSchemas(config.tools);
 
     // Initialize system message
@@ -198,6 +200,7 @@ export class VoiceSession {
 
     this.cancelInflight();
     this.stt?.close();
+    this.ttsClient.close();
     this.sandbox.dispose();
   }
 
@@ -255,27 +258,29 @@ export class VoiceSession {
             tool_calls: msg.tool_calls,
           });
 
-          // Execute each tool call
+          // Execute all tool calls in parallel
           for (const tc of msg.tool_calls) {
-            if (abort.signal.aborted) break;
+            steps.push(`Using ${tc.function.name}`);
+          }
 
-            const toolName = tc.function.name;
-            steps.push(`Using ${toolName}`);
+          const toolResults = await Promise.all(
+            msg.tool_calls.map(async (tc) => {
+              let args: Record<string, unknown>;
+              try {
+                args = JSON.parse(tc.function.arguments);
+              } catch {
+                args = {};
+              }
+              return this.sandbox.execute(tc.function.name, args);
+            })
+          );
 
-            let args: Record<string, unknown>;
-            try {
-              args = JSON.parse(tc.function.arguments);
-            } catch {
-              args = {};
-            }
-
-            const result = await this.sandbox.execute(toolName, args);
-
-            // Add tool result message
+          // Add tool results to messages in order
+          for (let i = 0; i < msg.tool_calls.length; i++) {
             this.messages.push({
               role: "tool",
-              content: result,
-              tool_call_id: tc.id,
+              content: toolResults[i],
+              tool_call_id: msg.tool_calls[i].id,
             });
           }
 
@@ -331,7 +336,8 @@ export class VoiceSession {
     const cleaned = normalizeVoiceText(text);
     const log = (msg: string) => console.log(`[session:${this.id.slice(0, 8)}] TTS: ${msg}`);
 
-    synthesize(cleaned, this.deps.ttsConfig, (chunk) => this.sendBytes(chunk), abort.signal)
+    this.ttsClient
+      .synthesize(cleaned, (chunk) => this.sendBytes(chunk), abort.signal)
       .then(() => {
         if (!abort.signal.aborted) {
           this.sendJson({ type: "tts_done" });
