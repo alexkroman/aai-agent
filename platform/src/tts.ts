@@ -157,12 +157,69 @@ export async function synthesize(
   text: string,
   config: TTSConfig,
   onAudio: (chunk: Buffer) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
-  const client = new TtsClient(config);
-  try {
-    await client.synthesize(text, onAudio, signal);
-  } finally {
-    client.close();
-  }
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+
+    const ws = new WebSocket(config.wssUrl, {
+      headers: { Authorization: `Api-Key ${config.apiKey}` },
+    });
+
+    const cleanup = () => {
+      ws.removeAllListeners();
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        ws.close();
+      }
+    };
+
+    const onAbort = () => {
+      cleanup();
+      resolve();
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    ws.on("open", () => {
+      // Send TTS configuration
+      ws.send(
+        JSON.stringify({
+          voice: config.voice,
+          max_tokens: config.maxTokens,
+          buffer_size: config.bufferSize,
+          repetition_penalty: config.repetitionPenalty,
+          temperature: config.temperature,
+          top_p: config.topP,
+        }),
+      );
+      // Send text word by word
+      for (const word of text.split(/\s+/)) {
+        if (word) ws.send(word);
+      }
+      ws.send("__END__");
+    });
+
+    ws.on("message", (data) => {
+      if (data instanceof Buffer) {
+        onAudio(data);
+      }
+    });
+
+    ws.on("close", () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    });
+
+    ws.on("error", (err) => {
+      signal?.removeEventListener("abort", onAbort);
+      cleanup();
+      reject(err);
+    });
+  });
 }

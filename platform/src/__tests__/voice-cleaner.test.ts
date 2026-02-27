@@ -3,15 +3,21 @@ import { normalizeVoiceText } from "../voice-cleaner.js";
 
 describe("normalizeVoiceText", () => {
   it("strips markdown bold/italic", () => {
-    expect(normalizeVoiceText("This is **bold** and *italic*")).toBe("This is bold and italic");
+    expect(normalizeVoiceText("This is **bold** and *italic*")).toBe(
+      "This is bold and italic",
+    );
   });
 
   it("strips markdown headers", () => {
-    expect(normalizeVoiceText("## Header\nSome text")).toBe("Header\nSome text");
+    expect(normalizeVoiceText("## Header\nSome text")).toBe(
+      "Header\nSome text",
+    );
   });
 
   it("strips markdown links", () => {
-    expect(normalizeVoiceText("Click [here](https://example.com)")).toBe("Click here");
+    expect(normalizeVoiceText("Click [here](https://example.com)")).toBe(
+      "Click here",
+    );
   });
 
   it("strips code blocks", () => {
@@ -23,7 +29,9 @@ describe("normalizeVoiceText", () => {
   });
 
   it("removes URLs", () => {
-    expect(normalizeVoiceText("Visit https://example.com for more")).toBe("Visit for more");
+    expect(normalizeVoiceText("Visit https://example.com for more")).toBe(
+      "Visit for more",
+    );
   });
 
   it("expands currency", () => {
@@ -33,7 +41,9 @@ describe("normalizeVoiceText", () => {
   });
 
   it("expands percentages", () => {
-    expect(normalizeVoiceText("100% complete")).toBe("one hundred percent complete");
+    expect(normalizeVoiceText("100% complete")).toBe(
+      "one hundred percent complete",
+    );
   });
 
   it("expands ordinals", () => {
@@ -43,7 +53,9 @@ describe("normalizeVoiceText", () => {
   });
 
   it("expands numbers", () => {
-    expect(normalizeVoiceText("there are 42 items")).toBe("there are forty-two items");
+    expect(normalizeVoiceText("there are 42 items")).toBe(
+      "there are forty-two items",
+    );
   });
 
   it("replaces symbols", () => {

@@ -2,7 +2,7 @@
 
 import type WebSocket from "ws";
 import { loadPlatformConfig, type PlatformConfig } from "./config.js";
-import { MAX_TOOL_ITERATIONS, MSG } from "./constants.js";
+import { MSG, MAX_TOOL_ITERATIONS } from "./constants.js";
 import { ERR } from "./errors.js";
 import { callLLM } from "./llm.js";
 import { toolDefsToSchemas } from "./protocol.js";
@@ -24,12 +24,20 @@ interface SessionDeps extends PlatformConfig {
   customerSecrets: Record<string, string>;
 }
 
+/** Injectable overrides for testing. */
+export interface SessionOverrides {
+  connectStt?: typeof connectStt;
+  synthesize?: typeof synthesize;
+  callLLM?: typeof callLLM;
+}
+
 export class VoiceSession {
   private id: string;
   private config: AgentConfig;
   private deps: SessionDeps;
   private browserWs: WebSocket;
   private sandbox: Sandbox;
+  private overrides: SessionOverrides;
   private stt: {
     send: (audio: Buffer) => void;
     clear: () => void;
@@ -46,11 +54,13 @@ export class VoiceSession {
     id: string,
     browserWs: WebSocket,
     config: AgentConfig,
-    customerSecrets: Record<string, string> = {}
+    customerSecrets: Record<string, string> = {},
+    overrides: SessionOverrides = {},
   ) {
     this.id = id;
     this.browserWs = browserWs;
     this.config = config;
+    this.overrides = overrides;
 
     this.deps = { ...loadPlatformConfig(), customerSecrets };
 
@@ -59,8 +69,7 @@ export class VoiceSession {
       this.deps.ttsConfig.voice = config.voice;
     }
 
-    this.sandbox = new Sandbox(config.tools, this.deps.customerSecrets);
-    this.ttsClient = new TtsClient(this.deps.ttsConfig);
+    this.sandbox = new Sandbox(config.tools, customerSecrets);
     this.toolSchemas = toolDefsToSchemas(config.tools);
 
     // Initialize system message
@@ -114,10 +123,18 @@ export class VoiceSession {
         },
       };
 
-      this.stt = await connectStt(this.deps.apiKey, this.deps.sttConfig, events);
+      const sttConnect = this.overrides.connectStt ?? connectStt;
+      this.stt = await sttConnect(
+        this.deps.apiKey,
+        this.deps.sttConfig,
+        events,
+      );
     } catch (err) {
       log(`Failed to connect STT: ${err}`);
-      this.sendJson({ type: MSG.ERROR, message: ERR.STT_CONNECT_FAILED });
+      this.sendJson({
+        type: MSG.ERROR,
+        message: ERR.STT_CONNECT_FAILED,
+      });
       return;
     }
 
@@ -203,13 +220,14 @@ export class VoiceSession {
       // Add user message
       this.messages.push({ role: "user", content: text });
 
-      // LLM tool loop
-      let response = await callLLM(
+      // LLM tool loop (max 3 iterations)
+      const llm = this.overrides.callLLM ?? callLLM;
+      let response = await llm(
         this.messages,
         this.toolSchemas,
         this.deps.apiKey,
         this.deps.model,
-        abort.signal
+        abort.signal,
       );
 
       const steps: string[] = [];
@@ -259,12 +277,12 @@ export class VoiceSession {
           if (abort.signal.aborted) break;
 
           // Call LLM again with tool results
-          response = await callLLM(
+          response = await llm(
             this.messages,
             this.toolSchemas,
             this.deps.apiKey,
             this.deps.model,
-            abort.signal
+            abort.signal,
           );
           iterations++;
         } else {
@@ -308,8 +326,13 @@ export class VoiceSession {
     const cleaned = normalizeVoiceText(text);
     const log = (msg: string) => console.log(`[session:${this.id.slice(0, 8)}] TTS: ${msg}`);
 
-    this.ttsClient
-      .synthesize(cleaned, (chunk) => this.sendBytes(chunk), abort.signal)
+    const tts = this.overrides.synthesize ?? synthesize;
+    tts(
+      cleaned,
+      this.deps.ttsConfig,
+      (chunk) => this.sendBytes(chunk),
+      abort.signal,
+    )
       .then(() => {
         if (!abort.signal.aborted) {
           this.sendJson({ type: MSG.TTS_DONE });

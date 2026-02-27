@@ -1,24 +1,24 @@
-// types.ts — All TypeScript interfaces and message types.
+// types.ts — All TypeScript interfaces, message types, and Zod schemas.
 
 import { z } from "zod";
 
 // ── STT Configuration ──────────────────────────────────────────────
 
-/** Configuration for the AssemblyAI Streaming STT WebSocket. */
+/** Configuration for the AssemblyAI streaming speech-to-text service. */
 export interface STTConfig {
-  /** Audio sample rate in Hz (e.g., 16000) */
+  /** Audio sample rate in Hz (e.g., 16000). */
   sampleRate: number;
-  /** AssemblyAI speech model identifier (e.g., "u3-pro") */
+  /** AssemblyAI speech model identifier (e.g., "u3-pro"). */
   speechModel: string;
-  /** Base WebSocket URL for AssemblyAI Streaming v3 */
+  /** Base WebSocket URL for AssemblyAI streaming. */
   wssBase: string;
-  /** Ephemeral token validity period in seconds */
+  /** Token expiration time in seconds. */
   tokenExpiresIn: number;
-  /** Whether to request formatted turn transcripts */
+  /** Whether to format completed turns. */
   formatTurns: boolean;
-  /** Minimum silence (ms) before ending a turn when confidence is high */
+  /** Minimum silence (ms) to end a turn when confidence is high. */
   minEndOfTurnSilenceWhenConfident: number;
-  /** Maximum silence (ms) before forcing end-of-turn */
+  /** Maximum silence (ms) before ending a turn. */
   maxTurnSilence: number;
 }
 
@@ -34,25 +34,25 @@ export const DEFAULT_STT_CONFIG: STTConfig = {
 
 // ── TTS Configuration ──────────────────────────────────────────────
 
-/** Configuration for the Baseten Orpheus TTS WebSocket. */
+/** Configuration for the Orpheus TTS service (via Baseten WebSocket). */
 export interface TTSConfig {
-  /** WebSocket URL for the Orpheus TTS model on Baseten */
+  /** WebSocket URL for the TTS service. */
   wssUrl: string;
-  /** Baseten API key for authentication */
+  /** API key for TTS authentication. */
   apiKey: string;
-  /** Voice name (e.g., "jess", "tara", "luna") */
+  /** Voice name (e.g., "jess", "luna"). */
   voice: string;
-  /** Maximum tokens to generate per synthesis */
+  /** Maximum tokens to generate. */
   maxTokens: number;
-  /** Number of words to buffer before streaming audio */
+  /** Audio buffer size. */
   bufferSize: number;
-  /** Penalty for repeated tokens (1.0 = no penalty) */
+  /** Repetition penalty for generation. */
   repetitionPenalty: number;
-  /** Sampling temperature (0.0 = deterministic, 1.0 = creative) */
+  /** Sampling temperature. */
   temperature: number;
-  /** Nucleus sampling threshold */
+  /** Top-p (nucleus) sampling threshold. */
   topP: number;
-  /** Audio output sample rate in Hz */
+  /** Output audio sample rate in Hz (e.g., 24000). */
   sampleRate: number;
 }
 
@@ -105,35 +105,35 @@ export const DEFAULT_GREETING = "Hey there! I'm a voice assistant. What can I he
 
 // ── Tool Definition (from customer configure message) ──────────────
 
-/** A tool defined by the customer in their configure message. */
+/** A tool definition received from the browser in the configure message. */
 export interface ToolDef {
-  /** Tool name (used by the LLM to invoke it) */
+  /** Unique tool name (e.g., "get_weather"). */
   name: string;
-  /** Human-readable description of what the tool does */
+  /** Human-readable description of what the tool does. */
   description: string;
-  /** Parameter schema (simple, extended, or raw JSON Schema) */
+  /** Parameter schema (simplified or JSON Schema). */
   parameters: Record<string, unknown>;
-  /** Serialized function source code (runs in V8 isolate) */
+  /** Serialized handler function source code. */
   handler: string;
 }
 
 // ── Agent Configuration (from customer configure message) ──────────
 
-/** Per-session agent configuration derived from the customer's configure message. */
+/** Agent configuration extracted from the browser's configure message. */
 export interface AgentConfig {
-  /** System instructions for the LLM */
+  /** System prompt / instructions for the LLM. */
   instructions: string;
-  /** Greeting text spoken at session start */
+  /** Initial greeting message spoken to the user. */
   greeting: string;
-  /** TTS voice name */
+  /** TTS voice name. */
   voice: string;
-  /** Tool definitions with serialized handlers */
+  /** Tool definitions with serialized handlers. */
   tools: ToolDef[];
 }
 
 // ── Zod Schemas for incoming messages ──────────────────────────────
 
-/** Zod schema for the initial "configure" message from the browser. */
+/** Schema for the browser's initial configure message. */
 export const ConfigureMessageSchema = z.object({
   type: z.literal("configure"),
   instructions: z.string().optional(),
@@ -146,12 +146,12 @@ export const ConfigureMessageSchema = z.object({
         description: z.string(),
         parameters: z.record(z.unknown()),
         handler: z.string(),
-      })
+      }),
     )
     .optional(),
 });
 
-/** Zod schema for control messages ("cancel" or "reset"). */
+/** Schema for browser control messages (cancel, reset). */
 export const ControlMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cancel") }),
   z.object({ type: z.literal("reset") }),
@@ -159,75 +159,90 @@ export const ControlMessageSchema = z.discriminatedUnion("type", [
 
 // ── OpenAI-compatible types for LLM ────────────────────────────────
 
-/** A message in the LLM chat history. */
+/** A message in the LLM conversation (OpenAI chat format). */
 export interface ChatMessage {
+  /** Message role: system, user, assistant, or tool. */
   role: "system" | "user" | "assistant" | "tool";
+  /** Text content (null when message only has tool_calls). */
   content: string | null;
+  /** Tool calls requested by the assistant. */
   tool_calls?: ToolCall[];
+  /** ID of the tool call this message responds to. */
   tool_call_id?: string;
 }
 
 /** A tool call requested by the LLM. */
 export interface ToolCall {
+  /** Unique identifier for this tool call. */
   id: string;
+  /** Always "function" for function-calling tools. */
   type: "function";
+  /** Function name and JSON-encoded arguments. */
   function: { name: string; arguments: string };
 }
 
-/** Tool schema sent to the LLM for function calling. */
+/** OpenAI-compatible tool schema for the LLM request. */
 export interface ToolSchema {
+  /** Tool name. */
   name: string;
+  /** Tool description. */
   description: string;
+  /** JSON Schema for the tool's parameters. */
   parameters: Record<string, unknown>;
 }
 
-/** A single choice in an LLM response. */
+/** A single choice from an LLM response. */
 export interface LLMChoice {
+  /** Choice index (usually 0). */
   index: number;
+  /** The assistant's message. */
   message: ChatMessage;
+  /** Why the model stopped: "stop", "tool_calls", "length". */
   finish_reason: string;
 }
 
-/** Complete LLM response (OpenAI chat completions format). */
+/** Complete LLM response (OpenAI chat completion format). */
 export interface LLMResponse {
+  /** Unique completion ID. */
   id: string;
+  /** Array of response choices. */
   choices: LLMChoice[];
 }
 
-// ── WebSocket Protocol Messages (server → browser) ─────────────────
+// ── WebSocket Protocol Types (server → browser) ────────────────────
 
-/** Sent after STT connects; browser should start mic capture. */
+/** Server tells browser STT is ready; includes sample rates. */
 export interface ReadyMessage {
   type: "ready";
   sampleRate: number;
   ttsSampleRate: number;
 }
 
-/** Initial greeting text (also triggers TTS). */
+/** Server sends the initial greeting text. */
 export interface GreetingMessage {
   type: "greeting";
   text: string;
 }
 
-/** Real-time transcript from STT. */
+/** Real-time speech transcript (partial or final). */
 export interface TranscriptMessage {
   type: "transcript";
   text: string;
   final: boolean;
 }
 
-/** User's completed turn (sent after STT end-of-turn). */
+/** A completed user turn (speech finalized). */
 export interface TurnMessage {
   type: "turn";
   text: string;
 }
 
-/** LLM is processing the user's turn. */
+/** Server is processing (LLM thinking). */
 export interface ThinkingMessage {
   type: "thinking";
 }
 
-/** LLM response text with optional tool-use steps. */
+/** LLM response with optional tool-use steps. */
 export interface ChatResponseMessage {
   type: "chat";
   text: string;
@@ -239,7 +254,7 @@ export interface TtsDoneMessage {
   type: "tts_done";
 }
 
-/** Cancellation acknowledged. */
+/** Cancel acknowledged. */
 export interface CancelledMessage {
   type: "cancelled";
 }
@@ -249,13 +264,13 @@ export interface ResetMessage {
   type: "reset";
 }
 
-/** Error notification. */
+/** Error message from the server. */
 export interface ErrorMessage {
   type: "error";
   message: string;
 }
 
-/** Union of all server → browser JSON messages. */
+/** Discriminated union of all server → browser messages. */
 export type ServerMessage =
   | ReadyMessage
   | GreetingMessage

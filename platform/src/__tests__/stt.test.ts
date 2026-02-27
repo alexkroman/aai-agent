@@ -45,7 +45,7 @@ describe("createSttToken", () => {
     });
 
     await expect(createSttToken("bad-key", 480)).rejects.toThrow(
-      "STT token request failed: 403 Forbidden"
+      "STT token request failed: 403 Forbidden",
     );
   });
 

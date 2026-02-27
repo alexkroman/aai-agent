@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Sandbox } from "../sandbox.js";
 
 afterEach(() => {
@@ -14,7 +14,7 @@ describe("Sandbox", () => {
           handler: "async (args) => `Hello, ${args.name}!`",
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("greet", { name: "World" });
@@ -30,7 +30,7 @@ describe("Sandbox", () => {
           handler: "async (args) => ({ status: 'ok', value: args.x * 2 })",
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("get_data", { x: 21 });
@@ -47,7 +47,7 @@ describe("Sandbox", () => {
           handler: "async (args, ctx) => ctx.secrets.MY_KEY",
         },
       ],
-      { MY_KEY: "secret-value-123" }
+      { MY_KEY: "secret-value-123" },
     );
 
     const result = await sandbox.execute("use_secret", {});
@@ -68,7 +68,7 @@ describe("Sandbox", () => {
           handler: "async (args, ctx) => ctx.secrets.KEY",
         },
       ],
-      originalSecrets
+      originalSecrets,
     );
 
     // First call mutates ctx.secrets
@@ -94,7 +94,7 @@ describe("Sandbox", () => {
           handler: 'async () => { throw new Error("boom"); }',
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("fail", {});
@@ -122,7 +122,7 @@ describe("Sandbox", () => {
             'async (args, ctx) => { const resp = ctx.fetch("https://api.example.com/data"); return resp.json(); }',
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("call_api", {});
@@ -130,7 +130,7 @@ describe("Sandbox", () => {
     expect(parsed).toEqual({ temp: 72 });
     expect(mockFetch).toHaveBeenCalledWith(
       "https://api.example.com/data",
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     sandbox.dispose();
@@ -174,7 +174,7 @@ describe("Sandbox", () => {
           handler: "async (args) => args.a * args.b",
         },
       ],
-      {}
+      {},
     );
 
     const addResult = await sandbox.execute("add", { a: 3, b: 4 });
@@ -194,7 +194,7 @@ describe("Sandbox", () => {
           handler: "async () => null",
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("noop", {});
@@ -210,7 +210,7 @@ describe("Sandbox", () => {
           handler: "async () => [1, 2, 3]",
         },
       ],
-      {}
+      {},
     );
 
     const result = await sandbox.execute("list", {});

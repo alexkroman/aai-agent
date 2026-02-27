@@ -1,41 +1,43 @@
-// config.ts — Centralized configuration loading from environment variables.
+// config.ts — Centralized environment variable loading.
 
 import {
   DEFAULT_MODEL,
   DEFAULT_STT_CONFIG,
-  DEFAULT_TTS_CONFIG,
+  DEFAULT_TTS_WSS_URL,
   type STTConfig,
   type TTSConfig,
 } from "./types.js";
 
-/** All platform configuration derived from environment variables. */
+/** Platform configuration loaded from environment variables. */
 export interface PlatformConfig {
-  /** AssemblyAI API key for STT and LLM gateway */
   apiKey: string;
-  /** Baseten API key for Orpheus TTS */
   ttsApiKey: string;
-  /** Speech-to-text configuration */
   sttConfig: STTConfig;
-  /** Text-to-speech configuration */
   ttsConfig: TTSConfig;
-  /** LLM model identifier */
   model: string;
 }
 
 /**
  * Load platform configuration from environment variables.
- * Call once at startup; pass the result to components that need it.
+ * Falls back to defaults for optional values.
  */
 export function loadPlatformConfig(): PlatformConfig {
   const ttsApiKey = process.env.ASSEMBLYAI_TTS_API_KEY ?? "";
+
   return {
     apiKey: process.env.ASSEMBLYAI_API_KEY ?? "",
     ttsApiKey,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
-      ...DEFAULT_TTS_CONFIG,
-      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
+      wssUrl: process.env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_WSS_URL,
       apiKey: ttsApiKey,
+      voice: "jess",
+      maxTokens: 2000,
+      bufferSize: 105,
+      repetitionPenalty: 1.2,
+      temperature: 0.6,
+      topP: 0.9,
+      sampleRate: 24000,
     },
     model: process.env.LLM_MODEL ?? DEFAULT_MODEL,
   };

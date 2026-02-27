@@ -8,8 +8,8 @@ import {
   MAX_TOOL_ITERATIONS,
 } from "../constants.js";
 
-describe("constants", () => {
-  it("MSG has all server → browser message types", () => {
+describe("MSG", () => {
+  it("has all server→browser message types", () => {
     expect(MSG.READY).toBe("ready");
     expect(MSG.GREETING).toBe("greeting");
     expect(MSG.TRANSCRIPT).toBe("transcript");
@@ -22,29 +22,37 @@ describe("constants", () => {
     expect(MSG.RESET).toBe("reset");
   });
 
-  it("MSG has browser → server message types", () => {
+  it("has all browser→server message types", () => {
     expect(MSG.CONFIGURE).toBe("configure");
     expect(MSG.CANCEL).toBe("cancel");
   });
+});
 
-  it("TIMEOUTS are positive numbers", () => {
-    expect(TIMEOUTS.STT_CONNECTION).toBeGreaterThan(0);
-    expect(TIMEOUTS.TOOL_HANDLER).toBeGreaterThan(0);
-    expect(TIMEOUTS.STT_TOKEN_EXPIRES).toBeGreaterThan(0);
+describe("TIMEOUTS", () => {
+  it("has correct timeout values", () => {
+    expect(TIMEOUTS.STT_CONNECTION).toBe(10_000);
+    expect(TIMEOUTS.TOOL_HANDLER).toBe(30_000);
+    expect(TIMEOUTS.STT_TOKEN_EXPIRES).toBe(480);
   });
+});
 
-  it("PATHS start with /", () => {
+describe("PATHS", () => {
+  it("has correct path values", () => {
     expect(PATHS.WEBSOCKET).toBe("/session");
     expect(PATHS.HEALTH).toBe("/health");
     expect(PATHS.CLIENT_JS).toBe("/client.js");
     expect(PATHS.REACT_JS).toBe("/react.js");
   });
+});
 
-  it("SAMPLE_RATES are standard audio rates", () => {
+describe("SAMPLE_RATES", () => {
+  it("has correct sample rates", () => {
     expect(SAMPLE_RATES.STT).toBe(16_000);
     expect(SAMPLE_RATES.TTS).toBe(24_000);
   });
+});
 
+describe("numeric constants", () => {
   it("ISOLATE_MEMORY_LIMIT_MB is 128", () => {
     expect(ISOLATE_MEMORY_LIMIT_MB).toBe(128);
   });

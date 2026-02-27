@@ -1,8 +1,8 @@
-// constants.ts — Centralized constants for message types, timeouts, paths, and sample rates.
+// constants.ts — Centralized magic strings and numbers.
 
-/** WebSocket message types sent between server and browser. */
+/** WebSocket message type strings (browser ↔ server protocol). */
 export const MSG = {
-  // Server → Browser
+  // Server → browser
   READY: "ready",
   GREETING: "greeting",
   TRANSCRIPT: "transcript",
@@ -14,22 +14,22 @@ export const MSG = {
   ERROR: "error",
   RESET: "reset",
 
-  // Browser → Server
+  // Browser → server
   CONFIGURE: "configure",
   CANCEL: "cancel",
 } as const;
 
-/** Timeout values in milliseconds. */
+/** Timeout durations in milliseconds. */
 export const TIMEOUTS = {
   /** STT WebSocket connection timeout */
   STT_CONNECTION: 10_000,
-  /** Tool handler execution timeout in the V8 sandbox */
+  /** Tool handler execution timeout */
   TOOL_HANDLER: 30_000,
-  /** STT token validity period in seconds */
+  /** STT token expiration in seconds */
   STT_TOKEN_EXPIRES: 480,
 } as const;
 
-/** HTTP and WebSocket paths. */
+/** HTTP/WebSocket path constants. */
 export const PATHS = {
   WEBSOCKET: "/session",
   HEALTH: "/health",
@@ -37,13 +37,13 @@ export const PATHS = {
   REACT_JS: "/react.js",
 } as const;
 
-/** Audio sample rates in Hz. */
+/** Audio sample rates. */
 export const SAMPLE_RATES = {
   STT: 16_000,
   TTS: 24_000,
 } as const;
 
-/** V8 isolate memory limit in MB. */
+/** V8 isolate memory limit per session. */
 export const ISOLATE_MEMORY_LIMIT_MB = 128;
 
 /** Maximum LLM tool-call iterations per turn. */

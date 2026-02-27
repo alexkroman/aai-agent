@@ -8,8 +8,7 @@ import { randomBytes } from "crypto";
 import { MSG, PATHS } from "./constants.js";
 import { ERR } from "./errors.js";
 import { ConfigureMessageSchema, ControlMessageSchema } from "./types.js";
-import { VoiceSession } from "./session.js";
-import { loadSecretsFile, type SecretStore } from "./secrets.js";
+import { VoiceSession, type SessionOverrides } from "./session.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
@@ -19,85 +18,109 @@ const MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 
-interface ServerOptions {
+export interface ServerOptions {
   port: number;
-  clientDir?: string; // Directory containing built client.js and react.js
-  secretsFile?: string; // Path to JSON secrets file (per-customer)
+  clientDir?: string;
+  secretsFile?: string;
+  /** Injectable overrides passed to every VoiceSession (for testing). */
+  sessionOverrides?: SessionOverrides;
 }
 
 export interface ServerHandle {
-  httpServer: ReturnType<typeof createServer>;
+  port: number;
   close: () => Promise<void>;
+}
+
+/** Per-customer secrets store, keyed by API key. */
+type SecretsStore = Record<string, Record<string, string>>;
+
+export async function loadSecretsFile(path: string): Promise<SecretsStore> {
+  try {
+    const content = await readFile(path, "utf-8");
+    const parsed = JSON.parse(content);
+    console.log(
+      `[server] Loaded secrets for ${Object.keys(parsed).length} customer(s)`,
+    );
+    return parsed as SecretsStore;
+  } catch (err) {
+    console.warn(`[server] Failed to load secrets file: ${err}`);
+    return {};
+  }
 }
 
 /**
  * Create and start the platform server.
  */
-export function startServer(options: ServerOptions): ServerHandle {
+export async function startServer(
+  options: ServerOptions,
+): Promise<ServerHandle> {
   const sessions = new Map<string, VoiceSession>();
 
-  // Load per-customer secrets from file
-  let secretStore: SecretStore = new Map();
-  if (options.secretsFile) {
-    secretStore = loadSecretsFile(options.secretsFile);
-    console.log(`[server] Loaded secrets for ${secretStore.size} customer(s)`);
-  }
+  // Load per-customer secrets
+  const secrets: SecretsStore = options.secretsFile
+    ? await loadSecretsFile(options.secretsFile)
+    : {};
 
   // ── HTTP server ────────────────────────────────────────────────
 
-  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+  const httpServer = createServer(
+    async (req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
-    // Health check
-    if (url.pathname === PATHS.HEALTH) {
-      res.writeHead(200, {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      });
-      res.end(JSON.stringify({ status: "ok" }));
-      return;
-    }
-
-    // Serve client library files
-    if (
-      options.clientDir &&
-      (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
-    ) {
-      try {
-        const filePath = join(options.clientDir, url.pathname.slice(1));
-        const content = await readFile(filePath);
-        const ext = extname(url.pathname);
+      // Health check
+      if (url.pathname === PATHS.HEALTH) {
         res.writeHead(200, {
-          "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
+          "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=3600",
         });
-        res.end(content);
-      } catch {
-        res.writeHead(404);
-        res.end("Not found");
+        res.end(JSON.stringify({ status: "ok" }));
+        return;
       }
-      return;
-    }
 
-    // CORS preflight
-    if (req.method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      });
-      res.end();
-      return;
-    }
+      // Serve client library files
+      if (
+        options.clientDir &&
+        (url.pathname === PATHS.CLIENT_JS || url.pathname === PATHS.REACT_JS)
+      ) {
+        try {
+          const filePath = join(options.clientDir, url.pathname.slice(1));
+          const content = await readFile(filePath);
+          const ext = extname(url.pathname);
+          res.writeHead(200, {
+            "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=3600",
+          });
+          res.end(content);
+        } catch {
+          res.writeHead(404);
+          res.end("Not found");
+        }
+        return;
+      }
 
-    res.writeHead(404);
-    res.end("Not found");
-  });
+      // CORS preflight
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        });
+        res.end();
+        return;
+      }
+
+      res.writeHead(404);
+      res.end("Not found");
+    },
+  );
 
   // ── WebSocket server ───────────────────────────────────────────
 
-  const wss = new WebSocketServer({ server: httpServer, path: PATHS.WEBSOCKET });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: PATHS.WEBSOCKET,
+  });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
@@ -105,12 +128,14 @@ export function startServer(options: ServerOptions): ServerHandle {
     const sessionId = randomBytes(16).toString("hex");
 
     console.log(
-      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`
+      `[server] Connection from key=${apiKey.slice(0, 8)}... session=${sessionId.slice(0, 8)}`,
     );
 
     // TODO: Validate API key against customer database
     if (!apiKey) {
-      ws.send(JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }));
+      ws.send(
+        JSON.stringify({ type: MSG.ERROR, message: ERR.MISSING_API_KEY }),
+      );
       ws.close();
       return;
     }
@@ -143,13 +168,13 @@ export function startServer(options: ServerOptions): ServerHandle {
             JSON.stringify({
               type: MSG.ERROR,
               message: ERR.INVALID_CONFIGURE,
-            })
+            }),
           );
           return;
         }
 
         const cfg = parsed.data;
-        const customerSecrets = secretStore.get(apiKey) ?? {};
+        const customerSecrets = secrets[apiKey] ?? {};
         session = new VoiceSession(
           sessionId,
           ws,
@@ -159,13 +184,14 @@ export function startServer(options: ServerOptions): ServerHandle {
             voice: cfg.voice ?? "jess",
             tools: cfg.tools ?? [],
           },
-          customerSecrets
+          customerSecrets,
+          options.sessionOverrides ?? {},
         );
         sessions.set(sessionId, session);
         configured = true;
 
         console.log(
-          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`
+          `[server] Session ${sessionId.slice(0, 8)} configured with ${cfg.tools?.length ?? 0} tools`,
         );
 
         await session.start();
@@ -176,9 +202,9 @@ export function startServer(options: ServerOptions): ServerHandle {
       const parsed = ControlMessageSchema.safeParse(data);
       if (!parsed.success) return;
 
-      if (parsed.data.type === "cancel") {
+      if (parsed.data.type === MSG.CANCEL) {
         await session?.onCancel();
-      } else if (parsed.data.type === "reset") {
+      } else if (parsed.data.type === MSG.RESET) {
         await session?.onReset();
       }
     });
@@ -192,20 +218,28 @@ export function startServer(options: ServerOptions): ServerHandle {
     });
 
     ws.on("error", (err) => {
-      console.error(`[server] WS error session=${sessionId.slice(0, 8)}:`, err.message);
+      console.error(
+        `[server] WS error session=${sessionId.slice(0, 8)}:`,
+        err.message,
+      );
     });
   });
 
   // ── Start listening ────────────────────────────────────────────
 
-  httpServer.listen(options.port, () => {
-    console.log(`[server] Platform running on port ${options.port}`);
-    console.log(`[server] WebSocket endpoint: ws://localhost:${options.port}${PATHS.WEBSOCKET}`);
-    if (options.clientDir) {
-      console.log(`[server] Client library: http://localhost:${options.port}${PATHS.CLIENT_JS}`);
-      console.log(`[server] React hook: http://localhost:${options.port}${PATHS.REACT_JS}`);
-    }
-    console.log(`[server] Health check: http://localhost:${options.port}${PATHS.HEALTH}`);
+  const actualPort = await new Promise<number>((resolve) => {
+    httpServer.listen(options.port, () => {
+      const addr = httpServer.address();
+      const p = typeof addr === "object" && addr ? addr.port : options.port;
+      console.log(`[server] Platform running on port ${p}`);
+      console.log(`[server] WebSocket endpoint: ws://localhost:${p}/session`);
+      if (options.clientDir) {
+        console.log(`[server] Client library: http://localhost:${p}/client.js`);
+        console.log(`[server] React hook: http://localhost:${p}/react.js`);
+      }
+      console.log(`[server] Health check: http://localhost:${p}/health`);
+      resolve(p);
+    });
   });
 
   // ── Graceful shutdown ──────────────────────────────────────────
@@ -222,13 +256,14 @@ export function startServer(options: ServerOptions): ServerHandle {
     httpServer.close();
   };
 
-  const shutdown = async () => {
+  process.on("SIGINT", async () => {
     await close();
     process.exit(0);
-  };
+  });
+  process.on("SIGTERM", async () => {
+    await close();
+    process.exit(0);
+  });
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  return { httpServer, close };
+  return { port: actualPort, close };
 }

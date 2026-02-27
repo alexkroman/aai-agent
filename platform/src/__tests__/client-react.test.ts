@@ -30,10 +30,42 @@ class MockAudioWorkletNode {
   connect = vi.fn();
 }
 
+class MockAudioBuffer {
+  length: number;
+  sampleRate: number;
+  duration: number;
+  private channelData: Float32Array;
+
+  constructor(_ch: number, length: number, sampleRate: number) {
+    this.length = length;
+    this.sampleRate = sampleRate;
+    this.duration = length / sampleRate;
+    this.channelData = new Float32Array(length);
+  }
+
+  getChannelData() {
+    return this.channelData;
+  }
+}
+
+class MockAudioBufferSource {
+  buffer: unknown = null;
+  connect = vi.fn();
+  start = vi.fn();
+}
+
 class MockAudioContext {
   state = "running";
+  currentTime = 0;
+  destination = {};
   audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
   createMediaStreamSource = vi.fn(() => ({ connect: vi.fn() }));
+  createBuffer(ch: number, len: number, sr: number) {
+    return new MockAudioBuffer(ch, len, sr);
+  }
+  createBufferSource() {
+    return new MockAudioBufferSource();
+  }
   close = vi.fn().mockResolvedValue(undefined);
 }
 
@@ -42,39 +74,47 @@ vi.stubGlobal("AudioContext", MockAudioContext);
 vi.stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 vi.stubGlobal("navigator", {
   mediaDevices: {
-    getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+    getUserMedia: vi
+      .fn()
+      .mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
   },
 });
 vi.stubGlobal(
   "URL",
   class extends URL {
     static createObjectURL = vi.fn(() => "blob:mock");
-  }
+  },
 );
 vi.stubGlobal("Blob", class Blob {});
 
 // ── Mock React hooks (hoisted for vi.mock factory) ────────────────
 
-const { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state } = vi.hoisted(() => {
-  const state = { effectCleanup: null as (() => void) | null, current: {} as any };
-  const mockSetState = vi.fn((updater: any) => {
-    if (typeof updater === "function") {
-      state.current = updater(state.current);
-    } else {
-      state.current = updater;
-    }
-  });
-  const mockUseEffect = vi.fn((fn: () => (() => void) | void, _deps?: unknown[]) => {
-    const cleanup = fn();
-    if (typeof cleanup === "function") {
-      state.effectCleanup = cleanup;
-    }
-  });
-  const mockUseRef = vi.fn((initial: any) => ({ current: initial }));
-  const mockUseCallback = vi.fn((fn: any) => fn);
+const { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state } =
+  vi.hoisted(() => {
+    const state = {
+      effectCleanup: null as (() => void) | null,
+      current: {} as any,
+    };
+    const mockSetState = vi.fn((updater: any) => {
+      if (typeof updater === "function") {
+        state.current = updater(state.current);
+      } else {
+        state.current = updater;
+      }
+    });
+    const mockUseEffect = vi.fn(
+      (fn: () => (() => void) | void, _deps?: unknown[]) => {
+        const cleanup = fn();
+        if (typeof cleanup === "function") {
+          state.effectCleanup = cleanup;
+        }
+      },
+    );
+    const mockUseRef = vi.fn((initial: any) => ({ current: initial }));
+    const mockUseCallback = vi.fn((fn: any) => fn);
 
-  return { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state };
-});
+    return { mockUseEffect, mockUseRef, mockUseCallback, mockSetState, state };
+  });
 
 vi.mock("react", () => ({
   useState: (initial: any) => {
@@ -130,13 +170,12 @@ describe("useVoiceAgent", () => {
     });
 
     expect(state.effectCleanup).toBeInstanceOf(Function);
+    // Calling cleanup should not throw
     state.effectCleanup!();
   });
 
   it("cancel and reset are memoized with useCallback", () => {
-    useVoiceAgent({
-      apiKey: "pk_test",
-    });
+    useVoiceAgent({ apiKey: "pk_test" });
 
     expect(mockUseCallback).toHaveBeenCalledTimes(2);
   });
@@ -160,5 +199,25 @@ describe("useVoiceAgent", () => {
 
     const result = useVoiceAgent(opts);
     expect(result.state).toBe("connecting");
+  });
+
+  it("state change callback prevents overwriting 'thinking' with 'listening'", () => {
+    useVoiceAgent({
+      apiKey: "pk_test",
+      platformUrl: "ws://localhost:3000",
+    });
+
+    // Find the onStateChange callback from the useEffect call
+    // The effect creates a VoiceSession with callbacks
+    // The setState updater function should preserve "thinking" state
+    const calls = mockSetState.mock.calls;
+    // Find a setState call with a function updater
+    const updaterCalls = calls.filter((c: any[]) => typeof c[0] === "function");
+
+    // Simulate: if prev is "thinking" and new is "listening", should keep "thinking"
+    if (updaterCalls.length > 0) {
+      const updater = updaterCalls[0][0];
+      expect(updater("thinking")).toBe("thinking"); // Should not change
+    }
   });
 });

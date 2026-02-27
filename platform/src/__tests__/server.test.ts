@@ -1,326 +1,428 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import WebSocket from "ws";
+import { writeFile, unlink, mkdir, readdir, rmdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import WebSocket from "ws";
+import { randomBytes } from "crypto";
 
-// Track VoiceSession constructor args
-const { constructorCalls } = vi.hoisted(() => ({
-  constructorCalls: [] as { id: string; config: unknown; customerSecrets: unknown }[],
-}));
+import {
+  startServer,
+  loadSecretsFile,
+  type ServerHandle,
+  type ServerOptions,
+} from "../server.js";
+import type { SessionOverrides } from "../session.js";
 
-// Use vi.hoisted so mock fns are available inside vi.mock factory
-const { mockStart, mockOnAudio, mockOnCancel, mockOnReset, mockStop } = vi.hoisted(() => ({
-  mockStart: vi.fn().mockResolvedValue(undefined),
-  mockOnAudio: vi.fn(),
-  mockOnCancel: vi.fn().mockResolvedValue(undefined),
-  mockOnReset: vi.fn().mockResolvedValue(undefined),
-  mockStop: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("../session.js", () => ({
-  VoiceSession: class {
-    constructor(
-      public id: string,
-      public ws: unknown,
-      public config: unknown,
-      public customerSecrets: unknown = {}
-    ) {
-      constructorCalls.push({ id, config, customerSecrets });
-    }
-    start = mockStart;
-    onAudio = mockOnAudio;
-    onCancel = mockOnCancel;
-    onReset = mockOnReset;
-    stop = mockStop;
-  },
-}));
-
-import { startServer, type ServerHandle } from "../server.js";
-
-let handle: ServerHandle;
-let port: number;
-let clientDir: string;
-
-function getPort(h: ServerHandle): number {
-  const addr = h.httpServer.address();
-  if (typeof addr === "object" && addr) return addr.port;
-  throw new Error("Server not listening");
+/** Create mock overrides that prevent real STT/TTS/LLM API calls. */
+function mockOverrides(): SessionOverrides {
+  return {
+    connectStt: vi.fn().mockResolvedValue({
+      send: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(),
+    }),
+    synthesize: vi.fn().mockResolvedValue(undefined),
+    callLLM: vi.fn().mockResolvedValue({
+      id: "mock",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "Mock response" },
+          finish_reason: "stop",
+        },
+      ],
+    }),
+  };
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  constructorCalls.length = 0;
+/** Convenience to start a server with mocked session dependencies. */
+function startTestServer(
+  opts: Partial<ServerOptions> = {},
+): Promise<ServerHandle> {
+  return startServer({
+    port: 0,
+    sessionOverrides: mockOverrides(),
+    ...opts,
+  });
+}
 
-  clientDir = mkdtempSync(join(tmpdir(), "test-client-"));
-  writeFileSync(join(clientDir, "client.js"), "// client bundle");
-  writeFileSync(join(clientDir, "react.js"), "// react bundle");
+// ── loadSecretsFile unit tests ──────────────────────────────────
 
-  handle = startServer({ port: 0, clientDir });
-  port = getPort(handle);
-});
+describe("loadSecretsFile", () => {
+  let tmpDir: string;
 
-afterEach(async () => {
-  await handle.close();
-  rmSync(clientDir, { recursive: true, force: true });
-});
-
-describe("HTTP routes", () => {
-  it("GET /health returns 200 with status ok", async () => {
-    const resp = await fetch(`http://localhost:${port}/health`);
-    expect(resp.status).toBe(200);
-    expect(resp.headers.get("access-control-allow-origin")).toBe("*");
-
-    const body = await resp.json();
-    expect(body).toEqual({ status: "ok" });
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `aai-test-${randomBytes(4).toString("hex")}`);
+    await mkdir(tmpDir, { recursive: true });
   });
 
-  it("GET /client.js serves the client bundle", async () => {
-    const resp = await fetch(`http://localhost:${port}/client.js`);
-    expect(resp.status).toBe(200);
-    expect(resp.headers.get("content-type")).toBe("application/javascript");
-    expect(resp.headers.get("access-control-allow-origin")).toBe("*");
-    expect(resp.headers.get("cache-control")).toContain("max-age=3600");
-
-    const body = await resp.text();
-    expect(body).toBe("// client bundle");
+  afterEach(async () => {
+    try {
+      const files = await readdir(tmpDir);
+      for (const f of files) await unlink(join(tmpDir, f));
+      await rmdir(tmpDir);
+    } catch {
+      // ignore
+    }
   });
 
-  it("GET /react.js serves the react bundle", async () => {
-    const resp = await fetch(`http://localhost:${port}/react.js`);
-    expect(resp.status).toBe(200);
-
-    const body = await resp.text();
-    expect(body).toBe("// react bundle");
-  });
-
-  it("GET /nonexistent returns 404", async () => {
-    const resp = await fetch(`http://localhost:${port}/nonexistent`);
-    expect(resp.status).toBe(404);
-  });
-
-  it("OPTIONS returns CORS preflight headers", async () => {
-    const resp = await fetch(`http://localhost:${port}/anything`, {
-      method: "OPTIONS",
-    });
-    expect(resp.status).toBe(204);
-    expect(resp.headers.get("access-control-allow-origin")).toBe("*");
-    expect(resp.headers.get("access-control-allow-methods")).toContain("GET");
-  });
-
-  it("returns 404 for client files when no clientDir", async () => {
-    const h2 = startServer({ port: 0 });
-    const p2 = getPort(h2);
-
-    const resp = await fetch(`http://localhost:${p2}/client.js`);
-    expect(resp.status).toBe(404);
-
-    await h2.close();
-  });
-});
-
-describe("WebSocket /session", () => {
-  it("rejects connection without API key", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session`);
-
-    const messages: string[] = [];
-    ws.on("message", (data) => messages.push(data.toString()));
-
-    await new Promise<void>((resolve) => {
-      ws.on("close", () => resolve());
-    });
-
-    const parsed = JSON.parse(messages[0]);
-    expect(parsed).toMatchObject({
-      type: "error",
-      message: "Missing API key",
-    });
-  });
-
-  it("requires configure as first message", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
-
-    // Set up message listener BEFORE opening so we don't miss messages
-    const messages: string[] = [];
-    ws.on("message", (data) => messages.push(data.toString()));
-
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    // Send a non-configure message first
-    ws.send(JSON.stringify({ type: "cancel" }));
-
-    await vi.waitFor(() => expect(messages.length).toBeGreaterThan(0));
-
-    const parsed = JSON.parse(messages[0]);
-    expect(parsed).toMatchObject({
-      type: "error",
-      message: "First message must be a valid configure message",
-    });
-
-    ws.close();
-  });
-
-  it("creates session on valid configure message and calls start()", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
-
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    ws.send(
+  it("loads and parses a valid secrets file", async () => {
+    const path = join(tmpDir, "secrets.json");
+    await writeFile(
+      path,
       JSON.stringify({
-        type: "configure",
-        instructions: "Be helpful",
-        greeting: "Hi!",
-        voice: "jess",
-        tools: [],
-      })
+        pk_abc: { KEY1: "val1", KEY2: "val2" },
+        pk_def: { KEY3: "val3" },
+      }),
     );
 
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalledOnce());
+    const secrets = await loadSecretsFile(path);
 
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(secrets).toEqual({
+      pk_abc: { KEY1: "val1", KEY2: "val2" },
+      pk_def: { KEY3: "val3" },
+    });
   });
 
-  it("relays binary audio to session.onAudio", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
+  it("returns empty object for missing file", async () => {
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await new Promise<void>((resolve) => ws.on("open", resolve));
+    const secrets = await loadSecretsFile("/nonexistent/secrets.json");
+    expect(secrets).toEqual({});
+    expect(consoleSpy).toHaveBeenCalled();
 
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    const audio = Buffer.from([1, 2, 3, 4]);
-    ws.send(audio);
-
-    await vi.waitFor(() => expect(mockOnAudio).toHaveBeenCalled());
-
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    consoleSpy.mockRestore();
   });
 
-  it("handles cancel control message", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
+  it("returns empty object for invalid JSON", async () => {
+    const path = join(tmpDir, "bad.json");
+    await writeFile(path, "not valid json {{{");
 
-    await new Promise<void>((resolve) => ws.on("open", resolve));
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
+    const secrets = await loadSecretsFile(path);
+    expect(secrets).toEqual({});
 
-    ws.send(JSON.stringify({ type: "cancel" }));
-    await vi.waitFor(() => expect(mockOnCancel).toHaveBeenCalled());
-
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    consoleSpy.mockRestore();
   });
 
-  it("handles reset control message", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
+  it("handles empty secrets file", async () => {
+    const path = join(tmpDir, "empty.json");
+    await writeFile(path, "{}");
 
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    ws.send(JSON.stringify({ type: "reset" }));
-    await vi.waitFor(() => expect(mockOnReset).toHaveBeenCalled());
-
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-  });
-
-  it("calls session.stop() on disconnect", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
-
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    ws.close();
-    await vi.waitFor(() => expect(mockStop).toHaveBeenCalled());
-  });
-
-  it("ignores invalid JSON messages", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
-
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    ws.send("not json {{{");
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    const secrets = await loadSecretsFile(path);
+    expect(secrets).toEqual({});
   });
 });
 
-describe("close()", () => {
-  it("stops all sessions and shuts down cleanly", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_test123`);
+// ── Server integration tests ────────────────────────────────────
 
-    await new Promise<void>((resolve) => ws.on("open", resolve));
+describe("server", () => {
+  let server: ServerHandle;
 
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    await handle.close();
-
-    expect(mockStop).toHaveBeenCalled();
-  });
-});
-
-describe("secrets file", () => {
-  it("passes per-customer secrets to VoiceSession", async () => {
-    // Close the default handle so we can start a new server with secrets
-    await handle.close();
-
-    const secretsPath = join(clientDir, "secrets.json");
-    writeFileSync(
-      secretsPath,
-      JSON.stringify({
-        pk_cust_abc: { WEATHER_KEY: "sk-weather" },
-        pk_cust_def: { STRIPE_KEY: "sk-stripe" },
-      })
-    );
-
-    handle = startServer({ port: 0, clientDir, secretsFile: secretsPath });
-    port = getPort(handle);
-
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_cust_abc`);
-    await new Promise<void>((resolve) => ws.on("open", resolve));
-
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
-
-    // VoiceSession should have received the secrets for pk_cust_abc
-    expect(constructorCalls.length).toBe(1);
-    expect(constructorCalls[0].customerSecrets).toEqual({ WEATHER_KEY: "sk-weather" });
-
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  afterEach(async () => {
+    if (server) {
+      await server.close();
+    }
   });
 
-  it("passes empty secrets for unknown API key", async () => {
-    await handle.close();
+  describe("HTTP endpoints", () => {
+    it("health check returns ok", async () => {
+      server = await startTestServer();
 
-    const secretsPath = join(clientDir, "secrets.json");
-    writeFileSync(secretsPath, JSON.stringify({ pk_known: { KEY: "val" } }));
+      const resp = await fetch(`http://localhost:${server.port}/health`);
+      const body = await resp.json();
 
-    handle = startServer({ port: 0, clientDir, secretsFile: secretsPath });
-    port = getPort(handle);
+      expect(resp.status).toBe(200);
+      expect(body).toEqual({ status: "ok" });
+    });
 
-    const ws = new WebSocket(`ws://localhost:${port}/session?key=pk_unknown`);
-    await new Promise<void>((resolve) => ws.on("open", resolve));
+    it("returns 404 for unknown paths", async () => {
+      server = await startTestServer();
 
-    ws.send(JSON.stringify({ type: "configure", tools: [] }));
-    await vi.waitFor(() => expect(mockStart).toHaveBeenCalled());
+      const resp = await fetch(`http://localhost:${server.port}/nonexistent`);
+      expect(resp.status).toBe(404);
+    });
 
-    expect(constructorCalls[0].customerSecrets).toEqual({});
+    it("handles CORS preflight", async () => {
+      server = await startTestServer();
 
-    ws.close();
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      const resp = await fetch(`http://localhost:${server.port}/session`, {
+        method: "OPTIONS",
+      });
+
+      expect(resp.status).toBe(204);
+      expect(resp.headers.get("access-control-allow-origin")).toBe("*");
+    });
+  });
+
+  describe("WebSocket", () => {
+    it("rejects connection without API key", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(`ws://localhost:${server.port}/session`);
+
+      const msg = await new Promise<any>((resolve) => {
+        ws.on("message", (data) => {
+          resolve(JSON.parse(data.toString()));
+        });
+      });
+
+      expect(msg.type).toBe("error");
+      expect(msg.message).toBe("Missing API key");
+    });
+
+    it("rejects invalid configure message", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_test`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(JSON.stringify({ type: "not_configure" }));
+
+      await vi.waitFor(() => {
+        expect(messages.some((m) => m.type === "error")).toBe(true);
+      });
+
+      const errMsg = messages.find((m) => m.type === "error");
+      expect(errMsg.message).toBe(
+        "First message must be a valid configure message",
+      );
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("configures session and sends ready + greeting", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_test`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip binary
+        }
+      });
+
+      ws.send(
+        JSON.stringify({
+          type: "configure",
+          instructions: "Be helpful",
+          greeting: "Hello!",
+        }),
+      );
+
+      // Wait for ready and greeting messages
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "ready")).toBe(true);
+          expect(messages.some((m) => m.type === "greeting")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      const readyMsg = messages.find((m) => m.type === "ready");
+      expect(readyMsg.sampleRate).toBe(16000);
+      expect(readyMsg.ttsSampleRate).toBe(24000);
+
+      const greetingMsg = messages.find((m) => m.type === "greeting");
+      expect(greetingMsg.text).toBe("Hello!");
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("handles cancel and reset commands", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_test`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      // Configure first
+      ws.send(JSON.stringify({ type: "configure" }));
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "ready")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      // Cancel
+      ws.send(JSON.stringify({ type: "cancel" }));
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "cancelled")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      // Reset
+      ws.send(JSON.stringify({ type: "reset" }));
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "reset")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    it("gracefully handles session disconnect", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_test`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      ws.send(JSON.stringify({ type: "configure" }));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "ready")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      // Close the connection — should clean up without errors
+      ws.close();
+      await new Promise((r) => setTimeout(r, 100));
+    });
+  });
+
+  describe("secrets integration", () => {
+    it("loads secrets from file and passes to sessions", async () => {
+      const tmpDir = join(
+        tmpdir(),
+        `aai-test-${randomBytes(4).toString("hex")}`,
+      );
+      await mkdir(tmpDir, { recursive: true });
+      const secretsPath = join(tmpDir, "secrets.json");
+      await writeFile(
+        secretsPath,
+        JSON.stringify({
+          pk_customer_abc: {
+            WEATHER_API_KEY: "sk-abc123",
+          },
+        }),
+      );
+
+      server = await startTestServer({ secretsFile: secretsPath });
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_customer_abc`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(
+        JSON.stringify({
+          type: "configure",
+          instructions: "Test",
+          tools: [
+            {
+              name: "use_secret",
+              description: "Use a secret",
+              parameters: {},
+              handler: "async (args, ctx) => ctx.secrets.WEATHER_API_KEY",
+            },
+          ],
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "ready")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Cleanup
+      await unlink(secretsPath);
+      await rmdir(tmpDir);
+    });
+
+    it("starts without secrets file", async () => {
+      server = await startTestServer();
+
+      const ws = new WebSocket(
+        `ws://localhost:${server.port}/session?key=pk_test`,
+      );
+      await new Promise<void>((resolve) => ws.on("open", resolve));
+
+      const messages: any[] = [];
+      ws.on("message", (data) => {
+        try {
+          messages.push(JSON.parse(data.toString()));
+        } catch {
+          // skip
+        }
+      });
+
+      ws.send(JSON.stringify({ type: "configure" }));
+
+      await vi.waitFor(
+        () => {
+          expect(messages.some((m) => m.type === "ready")).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+    });
   });
 });

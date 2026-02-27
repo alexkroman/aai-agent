@@ -1,7 +1,18 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
 import { ERR_INTERNAL } from "./errors.js";
-import { LLM_GATEWAY_BASE, type ChatMessage, type LLMResponse, type ToolSchema } from "./types.js";
+import {
+  LLM_GATEWAY_BASE,
+  type ChatMessage,
+  type LLMResponse,
+  type ToolSchema,
+} from "./types.js";
+
+const FINISH_REASON_MAP: Record<string, string> = {
+  end_turn: "stop",
+  max_tokens: "length",
+  tool_use: "tool_calls",
+};
 
 /**
  * Replace empty text content with "..." (gateway rejects empty text blocks).
@@ -23,7 +34,7 @@ export async function callLLM(
   tools: ToolSchema[],
   apiKey: string,
   model: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<LLMResponse> {
   const body: Record<string, unknown> = {
     model,

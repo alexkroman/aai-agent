@@ -112,7 +112,10 @@ describe("toolDefsToSchemas — multiple tools", () => {
       {
         name: "tool_b",
         description: "Tool B",
-        parameters: { y: "number?", z: { type: "boolean", description: "Flag" } },
+        parameters: {
+          y: "number?",
+          z: { type: "boolean", description: "Flag" },
+        },
         handler: "async () => {}",
       },
     ]);
