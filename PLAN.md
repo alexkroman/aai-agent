@@ -88,34 +88,15 @@ The backend configures the agent and handles tool execution.
   instructions: "You are a helpful weather assistant.",
   greeting: "Hey! Ask me about the weather.",
   voice: "jess",
-  model: "claude-haiku-4-5-20251001",
-  voiceRules: "Keep responses to 1-2 sentences...",
-  sttConfig: {
-    sampleRate: 16000,
-    speechModel: "u3-pro",
-    minEndOfTurnSilenceWhenConfident: 400,
-    maxTurnSilence: 1200
-  },
-  ttsConfig: {
-    voice: "jess",
-    maxTokens: 2000,
-    bufferSize: 105,
-    repetitionPenalty: 1.2,
-    temperature: 0.6,
-    topP: 0.9,
-    sampleRate: 24000
-  },
+  model: "claude-haiku-4-5-20251001",                  // optional, has default
+  voiceRules: "Keep responses to 1-2 sentences...",     // optional, has default
+  sttConfig: { ... },                                   // optional, has defaults
+  ttsConfig: { ... },                                   // optional, has defaults
   tools: [
     {
       name: "get_weather",
       description: "Get current weather for a city",
-      parameters: {
-        type: "object",
-        properties: {
-          city: { type: "string", description: "City name" }
-        },
-        required: ["city"]
-      }
+      parameters: { city: "string" }                    // simplified format
     }
   ]
 }
@@ -285,6 +266,11 @@ filling null id/model/usage fields).
 
 ## Customer Backend (Raw TypeScript, No SDK)
 
+The customer defines their agent with plain TypeScript objects. No JSON Schema —
+tool parameters use a simplified `{ name: type }` format that the platform
+expands to full JSON Schema internally. Tools are just async functions in a
+handler map.
+
 ```typescript
 // customer-backend/server.ts
 import { WebSocket, WebSocketServer } from "ws";
@@ -292,37 +278,70 @@ import { WebSocket, WebSocketServer } from "ws";
 const PLATFORM_URL = "wss://platform.example.com/agent";
 const FRONTEND_PORT = 8080;
 
-// 1. Connect to platform
+// ── Tool implementations ────────────────────────────────────────────
+// Just plain async functions. No decorators, no SDK.
+
+async function getWeather(args: { city: string }): Promise<string> {
+  const resp = await fetch(`https://api.weather.com/current?city=${args.city}`);
+  const data = await resp.json();
+  return `${data.temp}°F and ${data.conditions} in ${args.city}`;
+}
+
+async function searchWeb(args: { query: string }): Promise<string> {
+  const resp = await fetch(`https://api.duckduckgo.com/?q=${args.query}&format=json`);
+  const data = await resp.json();
+  return data.AbstractText || "No results found.";
+}
+
+// ── Agent configuration ─────────────────────────────────────────────
+// Typed inline — IDE autocomplete works, Claude Code can easily add fields.
+
+const agentConfig = {
+  type: "configure" as const,
+  instructions: "You are a helpful weather assistant. Be concise.",
+  greeting: "Hey! Ask me about the weather anywhere in the world.",
+  voice: "jess",
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get current weather for a city",
+      parameters: { city: "string" },
+    },
+    {
+      name: "search_web",
+      description: "Search the web for information",
+      parameters: { query: "string" },
+    },
+  ],
+};
+
+// ── Tool handler map ────────────────────────────────────────────────
+// Maps tool names to their implementations. Platform sends tool_call,
+// we look up the handler, run it, send back tool_result.
+
+const toolHandlers: Record<string, (args: any) => Promise<string>> = {
+  get_weather: getWeather,
+  search_web: searchWeb,
+};
+
+// ── Connect to platform ─────────────────────────────────────────────
+
 const platform = new WebSocket(PLATFORM_URL, {
-  headers: { Authorization: "Bearer <api-key>" },
+  headers: { Authorization: `Bearer ${process.env.API_KEY}` },
 });
 
 platform.on("open", () => {
-  // 2. Configure the agent
-  platform.send(JSON.stringify({
-    type: "configure",
-    instructions: "You are a helpful weather assistant.",
-    greeting: "Hey! Ask me about the weather anywhere in the world.",
-    voice: "jess",
-    tools: [{
-      name: "get_weather",
-      description: "Get current weather for a city",
-      parameters: {
-        type: "object",
-        properties: { city: { type: "string" } },
-        required: ["city"],
-      },
-    }],
-  }));
+  platform.send(JSON.stringify(agentConfig));
 });
 
-// 3. Handle tool calls from platform
-platform.on("message", (raw) => {
+platform.on("message", async (raw) => {
   const msg = JSON.parse(raw.toString());
 
   if (msg.type === "tool_call") {
-    // Execute tool locally
-    const result = handleTool(msg.name, msg.args);
+    const handler = toolHandlers[msg.name];
+    const result = handler
+      ? await handler(msg.args)
+      : `Unknown tool: ${msg.name}`;
     platform.send(JSON.stringify({
       type: "tool_result",
       callId: msg.callId,
@@ -332,29 +351,20 @@ platform.on("message", (raw) => {
 
   if (msg.type === "configured") {
     console.log(`Session ready. Frontend token: ${msg.token}`);
-    // Start frontend WebSocket server, relay to platform
     startFrontendRelay(msg.token);
   }
 });
 
-// 4. Tool implementations — plain functions
-function handleTool(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case "get_weather":
-      return `72°F and sunny in ${args.city}`;
-    default:
-      return `Unknown tool: ${name}`;
-  }
-}
+// ── Frontend relay ──────────────────────────────────────────────────
+// Proxies WS frames between browser and platform. The backend sits in
+// the middle so it can intercept tool_call messages while passing
+// everything else (audio, transcripts, UI events) straight through.
 
-// 5. Frontend relay — just proxies WS frames between browser and platform
 function startFrontendRelay(token: string) {
   const wss = new WebSocketServer({ port: FRONTEND_PORT });
   wss.on("connection", (browserWs) => {
-    // Tell platform to connect this frontend
     platform.send(JSON.stringify({ type: "frontend_connect", token }));
 
-    // Relay all messages bidirectionally
     browserWs.on("message", (data, isBinary) => {
       platform.send(data, { binary: isBinary });
     });
@@ -367,12 +377,73 @@ function startFrontendRelay(token: string) {
 }
 ```
 
+### Adding a new tool (what Claude Code would generate)
+
+To add a tool, a customer (or Claude Code) just does three things:
+
+```typescript
+// 1. Write the function
+async function bookAppointment(args: { date: string; time: string }): Promise<string> {
+  // ... call your calendar API
+  return `Booked for ${args.date} at ${args.time}`;
+}
+
+// 2. Add to config
+agentConfig.tools.push({
+  name: "book_appointment",
+  description: "Book an appointment on the user's calendar",
+  parameters: { date: "string", time: "string" },
+});
+
+// 3. Add to handler map
+toolHandlers.book_appointment = bookAppointment;
+```
+
+No JSON Schema, no decorators, no schema/handler sync issues.
+
+### Simplified parameter format
+
+The `parameters` field uses a shorthand that the platform expands:
+
+```typescript
+// Customer writes:
+{ city: "string" }
+{ query: "string", limit: "number" }
+{ city: "string", unit: "string?" }   // ? = optional
+
+// Platform expands to JSON Schema for the LLM:
+{
+  type: "object",
+  properties: { city: { type: "string" } },
+  required: ["city"]
+}
+```
+
+If a customer needs full JSON Schema (e.g. enums, nested objects), they can
+pass it directly — the platform detects the format and uses it as-is:
+
+```typescript
+// Full schema also works when needed:
+{
+  name: "set_temperature",
+  description: "Set thermostat temperature",
+  parameters: {
+    type: "object",
+    properties: {
+      degrees: { type: "number", minimum: 60, maximum: 90 },
+      unit: { type: "string", enum: ["fahrenheit", "celsius"] },
+    },
+    required: ["degrees"],
+  },
+}
+```
+
 **Key points:**
 - Zero SDK imports. Just `ws` from npm.
-- Tools are plain functions in a switch statement.
-- The customer backend acts as a relay for the frontend WebSocket — it proxies
-  audio and UI events between the browser and the platform, while intercepting
-  tool_call/tool_result messages for local execution.
+- Tools are plain async functions in a handler map — no switch statement, no class.
+- Config is a typed object literal with IDE autocomplete.
+- Adding a tool = write function + add to config + add to map.
+- The customer backend relays frontend WS frames while intercepting tool events.
 
 ---
 
