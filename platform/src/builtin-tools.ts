@@ -5,6 +5,7 @@
 // `builtinTools` array.
 
 import { search, SafeSearchType } from "duck-duck-scrape";
+import TurndownService from "turndown";
 import { createLogger } from "./logger.js";
 import type { ToolSchema } from "./types.js";
 
@@ -53,9 +54,71 @@ const webSearch: BuiltinTool = {
   },
 };
 
+/** Max characters to return from a webpage to avoid blowing up context. */
+const MAX_PAGE_CHARS = 10_000;
+
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+});
+
+// Remove script, style, nav, and footer elements entirely
+turndown.remove(["script", "style", "nav", "footer", "noscript"]);
+
+const visitWebpage: BuiltinTool = {
+  name: "visit_webpage",
+  description:
+    "Fetch a webpage URL and return its content as clean Markdown. Useful for reading articles, documentation, or any web page found via search.",
+  parameters: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description: "The full URL to fetch (e.g., 'https://example.com/page')",
+      },
+    },
+    required: ["url"],
+  },
+  execute: async (args) => {
+    const url = args.url as string;
+
+    log.info({ url }, "visit_webpage");
+
+    const resp = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; VoiceAgent/1.0; +https://github.com/AssemblyAI/aai-agent)",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!resp.ok) {
+      return JSON.stringify({
+        error: `Failed to fetch: ${resp.status} ${resp.statusText}`,
+        url,
+      });
+    }
+
+    const html = await resp.text();
+    const markdown = turndown.turndown(html);
+
+    const truncated = markdown.length > MAX_PAGE_CHARS;
+    const content = truncated ? markdown.slice(0, MAX_PAGE_CHARS) : markdown;
+
+    return JSON.stringify({
+      url,
+      content,
+      ...(truncated ? { truncated: true, totalChars: markdown.length } : {}),
+    });
+  },
+};
+
 /** All available built-in tools, keyed by name. */
 export const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   web_search: webSearch,
+  visit_webpage: visitWebpage,
 };
 
 /**

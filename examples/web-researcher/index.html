@@ -24,6 +24,7 @@
 
 RULES:
 - Use the web_search tool to find current, accurate information before answering.
+- When search result descriptions aren't detailed enough, use visit_webpage to read the full page.
 - NEVER guess or rely on memory for factual questions — always search first.
 - Cite your sources briefly: mention the website name when sharing facts.
 - For complex questions, search multiple times with different queries to get a complete picture.
@@ -34,7 +35,7 @@ RULES:
 
       voice: "tara",
 
-      builtinTools: ["web_search"],
+      builtinTools: ["web_search", "visit_webpage"],
     });
   </script>
 </body>
