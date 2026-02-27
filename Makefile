@@ -1,38 +1,18 @@
-.PHONY: all test test-python test-react lint lint-python lint-react format format-python format-react typecheck typecheck-python typecheck-react build
+.PHONY: all test lint typecheck build dev
 
-all: lint format typecheck test
+all: lint typecheck test
 
-test: test-python test-react
+test:
+	cd platform && npm test
 
-test-python:
-	python -m pytest tests/ -v
+lint:
+	cd platform && npx tsc --noEmit
 
-test-react:
-	cd packages/react && npm run test
-
-lint: lint-python lint-react
-
-lint-python:
-	ruff check .
-
-lint-react:
-	cd packages/react && npm run lint
-
-format: format-python format-react
-
-format-python:
-	ruff format .
-
-format-react:
-	cd packages/react && npx prettier --write "src/**/*.{ts,tsx}"
-
-typecheck: typecheck-python typecheck-react
-
-typecheck-python:
-	pyright
-
-typecheck-react:
-	cd packages/react && npm run typecheck
+typecheck:
+	cd platform && npx tsc --noEmit
 
 build:
-	cd packages/react && npm run build
+	cd platform && npm run build
+
+dev:
+	cd platform && npm run dev
