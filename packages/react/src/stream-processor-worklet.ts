@@ -9,6 +9,11 @@
  * 128-sample slicing. The node stays alive for the whole session;
  * it resets automatically after each stream finishes.
  *
+ * Pre-buffer: playback waits until 200ms of audio (4800 samples at
+ * 24kHz) has been queued before starting, to avoid micro-gaps caused
+ * by slow or bursty chunk delivery. Once playback starts, it drains
+ * continuously. The pre-buffer is skipped on flush (short utterances).
+ *
  * Messages FROM main thread:
  *   { event: "write", samples: Int16Array }  — add audio data
  *   { event: "flush" }                       — no more data coming
@@ -23,10 +28,12 @@ class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.queue = [];
+    this.queued = 0;
     this.current = null;
     this.offset = 0;
     this.started = false;
     this.finished = false;
+    this.prebuffer = 4800; // 200ms at 24kHz
 
     this.port.onmessage = (e) => {
       const msg = e.data;
@@ -37,10 +44,12 @@ class PlaybackProcessor extends AudioWorkletProcessor {
           float32[i] = int16[i] / 32768;
         }
         this.queue.push(float32);
+        this.queued += float32.length;
       } else if (msg.event === 'flush') {
         this.finished = true;
       } else if (msg.event === 'clear') {
         this.queue = [];
+        this.queued = 0;
         this.current = null;
         this.offset = 0;
         this.started = false;
@@ -52,6 +61,12 @@ class PlaybackProcessor extends AudioWorkletProcessor {
   process(inputs, outputs) {
     const output = outputs[0][0];
     if (!output) return true;
+
+    // Wait for pre-buffer before starting playback (skip if flushed)
+    if (!this.started && !this.finished && this.queued < this.prebuffer) {
+      for (let i = 0; i < output.length; i++) output[i] = 0;
+      return true;
+    }
 
     let written = 0;
 
@@ -72,6 +87,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
             this.finished = false;
             this.current = null;
             this.offset = 0;
+            this.queued = 0;
             this.port.postMessage({ event: 'done' });
           }
           // Fill remaining output with silence
