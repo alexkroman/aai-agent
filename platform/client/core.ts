@@ -4,8 +4,8 @@
 export { VoiceSession } from "./session.js";
 export type { SessionCallbacks } from "./session.js";
 
-export { serializeTools } from "./types.js";
-export type { AgentState, Message, ToolDef, AgentOptions } from "./types.js";
+export { serializeTools, toWebSocketUrl } from "./types.js";
+export type { AgentState, Message, ToolDef, AgentOptions, ToolContext } from "./types.js";
 
 export { startMicCapture, createAudioPlayer } from "./audio.js";
 export type { AudioPlayer } from "./audio.js";

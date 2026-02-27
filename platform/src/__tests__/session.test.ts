@@ -215,8 +215,6 @@ describe("VoiceSession", () => {
       });
       mocks.callLLM.mockResolvedValueOnce(llmResponse("Done!"));
 
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
       const session = new VoiceSession(
         "sess-1",
         browserWs as any,
@@ -241,8 +239,6 @@ describe("VoiceSession", () => {
         (m: any) => m.role === "tool" && m.tool_call_id === "tc-0"
       );
       expect(toolMessage.content).toBe('Error: Invalid JSON arguments for tool "my_tool"');
-      expect(consoleSpy).toHaveBeenCalled();
-      consoleSpy.mockRestore();
     });
 
     it("stops after MAX_TOOL_ITERATIONS tool-call rounds", async () => {

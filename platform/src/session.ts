@@ -3,11 +3,12 @@
 import type WebSocket from "ws";
 import type { PlatformConfig } from "./config.js";
 import { MSG, MAX_TOOL_ITERATIONS } from "./constants.js";
-import { ERR, ERR_INTERNAL } from "./errors.js";
+import { ERR } from "./errors.js";
 import type { callLLM as callLLMType } from "./llm.js";
-import { toolDefsToSchemas } from "./protocol.js";
+import { createLogger, type Logger } from "./logger.js";
+import { toolDefsToSchemas, validateToolArgs } from "./protocol.js";
 import type { Sandbox } from "./sandbox.js";
-import type { connectStt as connectSttType, SttEvents } from "./stt.js";
+import type { connectStt as connectSttType, SttEvents, SttHandle } from "./stt.js";
 import type { TtsClient } from "./tts.js";
 import type { normalizeVoiceText as normalizeVoiceTextType } from "./voice-cleaner.js";
 import {
@@ -29,16 +30,17 @@ export interface SessionDeps {
   normalizeVoiceText: typeof normalizeVoiceTextType;
 }
 
+/**
+ * Orchestrates a single voice conversation between a browser client and
+ * the STT / LLM / TTS pipeline. One instance per WebSocket connection.
+ */
 export class VoiceSession {
   private id: string;
   private agentConfig: AgentConfig;
   private deps: SessionDeps;
   private browserWs: WebSocket;
-  private stt: {
-    send: (audio: Buffer) => void;
-    clear: () => void;
-    close: () => void;
-  } | null = null;
+  private logger: Logger;
+  private stt: SttHandle | null = null;
   private chatAbort: AbortController | null = null;
   private ttsAbort: AbortController | null = null;
   private ttsPromise: Promise<void> | null = null;
@@ -53,12 +55,17 @@ export class VoiceSession {
     this.id = id;
     this.browserWs = browserWs;
     this.agentConfig = agentConfig;
-    this.deps = deps;
-
-    // Override TTS voice from agent config
-    if (agentConfig.voice) {
-      this.deps.config.ttsConfig.voice = agentConfig.voice;
-    }
+    this.logger = createLogger("session", { sid: id.slice(0, 8) });
+    this.deps = {
+      ...deps,
+      config: {
+        ...deps.config,
+        ttsConfig: {
+          ...deps.config.ttsConfig,
+          ...(agentConfig.voice ? { voice: agentConfig.voice } : {}),
+        },
+      },
+    };
 
     this.toolSchemas = toolDefsToSchemas(agentConfig.tools);
 
@@ -70,17 +77,6 @@ export class VoiceSession {
     });
   }
 
-  // ── Logging helpers ───────────────────────────────────────────────
-
-  private log(msg: string): void {
-    console.log(`[session:${this.id.slice(0, 8)}] ${msg}`);
-  }
-
-  private logError(msg: string, err?: unknown): void {
-    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    console.error(`[session:${this.id.slice(0, 8)}] ${msg}: ${detail}`);
-  }
-
   // ── Send helpers (safe for closed WS) ─────────────────────────────
 
   private trySendJson(data: Record<string, unknown>): void {
@@ -89,7 +85,7 @@ export class VoiceSession {
         this.browserWs.send(JSON.stringify(data));
       }
     } catch (err) {
-      this.logError("trySendJson failed", err);
+      this.logger.error({ err }, "trySendJson failed");
     }
   }
 
@@ -99,7 +95,7 @@ export class VoiceSession {
         this.browserWs.send(data);
       }
     } catch (err) {
-      this.logError("trySendBytes failed", err);
+      this.logger.error({ err }, "trySendBytes failed");
     }
   }
 
@@ -111,20 +107,20 @@ export class VoiceSession {
     try {
       const events: SttEvents = {
         onTranscript: (text, isFinal) => {
-          this.log(`Transcript: "${text}" final=${isFinal}`);
+          this.logger.info({ text, isFinal }, "transcript");
           this.trySendJson({ type: MSG.TRANSCRIPT, text, final: isFinal });
         },
         onTurn: (text) => {
-          this.log(`Turn: "${text}"`);
+          this.logger.info({ text }, "turn");
           this.turnPromise = this.handleTurn(text).finally(() => {
             this.turnPromise = null;
           });
         },
         onError: (err) => {
-          this.log(`STT error: ${err.message}`);
+          this.logger.warn({ err }, "STT error");
         },
         onClose: () => {
-          this.log("STT closed");
+          this.logger.info("STT closed");
         },
       };
 
@@ -134,7 +130,7 @@ export class VoiceSession {
         events
       );
     } catch (err) {
-      this.log(`Failed to connect STT: ${err}`);
+      this.logger.error({ err }, "Failed to connect STT");
       this.trySendJson({
         type: MSG.ERROR,
         message: ERR.STT_CONNECT_FAILED,
@@ -145,6 +141,7 @@ export class VoiceSession {
     // Send ready
     this.trySendJson({
       type: MSG.READY,
+      version: 1,
       sampleRate: this.deps.config.sttConfig.sampleRate,
       ttsSampleRate: this.deps.config.ttsConfig.sampleRate,
     });
@@ -165,9 +162,7 @@ export class VoiceSession {
   onAudio(data: Buffer): void {
     this.audioFrameCount++;
     if (this.audioFrameCount <= 3) {
-      this.log(
-        `Audio frame ${this.audioFrameCount}: ${data.length} bytes, isBuffer=${Buffer.isBuffer(data)}`
-      );
+      this.logger.debug({ frame: this.audioFrameCount, bytes: data.length }, "audio frame");
     }
     this.stt?.send(data);
   }
@@ -198,8 +193,9 @@ export class VoiceSession {
     if (this.stopped) return;
     this.stopped = true;
 
+    const pending = this.ttsPromise;
     this.cancelInflight();
-    if (this.ttsPromise) await this.ttsPromise;
+    if (pending) await pending;
     this.stt?.close();
     this.deps.ttsClient.close();
     this.deps.sandbox.dispose();
@@ -264,24 +260,30 @@ export class VoiceSession {
             steps.push(`Using ${tc.function.name}`);
           }
 
-          const toolResults = await Promise.all(
+          const toolResults = await Promise.allSettled(
             msg.tool_calls.map(async (tc) => {
               let args: Record<string, unknown>;
               try {
                 args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
               } catch (err) {
-                this.logError(ERR_INTERNAL.TOOL_ARGS_PARSE_FAILED(tc.function.name), err);
+                this.logger.error(
+                  { err, tool: tc.function.name },
+                  "Failed to parse tool arguments"
+                );
                 return `Error: Invalid JSON arguments for tool "${tc.function.name}"`;
               }
+              const validationError = validateToolArgs(tc.function.name, args, this.toolSchemas);
+              if (validationError) return validationError;
               return this.deps.sandbox.execute(tc.function.name, args);
             })
           );
 
           // Add tool results to messages in order
           for (let i = 0; i < msg.tool_calls.length; i++) {
+            const r = toolResults[i];
             this.messages.push({
               role: "tool",
-              content: toolResults[i],
+              content: r.status === "fulfilled" ? r.value : `Error: ${r.reason}`,
               tool_call_id: msg.tool_calls[i].id,
             });
           }
@@ -320,7 +322,7 @@ export class VoiceSession {
       }
     } catch (err) {
       if (abort.signal.aborted) return;
-      this.logError("Chat failed", err);
+      this.logger.error({ err }, "Chat failed");
       this.trySendJson({ type: MSG.ERROR, message: ERR.CHAT_FAILED });
     } finally {
       if (this.chatAbort === abort) {
@@ -338,7 +340,7 @@ export class VoiceSession {
 
     const cleaned = this.deps.normalizeVoiceText(text);
 
-    this.ttsPromise = this.deps.ttsClient
+    const promise = this.deps.ttsClient
       .synthesize(cleaned, (chunk) => this.trySendBytes(chunk), abort.signal)
       .then(() => {
         if (!abort.signal.aborted) {
@@ -347,15 +349,14 @@ export class VoiceSession {
       })
       .catch((err) => {
         if (!abort.signal.aborted) {
-          this.log(`TTS error: ${err.message}`);
+          this.logger.error({ err }, "TTS error");
           this.trySendJson({ type: MSG.ERROR, message: ERR.TTS_FAILED });
         }
       })
       .finally(() => {
-        if (this.ttsAbort === abort) {
-          this.ttsAbort = null;
-        }
-        this.ttsPromise = null;
+        if (this.ttsAbort === abort) this.ttsAbort = null;
+        if (this.ttsPromise === promise) this.ttsPromise = null;
       });
+    this.ttsPromise = promise;
   }
 }

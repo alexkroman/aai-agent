@@ -59,3 +59,51 @@ export function toolDefsToSchemas(tools: ToolDef[]): ToolSchema[] {
     parameters: toJsonSchema(t.parameters),
   }));
 }
+
+const JSON_SCHEMA_TYPE_MAP: Record<string, (v: unknown) => boolean> = {
+  string: (v) => typeof v === "string",
+  number: (v) => typeof v === "number",
+  integer: (v) => typeof v === "number" && Number.isInteger(v),
+  boolean: (v) => typeof v === "boolean",
+  object: (v) => typeof v === "object" && v !== null && !Array.isArray(v),
+  array: (v) => Array.isArray(v),
+};
+
+/**
+ * Validate tool arguments against the tool's declared parameter schema.
+ * Returns an error string if validation fails, or null if args are valid.
+ */
+export function validateToolArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+  schemas: ToolSchema[]
+): string | null {
+  const schema = schemas.find((s) => s.name === toolName);
+  if (!schema) return null; // unknown tool handled elsewhere
+
+  const params = schema.parameters;
+  if (params.type !== "object") return null; // non-object schema, skip validation
+
+  const properties = (params.properties ?? {}) as Record<string, Record<string, unknown>>;
+  const required = (params.required ?? []) as string[];
+
+  // Check required params are present
+  const missing = required.filter((key) => !(key in args));
+  if (missing.length > 0) {
+    return `Error: Tool "${toolName}" missing required argument(s): ${missing.join(", ")}`;
+  }
+
+  // Type-check provided params
+  for (const [key, value] of Object.entries(args)) {
+    const propSchema = properties[key];
+    if (!propSchema) continue; // extra args are allowed
+    const expectedType = propSchema.type as string | undefined;
+    if (!expectedType) continue;
+    const checker = JSON_SCHEMA_TYPE_MAP[expectedType];
+    if (checker && !checker(value)) {
+      return `Error: Tool "${toolName}" argument "${key}" expected ${expectedType}, got ${typeof value}`;
+    }
+  }
+
+  return null;
+}

@@ -1,27 +1,7 @@
 // constants.ts — Centralized magic strings and numbers.
 
-/** WebSocket message type strings (browser ↔ server protocol). */
-export const MSG = {
-  // Server → browser
-  READY: "ready",
-  GREETING: "greeting",
-  TRANSCRIPT: "transcript",
-  TURN: "turn",
-  THINKING: "thinking",
-  CHAT: "chat",
-  TTS_DONE: "tts_done",
-  CANCELLED: "cancelled",
-  ERROR: "error",
-  RESET: "reset",
-
-  PONG: "pong",
-
-  // Browser → server
-  AUTHENTICATE: "authenticate",
-  CONFIGURE: "configure",
-  CANCEL: "cancel",
-  PING: "ping",
-} as const;
+/** WebSocket message type strings — re-exported from shared-protocol.ts. */
+export { MSG } from "./shared-protocol.js";
 
 /** Timeout durations in milliseconds. */
 export const TIMEOUTS = {

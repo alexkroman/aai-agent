@@ -21,6 +21,7 @@
   "dependencies": {
     "isolated-vm": "^6.0.2",
     "number-to-words": "^1.2.4",
+    "pino": "^10.3.1",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },

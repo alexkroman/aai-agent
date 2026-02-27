@@ -20,11 +20,9 @@ describe("VoiceSession — connect", () => {
 
   it("sends authenticate message first, then configure", async () => {
     const { session, stateChanges } = createSession({
-      config: {
-        instructions: "Be helpful",
-        greeting: "Hello!",
-        voice: "luna",
-      },
+      instructions: "Be helpful",
+      greeting: "Hello!",
+      voice: "luna",
     });
 
     session.connect();
@@ -84,24 +82,22 @@ describe("VoiceSession — connect", () => {
     await vi.waitFor(() => expect(stateChanges).toContain("ready"));
   });
 
-  it("uses config object for instructions/greeting/voice", async () => {
+  it("uses flat instructions/greeting/voice fields", async () => {
     const { session, stateChanges } = createSession({
-      config: {
-        instructions: "config instructions",
-        greeting: "config greeting",
-        voice: "config-voice",
-      },
+      instructions: "flat instructions",
+      greeting: "flat greeting",
+      voice: "flat-voice",
     });
     session.connect();
     await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
     const configMsg = JSON.parse(lastWs().sent[1] as string);
-    expect(configMsg.instructions).toBe("config instructions");
-    expect(configMsg.greeting).toBe("config greeting");
-    expect(configMsg.voice).toBe("config-voice");
+    expect(configMsg.instructions).toBe("flat instructions");
+    expect(configMsg.greeting).toBe("flat greeting");
+    expect(configMsg.voice).toBe("flat-voice");
   });
 
-  it("uses empty defaults when config is absent", async () => {
+  it("uses empty defaults when fields are absent", async () => {
     const { session, stateChanges } = createSession({});
     session.connect();
     await vi.waitFor(() => expect(stateChanges).toContain("ready"));
@@ -118,5 +114,25 @@ describe("VoiceSession — connect", () => {
     await vi.waitFor(() => expect(stateChanges).toContain("ready"));
 
     expect(lastWs().url).toContain("wss://platform.example.com/session");
+  });
+
+  it("auto-converts HTTP platformUrl to WS", async () => {
+    const { session, stateChanges } = createSession({
+      platformUrl: "http://localhost:3000",
+    });
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    expect(lastWs().url).toBe("ws://localhost:3000/session");
+  });
+
+  it("auto-converts HTTPS platformUrl to WSS", async () => {
+    const { session, stateChanges } = createSession({
+      platformUrl: "https://my-platform.com",
+    });
+    session.connect();
+    await vi.waitFor(() => expect(stateChanges).toContain("ready"));
+
+    expect(lastWs().url).toBe("wss://my-platform.com/session");
   });
 });

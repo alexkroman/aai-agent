@@ -154,15 +154,13 @@ describe("useVoiceAgent", () => {
     expect(ws.readyState).toBe(3);
   });
 
-  it("accepts config and tools options", async () => {
+  it("accepts flat instructions/greeting/voice and tools options", async () => {
     const opts: VoiceAgentOptions = {
       apiKey: "pk_test",
       platformUrl: "ws://localhost:3000",
-      config: {
-        instructions: "Be helpful",
-        greeting: "Hi!",
-        voice: "luna",
-      },
+      instructions: "Be helpful",
+      greeting: "Hi!",
+      voice: "luna",
       tools: {
         search: {
           description: "Search the web",

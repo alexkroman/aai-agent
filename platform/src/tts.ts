@@ -6,7 +6,10 @@
 // This eliminates the 100-500ms connection setup time on every turn after the first.
 
 import WebSocket from "ws";
+import { createLogger } from "./logger.js";
 import type { TTSConfig } from "./types.js";
+
+const log = createLogger("tts");
 
 /**
  * Safely close a WebSocket, absorbing any async 'error' events emitted
@@ -55,7 +58,7 @@ export class TtsClient {
     });
 
     ws.on("error", (err: Error) => {
-      console.warn("[tts] warmUp failed:", err.message);
+      log.warn({ err }, "warmUp failed");
       if (this.warmWs === ws) {
         this.warmWs = null;
       }

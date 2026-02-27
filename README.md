@@ -71,6 +71,13 @@ Open http://localhost:5173.
 
 ## Examples
 
+### Vanilla JS — Math Buddy (works out of the box)
+
+A math assistant (`examples/vanilla-calculator/index.html`) that needs **zero API keys**:
+- **4 tools**: `calculate`, `convert_units`, `roll_dice`, `random_number`
+- All pure computation — runs entirely in the V8 sandbox
+- Great starting point for learning the API
+
 ### Vanilla JS — Travel Concierge
 
 A luxury travel concierge (`examples/vanilla/index.html`) that demonstrates:
@@ -105,7 +112,7 @@ Create a single HTML file:
 
     VoiceAgent.start({
       element: "#app",
-      platformUrl: PLATFORM.replace("http", "ws"),
+      platformUrl: PLATFORM,
       apiKey: "pk_your_publishable_key",
       instructions: "You are a helpful assistant. Be concise.",
       greeting: "Hey! What can I help you with?",
@@ -129,6 +136,8 @@ Create a single HTML file:
 </html>
 ```
 
+HTTP URLs are auto-converted to WebSocket (`http://` → `ws://`, `https://` → `wss://`).
+
 Open in a browser. That's it.
 
 ## Quickstart — React
@@ -138,11 +147,9 @@ See `examples/react/` for a full working example. The key files:
 **`src/agent.ts`** — Define your agent's personality and tools:
 
 ```typescript
-export const config = {
-  instructions: "You are a helpful assistant.",
-  greeting: "Hey! What can I help you with?",
-  voice: "jess",
-};
+export const instructions = "You are a helpful assistant.";
+export const greeting = "Hey! What can I help you with?";
+export const voice = "jess";
 
 export const tools = {
   // Add tools here — see examples/react/src/agent.ts for a full example
@@ -154,8 +161,10 @@ export const tools = {
 ```tsx
 const { state, messages, transcript, cancel, reset } = useVoiceAgent({
   apiKey: "pk_...",
-  platformUrl: "ws://localhost:3000",
-  config,
+  platformUrl: "http://localhost:3000",
+  instructions,
+  greeting,
+  voice,
   tools,
 });
 ```
@@ -238,11 +247,15 @@ platform/
 └── eslint.config.js
 
 examples/
+├── index.html            # Root index linking to all examples
 ├── vanilla/              # Travel concierge — single HTML file
 │   └── index.html        # 6 tools: flights, hotels, weather, currency, tips, itinerary
+├── vanilla-calculator/   # Math Buddy — works out of the box, no API keys
+│   └── index.html        # 4 tools: calculate, convert_units, roll_dice, random_number
 └── react/                # Customer support agent — Vite + React
     └── src/
         ├── agent.ts      # 6 tools: customer lookup, orders, inventory, promos, returns, escalation
+        ├── types.ts      # Local ToolContext type declaration
         └── App.tsx       # Polished UI with state indicators and tool step chips
 ```
 

@@ -7,6 +7,9 @@
 import ivm from "isolated-vm";
 import { ISOLATE_MEMORY_LIMIT_MB, TIMEOUTS } from "./constants.js";
 import { ERR_INTERNAL } from "./errors.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("sandbox");
 
 export interface SandboxContext {
   secrets: Record<string, string>;
@@ -55,7 +58,7 @@ export class Sandbox {
   async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
     const handler = this.handlers.get(toolName);
     if (!handler) {
-      return ERR_INTERNAL.TOOL_UNKNOWN(toolName);
+      return ERR_INTERNAL.toolUnknown(toolName);
     }
 
     const controller = new AbortController();
@@ -139,7 +142,7 @@ export class Sandbox {
       return (result as string) ?? "null";
     } catch (err) {
       if (controller.signal.aborted) {
-        return ERR_INTERNAL.TOOL_TIMEOUT(toolName, TIMEOUTS.TOOL_HANDLER);
+        return ERR_INTERNAL.toolTimeout(toolName, TIMEOUTS.TOOL_HANDLER);
       }
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
@@ -147,7 +150,7 @@ export class Sandbox {
       try {
         context?.release();
       } catch (err) {
-        console.warn("[sandbox] Context release failed:", err);
+        log.warn({ err }, "Context release failed");
       }
     }
   }
@@ -157,9 +160,9 @@ export class Sandbox {
    */
   dispose(): void {
     try {
-      this.isolate.dispose();
+      if (!this.isolate.isDisposed) this.isolate.dispose();
     } catch (err) {
-      console.warn("[sandbox] Isolate dispose failed:", err);
+      log.error({ err }, "Isolate dispose failed");
     }
   }
 }

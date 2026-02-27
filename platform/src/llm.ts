@@ -56,7 +56,7 @@ export async function callLLM(
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(ERR_INTERNAL.LLM_REQUEST_FAILED(resp.status, text));
+    throw new Error(ERR_INTERNAL.llmRequestFailed(resp.status, text));
   }
 
   return (await resp.json()) as LLMResponse;

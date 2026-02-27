@@ -1,22 +1,8 @@
 // agent.ts — Agent config and tools. This is the main file you edit.
 
-type Ctx = {
-  secrets: Record<string, string>;
-  fetch: (
-    url: string,
-    init?: RequestInit
-  ) => {
-    ok: boolean;
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    text: () => string;
-    json: () => unknown;
-  };
-};
+import type { ToolContext } from "./types";
 
-export const config = {
-  instructions: `You are Nova, a senior customer support agent for TechStore, an online
+export const instructions = `You are Nova, a senior customer support agent for TechStore, an online
 electronics retailer. You can look up orders, check inventory, process returns,
 and escalate issues to specialists.
 
@@ -27,13 +13,12 @@ Rules:
 - For returns, check the return policy window (30 days) before processing
 - Offer to escalate complex issues to a specialist team
 - Keep responses conversational and concise — this is a voice call
-- When quoting prices, always mention if there are active promotions`,
+- When quoting prices, always mention if there are active promotions`;
 
-  greeting:
-    "Hi, I'm Nova from TechStore support! I can help with orders, returns, product availability, and more. What can I do for you today?",
+export const greeting =
+  "Hi, I'm Nova from TechStore support! I can help with orders, returns, product availability, and more. What can I do for you today?";
 
-  voice: "jess",
-};
+export const voice = "jess";
 
 export const tools = {
   lookup_customer: {
@@ -45,7 +30,7 @@ export const tools = {
         description: "Customer email address",
       },
     },
-    handler: async (args: { email: string }, ctx: Ctx) => {
+    handler: async (args: { email: string }, ctx: ToolContext) => {
       const resp = ctx.fetch(
         `https://api.example.com/customers?email=${encodeURIComponent(args.email)}`,
         {
@@ -67,7 +52,7 @@ export const tools = {
         description: "Order ID (e.g. 'ORD-12345')",
       },
     },
-    handler: async (args: { order_id: string }, ctx: Ctx) => {
+    handler: async (args: { order_id: string }, ctx: ToolContext) => {
       const resp = ctx.fetch(
         `https://api.example.com/orders/${args.order_id}`,
         {
@@ -94,7 +79,7 @@ export const tools = {
     },
     handler: async (
       args: { sku: string; zip_code?: string },
-      ctx: Ctx
+      ctx: ToolContext
     ) => {
       const params = new URLSearchParams({ sku: args.sku });
       if (args.zip_code) params.set("zip", args.zip_code);
@@ -126,7 +111,7 @@ export const tools = {
     },
     handler: async (
       args: { sku?: string; category?: string },
-      ctx: Ctx
+      ctx: ToolContext
     ) => {
       const params = new URLSearchParams();
       if (args.sku) params.set("sku", args.sku);
@@ -172,7 +157,7 @@ export const tools = {
         reason: string;
         exchange_sku?: string;
       },
-      ctx: Ctx
+      ctx: ToolContext
     ) => {
       const resp = ctx.fetch("https://api.example.com/returns", {
         method: "POST",
@@ -224,7 +209,7 @@ export const tools = {
         customer_email: string;
         priority?: string;
       },
-      ctx: Ctx
+      ctx: ToolContext
     ) => {
       const resp = ctx.fetch("https://api.example.com/escalations", {
         method: "POST",

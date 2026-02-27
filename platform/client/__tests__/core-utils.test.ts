@@ -3,7 +3,7 @@ import { stubBrowserGlobals, resetWsInstances } from "./_mocks.js";
 
 stubBrowserGlobals();
 
-import { serializeTools, createAudioPlayer, startMicCapture } from "../core.js";
+import { serializeTools, createAudioPlayer, startMicCapture, toWebSocketUrl } from "../core.js";
 
 describe("serializeTools", () => {
   it("serializes a single tool", () => {
@@ -108,6 +108,32 @@ describe("createAudioPlayer", () => {
     const player = await createAudioPlayer(24000);
     player.close();
     player.enqueue(new Int16Array([100]).buffer);
+  });
+});
+
+describe("toWebSocketUrl", () => {
+  it("converts http:// to ws://", () => {
+    expect(toWebSocketUrl("http://localhost:3000")).toBe("ws://localhost:3000");
+  });
+
+  it("converts https:// to wss://", () => {
+    expect(toWebSocketUrl("https://my-platform.com")).toBe("wss://my-platform.com");
+  });
+
+  it("passes through ws:// unchanged", () => {
+    expect(toWebSocketUrl("ws://localhost:3000")).toBe("ws://localhost:3000");
+  });
+
+  it("passes through wss:// unchanged", () => {
+    expect(toWebSocketUrl("wss://platform.example.com")).toBe("wss://platform.example.com");
+  });
+
+  it("preserves path and query string", () => {
+    expect(toWebSocketUrl("http://host:3000/path?key=val")).toBe("ws://host:3000/path?key=val");
+  });
+
+  it("returns unknown schemes unchanged", () => {
+    expect(toWebSocketUrl("ftp://host")).toBe("ftp://host");
   });
 });
 

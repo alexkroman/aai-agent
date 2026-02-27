@@ -224,76 +224,17 @@ export interface LLMResponse {
   choices: LLMChoice[];
 }
 
-// ── WebSocket Protocol Types (server → browser) ────────────────────
-
-/** Server tells browser STT is ready; includes sample rates. */
-export interface ReadyMessage {
-  type: "ready";
-  sampleRate: number;
-  ttsSampleRate: number;
-}
-
-/** Server sends the initial greeting text. */
-export interface GreetingMessage {
-  type: "greeting";
-  text: string;
-}
-
-/** Real-time speech transcript (partial or final). */
-export interface TranscriptMessage {
-  type: "transcript";
-  text: string;
-  final: boolean;
-}
-
-/** A completed user turn (speech finalized). */
-export interface TurnMessage {
-  type: "turn";
-  text: string;
-}
-
-/** Server is processing (LLM thinking). */
-export interface ThinkingMessage {
-  type: "thinking";
-}
-
-/** LLM response with optional tool-use steps. */
-export interface ChatResponseMessage {
-  type: "chat";
-  text: string;
-  steps: string[];
-}
-
-/** TTS audio playback is complete. */
-export interface TtsDoneMessage {
-  type: "tts_done";
-}
-
-/** Cancel acknowledged. */
-export interface CancelledMessage {
-  type: "cancelled";
-}
-
-/** Conversation reset acknowledged. */
-export interface ResetMessage {
-  type: "reset";
-}
-
-/** Error message from the server. */
-export interface ErrorMessage {
-  type: "error";
-  message: string;
-}
-
-/** Discriminated union of all server → browser messages. */
-export type ServerMessage =
-  | ReadyMessage
-  | GreetingMessage
-  | TranscriptMessage
-  | TurnMessage
-  | ThinkingMessage
-  | ChatResponseMessage
-  | TtsDoneMessage
-  | CancelledMessage
-  | ResetMessage
-  | ErrorMessage;
+// ── WebSocket Protocol Types — re-exported from shared-protocol.ts ──
+export type {
+  ReadyMessage,
+  GreetingMessage,
+  TranscriptMessage,
+  TurnMessage,
+  ThinkingMessage,
+  ChatResponseMessage,
+  TtsDoneMessage,
+  CancelledMessage,
+  ResetMessage,
+  ErrorMessage,
+  ServerMessage,
+} from "./shared-protocol.js";

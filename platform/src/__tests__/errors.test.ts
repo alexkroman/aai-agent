@@ -12,29 +12,39 @@ describe("ERR (browser-facing errors)", () => {
 });
 
 describe("ERR_INTERNAL (server-side errors)", () => {
-  it("STT_TOKEN_FAILED formats status and statusText", () => {
-    expect(ERR_INTERNAL.STT_TOKEN_FAILED(401, "Unauthorized")).toBe(
+  it("sttTokenFailed formats status and statusText", () => {
+    expect(ERR_INTERNAL.sttTokenFailed(401, "Unauthorized")).toBe(
       "STT token request failed: 401 Unauthorized"
     );
   });
 
-  it("STT_CONNECTION_TIMEOUT is a string constant", () => {
-    expect(ERR_INTERNAL.STT_CONNECTION_TIMEOUT).toBe("STT connection timeout");
+  it("sttConnectionTimeout returns the expected string", () => {
+    expect(ERR_INTERNAL.sttConnectionTimeout()).toBe("STT connection timeout");
   });
 
-  it("LLM_REQUEST_FAILED formats status and body", () => {
-    expect(ERR_INTERNAL.LLM_REQUEST_FAILED(500, "Internal Error")).toBe(
+  it("llmRequestFailed formats status and body", () => {
+    expect(ERR_INTERNAL.llmRequestFailed(500, "Internal Error")).toBe(
       "LLM request failed: 500 Internal Error"
     );
   });
 
-  it("TOOL_UNKNOWN formats tool name", () => {
-    expect(ERR_INTERNAL.TOOL_UNKNOWN("my_tool")).toBe('Error: Unknown tool "my_tool"');
+  it("toolUnknown formats tool name", () => {
+    expect(ERR_INTERNAL.toolUnknown("my_tool")).toBe('Error: Unknown tool "my_tool"');
   });
 
-  it("TOOL_TIMEOUT formats tool name and ms", () => {
-    expect(ERR_INTERNAL.TOOL_TIMEOUT("slow_tool", 30000)).toBe(
+  it("toolTimeout formats tool name and ms", () => {
+    expect(ERR_INTERNAL.toolTimeout("slow_tool", 30000)).toBe(
       'Error: Tool "slow_tool" timed out after 30000ms'
     );
+  });
+
+  it("toolArgsParseFailed formats tool name", () => {
+    expect(ERR_INTERNAL.toolArgsParseFailed("my_tool")).toBe(
+      'Failed to parse arguments for tool "my_tool"'
+    );
+  });
+
+  it("sttMsgParseFailed returns the expected string", () => {
+    expect(ERR_INTERNAL.sttMsgParseFailed()).toBe("Failed to parse STT message");
   });
 });

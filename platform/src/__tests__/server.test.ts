@@ -114,13 +114,8 @@ describe("loadSecretsFile", () => {
   });
 
   it("returns empty object for missing file", async () => {
-    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
     const secrets = await loadSecretsFile("/nonexistent/secrets.json");
     expect(secrets).toEqual({});
-    expect(consoleSpy).toHaveBeenCalled();
-
-    consoleSpy.mockRestore();
   });
 
   it("returns empty object for invalid JSON", async () => {

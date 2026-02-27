@@ -1,7 +1,7 @@
 // App.tsx — UI component. Edit this to customize the voice agent UI.
 
 import { useState, useEffect, useRef } from "react";
-import { config, tools } from "./agent";
+import { instructions, greeting, voice, tools } from "./agent";
 
 // Platform URL — change for production
 const PLATFORM =
@@ -41,8 +41,10 @@ const STATE_META: Record<
 function VoiceUI({ useVoiceAgent }: { useVoiceAgent: any }) {
   const { state, messages, transcript, cancel, reset } = useVoiceAgent({
     apiKey: import.meta.env.VITE_API_KEY || "pk_your_publishable_key",
-    platformUrl: PLATFORM.replace("http", "ws"),
-    config,
+    platformUrl: PLATFORM,
+    instructions,
+    greeting,
+    voice,
     tools,
   });
 

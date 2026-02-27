@@ -8,24 +8,26 @@ import {
   type AgentState,
   type Message,
   type ToolDef,
+  type ToolContext,
 } from "./core.js";
 
 // Import React from the customer's bundle (peer dependency)
 // @ts-expect-error — React is provided by the customer, not bundled
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 
-export type { AgentState, Message, ToolDef };
+export type { AgentState, Message, ToolDef, ToolContext };
 
 export interface VoiceAgentOptions {
   apiKey: string;
   platformUrl?: string;
-  config?: { instructions?: string; greeting?: string; voice?: string };
+  instructions?: string;
+  greeting?: string;
+  voice?: string;
   tools?: Record<string, ToolDef>;
 }
 
 export function useVoiceAgent(opts: VoiceAgentOptions) {
   const sessionRef = useRef<VoiceSession | null>(null);
-  const configRef = useRef(opts.config);
   const toolsRef = useRef(opts.tools);
   const [state, setState] = useState<AgentState>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -33,14 +35,16 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
   const [error, setError] = useState("");
 
   // Memoize config/tools so changes trigger reconnection
-  const configKey = useMemo(() => JSON.stringify(opts.config ?? {}), [opts.config]);
+  const configKey = useMemo(
+    () => JSON.stringify({ instructions: opts.instructions, greeting: opts.greeting, voice: opts.voice }),
+    [opts.instructions, opts.greeting, opts.voice]
+  );
   const toolNames = useMemo(
     () => (opts.tools ? Object.keys(opts.tools).sort().join(",") : ""),
     [opts.tools]
   );
 
-  // Update refs on every render so useEffect always has latest values
-  configRef.current = opts.config;
+  // Update ref on every render so useEffect always has latest values
   toolsRef.current = opts.tools;
 
   useEffect(() => {
@@ -48,7 +52,9 @@ export function useVoiceAgent(opts: VoiceAgentOptions) {
       {
         apiKey: opts.apiKey,
         platformUrl: opts.platformUrl,
-        config: configRef.current,
+        instructions: opts.instructions,
+        greeting: opts.greeting,
+        voice: opts.voice,
         tools: toolsRef.current,
       },
       {
