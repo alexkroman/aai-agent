@@ -44,7 +44,7 @@ function renderInitialUI(container: HTMLElement): void {
       <div data-role="messages" style="min-height: 300px; max-height: 500px; overflow-y: auto; margin-bottom: 16px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px;"></div>
 
       <div style="display: flex; gap: 8px;">
-        <button data-action="cancel" disabled style="padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; background: white; cursor: pointer; font-size: 14px;">Stop</button>
+        <button data-action="toggle" style="padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; background: #f44336; color: white; cursor: pointer; font-size: 14px;">Stop</button>
         <button data-action="reset" style="padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; background: white; cursor: pointer; font-size: 14px;">New Conversation</button>
       </div>
     </div>
@@ -54,10 +54,22 @@ function renderInitialUI(container: HTMLElement): void {
 function updateState(container: HTMLElement, state: AgentState): void {
   const dot = container.querySelector('[data-role="dot"]') as HTMLElement | null;
   const label = container.querySelector('[data-role="state-label"]') as HTMLElement | null;
-  const cancelBtn = container.querySelector('[data-action="cancel"]') as HTMLButtonElement | null;
   if (dot) dot.style.background = STATE_COLORS[state];
   if (label) label.textContent = state;
-  if (cancelBtn) cancelBtn.disabled = state !== "speaking";
+}
+
+function updateToggleButton(container: HTMLElement, running: boolean): void {
+  const btn = container.querySelector('[data-action="toggle"]') as HTMLButtonElement | null;
+  if (!btn) return;
+  if (running) {
+    btn.textContent = "Stop";
+    btn.style.background = "#f44336";
+    btn.style.color = "white";
+  } else {
+    btn.textContent = "Resume";
+    btn.style.background = "#4CAF50";
+    btn.style.color = "white";
+  }
 }
 
 function renderMessageBubble(m: Message): string {
@@ -149,6 +161,7 @@ export const VoiceAgent = {
     let lastRenderedMessageCount = 0;
 
     let session: VoiceSession;
+    let running = true;
 
     const render = () => {
       if (!started) {
@@ -174,9 +187,18 @@ export const VoiceAgent = {
         renderInitialUI(container as HTMLElement);
         lastRenderedMessageCount = 0;
         // Attach button event handlers
-        const cancelBtn = container.querySelector('[data-action="cancel"]');
+        const toggleBtn = container.querySelector('[data-action="toggle"]');
         const resetBtn = container.querySelector('[data-action="reset"]');
-        cancelBtn?.addEventListener("click", () => session.cancel());
+        toggleBtn?.addEventListener("click", () => {
+          if (running) {
+            session.disconnect();
+            running = false;
+          } else {
+            session.connect({ skipGreeting: true });
+            running = true;
+          }
+          updateToggleButton(container as HTMLElement, running);
+        });
         resetBtn?.addEventListener("click", () => session.reset());
       }
       // Targeted updates

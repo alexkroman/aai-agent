@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" href="/favicon.svg" />
   <title>TechStore Support — Voice Agent Demo</title>
+  <script src="/config.js"></script>
 </head>
 <body>
   <div id="app"></div>
   <script type="module">
-    const PLATFORM = window.location.origin;
+    const PLATFORM = window.__PLATFORM_URL__ || window.location.origin;
     const { VoiceAgent } = await import(`${PLATFORM}/client.js`);
 
     VoiceAgent.start({

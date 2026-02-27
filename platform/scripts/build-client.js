@@ -3,23 +3,32 @@
 // Copies example HTML files into dist/ for serving via dev:serve.
 
 import { build } from "esbuild";
-import { mkdirSync, cpSync, copyFileSync } from "fs";
+import { mkdirSync, cpSync, copyFileSync, writeFileSync, existsSync } from "fs";
 
 mkdirSync("dist", { recursive: true });
 
-// Copy example apps into dist/ so the server can serve them
-cpSync("../examples/travel-concierge", "dist/travel-concierge", { recursive: true });
-console.log("Copied examples/travel-concierge → dist/travel-concierge/");
+// Copy example apps into dist/ so the server can serve them (skipped in production Docker builds)
+if (existsSync("../examples")) {
+  cpSync("../examples/travel-concierge", "dist/travel-concierge", { recursive: true });
+  console.log("Copied examples/travel-concierge → dist/travel-concierge/");
 
-cpSync("../examples/math-buddy", "dist/math-buddy", { recursive: true });
-console.log("Copied examples/math-buddy → dist/math-buddy/");
+  cpSync("../examples/math-buddy", "dist/math-buddy", { recursive: true });
+  console.log("Copied examples/math-buddy → dist/math-buddy/");
 
-cpSync("../examples/techstore-support", "dist/techstore-support", { recursive: true });
-console.log("Copied examples/techstore-support → dist/techstore-support/");
+  cpSync("../examples/techstore-support", "dist/techstore-support", { recursive: true });
+  console.log("Copied examples/techstore-support → dist/techstore-support/");
 
-// Copy root index page from examples/
-copyFileSync("../examples/index.html", "dist/index.html");
-console.log("Copied examples/index.html → dist/index.html");
+  copyFileSync("../examples/index.html", "dist/index.html");
+  console.log("Copied examples/index.html → dist/index.html");
+} else {
+  console.log("Skipping example copy (../examples not found)");
+}
+
+// Stub platform-config.js — in dev the fallback to window.location.origin is correct;
+// in production the Fly entrypoint overwrites this with the real PLATFORM_URL.
+// Named platform-config.js to avoid colliding with the server's config.js (from src/config.ts).
+writeFileSync("dist/platform-config.js", 'window.__PLATFORM_URL__ = "";\n');
+console.log("Wrote dist/platform-config.js (stub)");
 
 // Shared esbuild loader: inline worklet JS files as text strings
 const workletLoader = {

@@ -79,7 +79,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     this.emit("stateChange", newState);
   }
 
-  connect(): void {
+  connect(options?: { skipGreeting?: boolean }): void {
     this.intentionalDisconnect = false;
     this.cancelling = false;
     this.connectionId++;
@@ -101,7 +101,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
 
       // Read flat config fields from options
       const instructions = this.options.instructions ?? "";
-      const greeting = this.options.greeting ?? "";
+      const greeting = options?.skipGreeting ? "" : (this.options.greeting ?? "");
       const voice = this.options.voice ?? DEFAULT_VOICE;
       const prompt = this.options.prompt;
 
