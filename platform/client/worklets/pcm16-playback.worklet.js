@@ -2,7 +2,7 @@
 // Uses a pre-allocated ring buffer, pre-buffering, and fade-out/fade-in
 // to eliminate clicking and popping artifacts.
 
-const CAPACITY = 96000; // ~4s at 24 kHz
+const CAPACITY = 1440000; // ~60s at 24 kHz
 const PRE_BUFFER = 4800; // 200ms at 24 kHz — absorb network jitter
 const FADE_SAMPLES = 64; // ~2.7ms at 24 kHz — smooth transitions
 
