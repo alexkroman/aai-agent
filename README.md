@@ -24,7 +24,54 @@ Browser                              Platform (managed)
 4. Platform runs handlers in a V8 sandbox with `ctx.secrets` and `ctx.fetch` injected
 5. No backend needed — deploy as a static site
 
-## Quickstart — Vanilla JS (zero dependencies)
+## Running locally
+
+```bash
+# Start the platform server (builds client bundles and serves them)
+cd platform
+npm install
+npm run dev:serve
+```
+
+The server starts on http://localhost:3000 with client bundles served at `/client.js` and `/react.js`.
+
+### Vanilla example (zero dependencies)
+
+Open `examples/vanilla/index.html` directly in your browser. It loads `client.js` from the running platform server.
+
+### React example (Vite)
+
+```bash
+# In a separate terminal
+cd examples/react
+npm install
+npm run dev
+```
+
+Open http://localhost:5173.
+
+## Examples
+
+### Vanilla JS — Travel Concierge
+
+A luxury travel concierge (`examples/vanilla/index.html`) that demonstrates:
+- **6 tools**: flight search, hotel search, weather forecast, currency conversion, local recommendations, itinerary creation
+- Multi-step workflows (check weather → recommend activities → book)
+- `ctx.secrets` for API key management across multiple services
+- `ctx.fetch` for external API calls with auth headers
+- Error handling in tool handlers
+
+### React — Customer Support Agent
+
+A TechStore support agent (`examples/react/`) that demonstrates:
+- **6 tools**: customer lookup, order details, inventory check, promotions, returns, escalation
+- Identity verification workflow (look up customer before accessing orders)
+- POST requests with JSON bodies for mutations (returns, escalations)
+- Optional parameters (`zip_code?`, `exchange_sku?`)
+- Polished UI with state indicators, auto-scroll, thinking animation, and tool step chips
+- `useVoiceAgent()` hook for full React integration
+
+## Quickstart — Vanilla JS
 
 Create a single HTML file:
 
@@ -65,94 +112,33 @@ Create a single HTML file:
 
 Open in a browser. That's it.
 
-## Quickstart — React (custom UI)
+## Quickstart — React
 
-```bash
-mkdir my-agent && cd my-agent
-npm create vite@latest . -- --template react-ts
-```
+See `examples/react/` for a full working example. The key files:
 
-Create `src/agent.ts`:
+**`src/agent.ts`** — Define your agent's personality and tools:
 
 ```typescript
-type Ctx = {
-  secrets: Record<string, string>;
-  fetch: (url: string, init?: RequestInit) => {
-    ok: boolean;
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    text: () => string;
-    json: () => unknown;
-  };
-};
-
 export const config = {
-  instructions: "You are a helpful assistant. Be concise.",
+  instructions: "You are a helpful assistant.",
   greeting: "Hey! What can I help you with?",
   voice: "jess",
 };
 
 export const tools = {
-  get_weather: {
-    description: "Get current weather for a city",
-    parameters: { city: { type: "string", description: "City name" } },
-    handler: async (args: { city: string }, ctx: Ctx) => {
-      const resp = ctx.fetch(
-        `https://api.weather.com/current?city=${args.city}`,
-        { headers: { "X-Api-Key": ctx.secrets.WEATHER_API_KEY } }
-      );
-      return resp.json();
-    },
-  },
+  // Add tools here — see examples/react/src/agent.ts for a full example
 };
 ```
 
-Create `src/App.tsx`:
+**`src/App.tsx`** — Use the `useVoiceAgent()` hook:
 
 ```tsx
-import { useState, useEffect } from "react";
-import { config, tools } from "./agent";
-
-const PLATFORM = import.meta.env.VITE_PLATFORM_URL || "http://localhost:3000";
-
-export default function App() {
-  const [hook, setHook] = useState<any>(null);
-
-  useEffect(() => {
-    import(/* @vite-ignore */ `${PLATFORM}/react.js`).then(setHook);
-  }, []);
-
-  if (!hook) return <div>Loading voice agent...</div>;
-
-  return <VoiceUI useVoiceAgent={hook.useVoiceAgent} />;
-}
-
-function VoiceUI({ useVoiceAgent }: { useVoiceAgent: any }) {
-  const { state, messages, transcript, cancel, reset } = useVoiceAgent({
-    apiKey: import.meta.env.VITE_API_KEY,
-    platformUrl: PLATFORM.replace("http", "ws"),
-    config,
-    tools,
-  });
-
-  return (
-    <div>
-      <p>{state}</p>
-      {messages.map((m: any, i: number) => (
-        <div key={i}>
-          <span>{m.role}: {m.text}</span>
-          {m.steps?.map((s: string, j: number) => (
-            <span key={j}>{s}</span>
-          ))}
-        </div>
-      ))}
-      {transcript && <div>You: {transcript}</div>}
-      <button onClick={cancel} disabled={state !== "speaking"}>Stop</button>
-      <button onClick={reset}>New Conversation</button>
-    </div>
-  );
-}
+const { state, messages, transcript, cancel, reset } = useVoiceAgent({
+  apiKey: "pk_...",
+  platformUrl: "ws://localhost:3000",
+  config,
+  tools,
+});
 ```
 
 ## Tool handler constraints
@@ -176,7 +162,7 @@ Create a `secrets.json` file with per-customer secrets, keyed by API key:
 {
   "pk_customer_abc": {
     "WEATHER_API_KEY": "sk-abc123",
-    "ORDERS_API_KEY": "sk-xyz789"
+    "STORE_API_KEY": "sk-xyz789"
   },
   "pk_customer_def": {
     "STRIPE_KEY": "sk-stripe-123"
@@ -187,7 +173,7 @@ Create a `secrets.json` file with per-customer secrets, keyed by API key:
 Start the server with `SECRETS_FILE`:
 
 ```bash
-SECRETS_FILE=secrets.json npm run dev
+SECRETS_FILE=secrets.json npm run dev:serve
 ```
 
 Inside a handler, access them with `ctx.secrets.WEATHER_API_KEY`. Each customer only sees their own secrets.
@@ -221,7 +207,7 @@ platform/
 │   ├── protocol.ts       # Parameter schema conversion
 │   ├── voice-cleaner.ts  # Text normalization for TTS
 │   ├── types.ts          # All shared types and defaults
-│   └── __tests__/        # 163 tests across 12 files
+│   └── __tests__/        # 263 tests across 19 files
 ├── client/
 │   ├── core.ts           # WebSocket session, audio capture + playback
 │   ├── client.ts         # Vanilla JS entry with default UI
@@ -233,12 +219,12 @@ platform/
 └── eslint.config.js
 
 examples/
-├── vanilla/              # Single HTML file example
-│   └── index.html
-└── react/                # Vite + React example
+├── vanilla/              # Travel concierge — single HTML file
+│   └── index.html        # 6 tools: flights, hotels, weather, currency, tips, itinerary
+└── react/                # Customer support agent — Vite + React
     └── src/
-        ├── agent.ts      # Agent config + tools (the only file you edit)
-        └── App.tsx       # UI component
+        ├── agent.ts      # 6 tools: customer lookup, orders, inventory, promos, returns, escalation
+        └── App.tsx       # Polished UI with state indicators and tool step chips
 ```
 
 ## Development
@@ -246,16 +232,11 @@ examples/
 ```bash
 cd platform
 npm install
-npm run check     # Type check + lint + format + tests (163 tests)
-npm run dev       # Start platform server with hot reload
-npm run build     # Compile server (tsc) + bundle client (esbuild)
-npm start         # Run compiled server
-```
-
-To serve client libraries from the platform:
-
-```bash
-CLIENT_DIR=dist npm run dev
+npm run dev:serve  # Build client bundles + start server with hot reload
+npm run dev        # Start server only (no client bundles)
+npm run build      # Compile server (tsc) + bundle client (esbuild)
+npm run check      # Type check + lint + format + tests (263 tests)
+npm start          # Run compiled server
 ```
 
 ## License

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:serve": "node scripts/build-client.js && CLIENT_DIR=dist tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc && node scripts/build-client.js",
     "test": "vitest",
