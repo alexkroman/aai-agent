@@ -3,10 +3,10 @@
 // No temp tokens needed — server-side connections auth directly with the API key.
 
 import { deadline } from "@std/async/deadline";
-import { TIMEOUTS } from "./shared-protocol.ts";
-import { ERR_INTERNAL } from "./errors.ts";
-import { createLogger } from "./logger.ts";
-import { type STTConfig, SttMessageSchema } from "./types.ts";
+import { TIMEOUTS } from "../sdk/shared-protocol.ts";
+import { ERR_INTERNAL } from "../sdk/errors.ts";
+import { createLogger } from "../sdk/logger.ts";
+import { type STTConfig, SttMessageSchema } from "../sdk/types.ts";
 import { createDenoWebSocket } from "./deno-ext.ts";
 
 const log = createLogger("stt");

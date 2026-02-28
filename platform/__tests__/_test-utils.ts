@@ -2,11 +2,11 @@
 
 import type { SessionDeps, SessionTransport } from "../session.ts";
 import type { SttHandle } from "../stt.ts";
-import type { IToolExecutor } from "../tool-executor.ts";
+import type { IToolExecutor } from "../../sdk/tool-executor.ts";
 import type { PlatformConfig } from "../config.ts";
 import type { CallLLMOptions } from "../llm.ts";
-import type { ChatMessage, LLMResponse, ToolSchema } from "../types.ts";
-import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../types.ts";
+import type { ChatMessage, LLMResponse, ToolSchema } from "../../sdk/types.ts";
+import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../../sdk/types.ts";
 
 /** Create a mock SessionTransport (WebSocket-like). */
 export function createMockTransport(): SessionTransport & {

@@ -3,10 +3,10 @@
 // Tool calls are proxied here via Comlink (replaces manual postMessage protocol).
 
 import * as Comlink from "comlink";
-import { agentToolsToSchemas } from "./protocol.ts";
-import type { Agent } from "./agent.ts";
-import type { ToolSchema, WorkerReadyConfig } from "./types.ts";
-import { TIMEOUTS } from "./shared-protocol.ts";
+import { agentToolsToSchemas } from "../sdk/protocol.ts";
+import type { Agent } from "../sdk/agent.ts";
+import type { ToolSchema, WorkerReadyConfig } from "../sdk/types.ts";
+import { TIMEOUTS } from "../sdk/shared-protocol.ts";
 
 /** API exposed to the main process via Comlink. */
 export interface WorkerApi {

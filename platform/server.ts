@@ -6,8 +6,8 @@ import { compress } from "@hono/hono/compress";
 import { cors } from "@hono/hono/cors";
 import type { PlatformConfig } from "./config.ts";
 import { callLLM } from "./llm.ts";
-import { createLogger } from "./logger.ts";
-import { agentToolsToSchemas } from "./protocol.ts";
+import { createLogger } from "../sdk/logger.ts";
+import { agentToolsToSchemas } from "../sdk/protocol.ts";
 import { ToolExecutor } from "./tool-executor.ts";
 import { connectStt } from "./stt.ts";
 import { TtsClient } from "./tts.ts";
@@ -16,7 +16,7 @@ import { type SessionDeps, VoiceSession } from "./session.ts";
 import { normalizeVoiceText } from "./voice-cleaner.ts";
 import { handleSessionWebSocket } from "./ws-handler.ts";
 import { typeByExtension } from "@std/media-types";
-import type { Agent } from "./agent.ts";
+import type { Agent } from "../sdk/agent.ts";
 
 const log = createLogger("server");
 

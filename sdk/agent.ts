@@ -107,8 +107,8 @@ export class Agent {
   async routes(
     opts?: { secrets?: Record<string, string>; clientDir?: string },
   ) {
-    const { createAgentApp } = await import("./server.ts");
-    const { loadPlatformConfig } = await import("./config.ts");
+    const { createAgentApp } = await import("../platform/server.ts");
+    const { loadPlatformConfig } = await import("../platform/config.ts");
 
     const platformConfig = loadPlatformConfig(Deno.env.toObject());
     return createAgentApp({

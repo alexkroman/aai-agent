@@ -1,12 +1,12 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
-import { ERR_INTERNAL } from "./errors.ts";
+import { ERR_INTERNAL } from "../sdk/errors.ts";
 import {
   type ChatMessage,
   type LLMResponse,
   LLMResponseSchema,
   type ToolSchema,
-} from "./types.ts";
+} from "../sdk/types.ts";
 
 /**
  * Replace empty text content with "..." (gateway rejects empty text blocks).

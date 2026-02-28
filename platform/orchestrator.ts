@@ -9,25 +9,22 @@ import * as Comlink from "comlink";
 import { Hono } from "@hono/hono";
 import { compress } from "@hono/hono/compress";
 import { cors } from "@hono/hono/cors";
-import { loadPlatformConfig } from "../sdk/config.ts";
-import type { PlatformConfig } from "../sdk/config.ts";
+import { loadPlatformConfig } from "./config.ts";
+import type { PlatformConfig } from "./config.ts";
 import { createLogger } from "../sdk/logger.ts";
-import { FAVICON_SVG, renderAgentPage } from "../sdk/server.ts";
-import { type SessionDeps, VoiceSession } from "../sdk/session.ts";
-import { connectStt } from "../sdk/stt.ts";
-import { callLLM } from "../sdk/llm.ts";
-import { TtsClient } from "../sdk/tts.ts";
-import { normalizeVoiceText } from "../sdk/voice-cleaner.ts";
-import {
-  executeBuiltinTool,
-  getBuiltinToolSchemas,
-} from "../sdk/builtin-tools.ts";
-import { handleSessionWebSocket } from "../sdk/ws-handler.ts";
-import { createDenoWorker } from "../sdk/deno-ext.ts";
+import { FAVICON_SVG, renderAgentPage } from "./server.ts";
+import { type SessionDeps, VoiceSession } from "./session.ts";
+import { connectStt } from "./stt.ts";
+import { callLLM } from "./llm.ts";
+import { TtsClient } from "./tts.ts";
+import { normalizeVoiceText } from "./voice-cleaner.ts";
+import { executeBuiltinTool, getBuiltinToolSchemas } from "./builtin-tools.ts";
+import { handleSessionWebSocket } from "./ws-handler.ts";
+import { createDenoWorker } from "./deno-ext.ts";
 import { withTimeout } from "../sdk/tool-executor.ts";
 import type { IToolExecutor } from "../sdk/tool-executor.ts";
 import type { AgentConfig, ToolSchema } from "../sdk/types.ts";
-import type { WorkerApi } from "../sdk/worker-entry.ts";
+import type { WorkerApi } from "./worker-entry.ts";
 import {
   type AgentMetadata,
   listAgents as kvListAgents,

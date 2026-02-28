@@ -1,7 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { loadPlatformConfig } from "../config.ts";
-import { DEFAULT_MODEL } from "../types.ts";
+import { DEFAULT_MODEL } from "../../sdk/types.ts";
 
 describe("loadPlatformConfig", () => {
   const validEnv = {

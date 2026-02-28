@@ -7,7 +7,7 @@ import {
   DEFAULT_TTS_CONFIG,
   type STTConfig,
   type TTSConfig,
-} from "./types.ts";
+} from "../sdk/types.ts";
 
 const EnvSchema = z.object({
   ASSEMBLYAI_API_KEY: z.string().min(1, "ASSEMBLYAI_API_KEY is required"),

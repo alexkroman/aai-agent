@@ -5,9 +5,9 @@
 import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
 import { mapNotNullish } from "@std/collections/map-not-nullish";
-import { createLogger } from "./logger.ts";
-import { zodToJsonSchema } from "./protocol.ts";
-import type { ToolSchema } from "./types.ts";
+import { createLogger } from "../sdk/logger.ts";
+import { zodToJsonSchema } from "../sdk/protocol.ts";
+import type { ToolSchema } from "../sdk/types.ts";
 
 const log = createLogger("builtin-tools");
 

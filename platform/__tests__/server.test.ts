@@ -7,8 +7,8 @@ import {
   FAVICON_SVG,
   renderAgentPage,
 } from "../server.ts";
-import { Agent } from "../agent.ts";
-import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../types.ts";
+import { Agent } from "../../sdk/agent.ts";
+import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../../sdk/types.ts";
 import type { PlatformConfig } from "../config.ts";
 import { createMockSessionDeps } from "./_test-utils.ts";
 

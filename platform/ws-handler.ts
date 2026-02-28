@@ -1,9 +1,9 @@
 // ws-handler.ts — Shared WebSocket session handler used by both
 // sdk/server.ts (standalone) and platform/orchestrator.ts (multi-agent).
 
-import { MSG } from "./shared-protocol.ts";
-import { createLogger } from "./logger.ts";
-import { type AgentConfig, ControlMessageSchema } from "./types.ts";
+import { MSG } from "../sdk/shared-protocol.ts";
+import { createLogger } from "../sdk/logger.ts";
+import { type AgentConfig, ControlMessageSchema } from "../sdk/types.ts";
 import { VoiceSession } from "./session.ts";
 
 const log = createLogger("ws");

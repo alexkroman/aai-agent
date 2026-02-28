@@ -89,6 +89,7 @@ let orchestrator = startOrchestrator();
 const watchDirs = [
   ...agents.map((a) => a.dir),
   "sdk",
+  "platform",
 ];
 const watcher = Deno.watchFs(watchDirs, { recursive: true });
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;

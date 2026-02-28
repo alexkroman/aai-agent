@@ -2,8 +2,8 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { handleSessionWebSocket } from "../ws-handler.ts";
 import { VoiceSession } from "../session.ts";
-import { MSG } from "../shared-protocol.ts";
-import type { AgentConfig } from "../types.ts";
+import { MSG } from "../../sdk/shared-protocol.ts";
+import type { AgentConfig } from "../../sdk/types.ts";
 import { createMockSessionDeps } from "./_test-utils.ts";
 
 /** Minimal mock WebSocket that simulates the server-side WS API. */

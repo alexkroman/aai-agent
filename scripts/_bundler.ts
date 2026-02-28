@@ -42,7 +42,7 @@ export async function bundleAgent(
   // Worker — zod aliased to shim
   const tempEntry = resolve(outDir, "_worker-entry.ts");
   const agentAbsolute = resolve(agent.entryPoint);
-  const workerEntryAbsolute = resolve("sdk/worker-entry.ts");
+  const workerEntryAbsolute = resolve("platform/worker-entry.ts");
 
   await Deno.writeTextFile(
     tempEntry,

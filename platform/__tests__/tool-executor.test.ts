@@ -2,7 +2,7 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { z } from "zod";
 import { executeToolCall, ToolExecutor } from "../tool-executor.ts";
-import type { ToolHandler } from "../tool-executor.ts";
+import type { ToolHandler } from "../../sdk/tool-executor.ts";
 
 function makeTools(
   ...entries: [string, ToolHandler][]

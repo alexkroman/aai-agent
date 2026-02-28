@@ -1,8 +1,8 @@
 // tts.ts — TTS client with connection pre-warming (Orpheus WebSocket relay).
 // Deno-native: uses standard WebSocket API, Uint8Array instead of Buffer.
 
-import { createLogger } from "./logger.ts";
-import type { TTSConfig } from "./types.ts";
+import { createLogger } from "../sdk/logger.ts";
+import type { TTSConfig } from "../sdk/types.ts";
 import { createDenoWebSocket } from "./deno-ext.ts";
 
 const log = createLogger("tts");

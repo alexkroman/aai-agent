@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { connectStt } from "../stt.ts";
 import type { SttEvents } from "../stt.ts";
-import { DEFAULT_STT_CONFIG } from "../types.ts";
+import { DEFAULT_STT_CONFIG } from "../../sdk/types.ts";
 import { installMockWebSocket, MockWebSocket } from "./_test-utils.ts";
 
 let mockWs: { restore: () => void; created: MockWebSocket[] };

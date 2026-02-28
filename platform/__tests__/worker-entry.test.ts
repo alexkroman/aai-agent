@@ -2,7 +2,7 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { z } from "zod";
 import * as Comlink from "comlink";
-import { Agent } from "../agent.ts";
+import { Agent } from "../../sdk/agent.ts";
 import { startWorker } from "../worker-entry.ts";
 import type { WorkerApi } from "../worker-entry.ts";
 

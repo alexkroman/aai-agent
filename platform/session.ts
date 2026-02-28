@@ -2,11 +2,11 @@
 // Deno-native: standard WebSocket API, ToolExecutor instead of Sandbox, Uint8Array.
 
 import type { PlatformConfig } from "./config.ts";
-import { MAX_TOOL_ITERATIONS, MSG } from "./shared-protocol.ts";
-import { ERR } from "./errors.ts";
+import { MAX_TOOL_ITERATIONS, MSG } from "../sdk/shared-protocol.ts";
+import { ERR } from "../sdk/errors.ts";
 import type { CallLLMOptions } from "./llm.ts";
-import { createLogger, type Logger } from "./logger.ts";
-import type { IToolExecutor } from "./tool-executor.ts";
+import { createLogger, type Logger } from "../sdk/logger.ts";
+import type { IToolExecutor } from "../sdk/tool-executor.ts";
 import type {
   connectStt as connectSttType,
   SttEvents,
@@ -23,7 +23,7 @@ import {
   type LLMResponse,
   type ToolSchema,
   VOICE_RULES,
-} from "./types.ts";
+} from "../sdk/types.ts";
 
 /**
  * Minimal transport interface used by VoiceSession.
