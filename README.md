@@ -54,48 +54,56 @@ npm run dev:serve
 
 The server starts on http://localhost:3000 with client bundles served at `/client.js` and `/react.js`.
 
-### Vanilla example (zero dependencies)
+### Try an example
 
-Open `examples/vanilla/index.html` directly in your browser. It loads `client.js` from the running platform server.
-
-### React example (Vite)
-
-```bash
-# In a separate terminal
-cd examples/react
-npm install
-npm run dev
-```
-
-Open http://localhost:5173.
+Open any example in your browser — for instance, `examples/math-buddy/index.html`. It loads `client.js` from the running platform server. No build step needed.
 
 ## Examples
 
-### Vanilla JS — Math Buddy (works out of the box)
+### Math Buddy (works out of the box)
 
-A math assistant (`examples/vanilla-calculator/index.html`) that needs **zero API keys**:
+A math assistant (`examples/math-buddy/`) that needs **zero API keys**:
 - **4 tools**: `calculate`, `convert_units`, `roll_dice`, `random_number`
 - All pure computation — runs entirely in the V8 sandbox
 - Great starting point for learning the API
 
-### Vanilla JS — Travel Concierge
+### Travel Concierge
 
-A luxury travel concierge (`examples/vanilla/index.html`) that demonstrates:
+A luxury travel concierge (`examples/travel-concierge/`) that demonstrates:
 - **6 tools**: flight search, hotel search, weather forecast, currency conversion, local recommendations, itinerary creation
 - Multi-step workflows (check weather → recommend activities → book)
 - `ctx.secrets` for API key management across multiple services
 - `ctx.fetch` for external API calls with auth headers
 - Error handling in tool handlers
 
-### React — Customer Support Agent
+### TechStore Support
 
-A TechStore support agent (`examples/react/`) that demonstrates:
+A customer support agent (`examples/techstore-support/`) that demonstrates:
 - **6 tools**: customer lookup, order details, inventory check, promotions, returns, escalation
 - Identity verification workflow (look up customer before accessing orders)
 - POST requests with JSON bodies for mutations (returns, escalations)
 - Optional parameters (`zip_code?`, `exchange_sku?`)
-- Polished UI with state indicators, auto-scroll, thinking animation, and tool step chips
-- `useVoiceAgent()` hook for full React integration
+
+### Health Assistant
+
+A health information assistant (`examples/health-assistant/`) that demonstrates:
+- **5 tools**: symptom checker, drug info, drug interaction check, BMI calculator, weight-based dosage
+- Pure computation tools (BMI, dosage) alongside API-backed tools
+- Optional parameters for more accurate results (`age?`, `sex?`)
+
+### Code Interpreter
+
+A problem-solving assistant (`examples/code-interpreter/`) that demonstrates:
+- **1 built-in tool**: `run_code` — executes JavaScript in the V8 sandbox
+- Dynamic code generation and execution
+- `print()` for intermediate output with return value capture
+
+### Web Researcher
+
+A research assistant (`examples/web-researcher/`) that demonstrates:
+- **Built-in tools**: `web_search` via `builtinTools: ["web_search"]`
+- Zero custom tool handlers — uses platform-provided tools
+- Minimal configuration example
 
 ## Quickstart — Vanilla JS
 
@@ -142,31 +150,25 @@ Open in a browser. That's it.
 
 ## Quickstart — React
 
-See `examples/react/` for a full working example. The key files:
-
-**`src/agent.ts`** — Define your agent's personality and tools:
-
-```typescript
-export const instructions = "You are a helpful assistant.";
-export const greeting = "Hey! What can I help you with?";
-export const voice = "jess";
-
-export const tools = {
-  // Add tools here — see examples/react/src/agent.ts for a full example
-};
-```
-
-**`src/App.tsx`** — Use the `useVoiceAgent()` hook:
+The platform serves a React hook at `/react.js`. Use the `useVoiceAgent()` hook:
 
 ```tsx
-const { state, messages, transcript, cancel, reset } = useVoiceAgent({
-  apiKey: "pk_...",
-  platformUrl: "http://localhost:3000",
-  instructions,
-  greeting,
-  voice,
-  tools,
-});
+import { useVoiceAgent } from "http://localhost:3000/react.js";
+
+function App() {
+  const { state, messages, transcript, cancel, reset } = useVoiceAgent({
+    apiKey: "pk_...",
+    platformUrl: "http://localhost:3000",
+    instructions: "You are a helpful assistant. Be concise.",
+    greeting: "Hey! What can I help you with?",
+    voice: "jess",
+    tools: {
+      // Add tools here — same format as the vanilla quickstart
+    },
+  });
+
+  // Render your UI using state, messages, transcript, etc.
+}
 ```
 
 ## Tool handler constraints
@@ -247,16 +249,19 @@ platform/
 └── eslint.config.js
 
 examples/
-├── index.html            # Root index linking to all examples
-├── vanilla/              # Travel concierge — single HTML file
-│   └── index.html        # 6 tools: flights, hotels, weather, currency, tips, itinerary
-├── vanilla-calculator/   # Math Buddy — works out of the box, no API keys
-│   └── index.html        # 4 tools: calculate, convert_units, roll_dice, random_number
-└── react/                # Customer support agent — Vite + React
-    └── src/
-        ├── agent.ts      # 6 tools: customer lookup, orders, inventory, promos, returns, escalation
-        ├── types.ts      # Local ToolContext type declaration
-        └── App.tsx       # Polished UI with state indicators and tool step chips
+├── index.html              # Root index linking to all examples
+├── math-buddy/             # Works out of the box, no API keys
+│   └── index.html          # 4 tools: calculate, convert_units, roll_dice, random_number
+├── travel-concierge/       # Luxury travel planning
+│   └── index.html          # 6 tools: flights, hotels, weather, currency, tips, itinerary
+├── techstore-support/      # Customer support
+│   └── index.html          # 6 tools: customer lookup, orders, inventory, promos, returns, escalation
+├── health-assistant/       # Health information
+│   └── index.html          # 5 tools: symptoms, drug info, interactions, BMI, dosage
+├── code-interpreter/       # Run JavaScript via voice
+│   └── index.html          # 1 tool: run_code (V8 sandbox)
+└── web-researcher/         # Web search via voice
+    └── index.html          # Built-in tool: web_search
 ```
 
 ## Development
