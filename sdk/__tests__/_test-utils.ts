@@ -271,11 +271,6 @@ export function installMockWebSocket(): {
   };
 }
 
-// ── Worker harness types ──────────────────────────────────────────
-
-import type { WorkerInMessage, WorkerOutMessage } from "../types.ts";
-export type { WorkerInMessage, WorkerOutMessage };
-
 /** Replace globalThis.fetch with a mock, returns a restore function. */
 export function stubFetch(
   handler: (

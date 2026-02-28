@@ -1,4 +1,5 @@
-import { Agent, fetchJSON, z } from "../../mod.ts";
+import { Agent, fetchJSON } from "@aai/sdk";
+import { z } from "zod";
 
 // ── Response schemas (only validate fields we actually use) ─────
 
@@ -27,7 +28,7 @@ const ExchangeRateResponse = z.object({
   rates: z.record(z.string(), z.number()),
 }).passthrough();
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Aria",
   instructions:
     `You are Aria, a luxury travel concierge. You help customers plan trips,
@@ -148,5 +149,3 @@ Rules:
       };
     },
   });
-
-export default agent;

@@ -1,21 +1,24 @@
-// styles.ts — Centralized inline style objects for the voice agent UI.
+// styles.ts — Centralized inline style objects using CSS custom properties.
 
 import type { AgentState } from "../types.ts";
 
 export const STATE_COLORS: Record<AgentState, string> = {
-  connecting: "#999",
-  ready: "#4CAF50",
-  listening: "#2196F3",
-  thinking: "#FF9800",
-  speaking: "#9C27B0",
-  error: "#f44336",
+  connecting: "var(--aai-state-connecting)",
+  ready: "var(--aai-state-ready)",
+  listening: "var(--aai-state-listening)",
+  thinking: "var(--aai-state-thinking)",
+  speaking: "var(--aai-state-speaking)",
+  error: "var(--aai-state-error)",
 } as const;
 
 export const container: Record<string, string> = {
-  fontFamily: "system-ui, -apple-system, sans-serif",
+  fontFamily: "var(--aai-font)",
   maxWidth: "600px",
   margin: "0 auto",
   padding: "20px",
+  color: "var(--aai-text)",
+  minHeight: "100vh",
+  boxSizing: "border-box",
 } as const;
 
 export const startWrapper: Record<string, string> = {
@@ -29,9 +32,9 @@ export const startWrapper: Record<string, string> = {
 export const startButton: Record<string, string> = {
   padding: "16px 32px",
   border: "none",
-  borderRadius: "12px",
-  background: "#2196F3",
-  color: "white",
+  borderRadius: "var(--aai-radius)",
+  background: "var(--aai-primary)",
+  color: "var(--aai-text)",
   fontSize: "16px",
   fontWeight: "500",
   cursor: "pointer",
@@ -53,15 +56,15 @@ export const stateDot = (state: AgentState): Record<string, string> => ({
 
 export const stateLabel: Record<string, string> = {
   fontSize: "14px",
-  color: "#666",
+  color: "var(--aai-text-muted)",
   textTransform: "capitalize",
 } as const;
 
 export const errorBanner: Record<string, string> = {
-  background: "#ffebee",
-  color: "#c62828",
+  background: "var(--aai-surface)",
+  color: "var(--aai-error)",
   padding: "10px 14px",
-  borderRadius: "8px",
+  borderRadius: "var(--aai-radius)",
   marginBottom: "16px",
   fontSize: "14px",
 } as const;
@@ -71,8 +74,8 @@ export const messagesContainer: Record<string, string> = {
   maxHeight: "500px",
   overflowY: "auto",
   marginBottom: "16px",
-  border: "1px solid #e0e0e0",
-  borderRadius: "8px",
+  border: "1px solid var(--aai-surface-light)",
+  borderRadius: "var(--aai-radius)",
   padding: "16px",
 } as const;
 
@@ -83,29 +86,30 @@ export const buttonRow: Record<string, string> = {
 
 export const stopButton: Record<string, string> = {
   padding: "8px 16px",
-  border: "1px solid #ccc",
-  borderRadius: "6px",
+  border: "none",
+  borderRadius: "var(--aai-radius)",
   cursor: "pointer",
   fontSize: "14px",
-  background: "#f44336",
-  color: "white",
+  background: "var(--aai-error)",
+  color: "var(--aai-text)",
 } as const;
 
 export const resumeButton: Record<string, string> = {
   padding: "8px 16px",
-  border: "1px solid #ccc",
-  borderRadius: "6px",
+  border: "none",
+  borderRadius: "var(--aai-radius)",
   cursor: "pointer",
   fontSize: "14px",
-  background: "#4CAF50",
-  color: "white",
+  background: "var(--aai-state-ready)",
+  color: "var(--aai-text)",
 } as const;
 
 export const resetButton: Record<string, string> = {
   padding: "8px 16px",
-  border: "1px solid #ccc",
-  borderRadius: "6px",
-  background: "white",
+  border: "1px solid var(--aai-surface-light)",
+  borderRadius: "var(--aai-radius)",
+  background: "transparent",
+  color: "var(--aai-text-muted)",
   cursor: "pointer",
   fontSize: "14px",
 } as const;
@@ -119,8 +123,8 @@ export const bubble = (isUser: boolean): Record<string, string> => ({
   display: "inline-block",
   maxWidth: "80%",
   padding: "8px 12px",
-  borderRadius: "12px",
-  background: isUser ? "#e3f2fd" : "#f5f5f5",
+  borderRadius: "var(--aai-radius)",
+  background: isUser ? "var(--aai-surface-light)" : "var(--aai-surface)",
   textAlign: "left",
 });
 
@@ -130,7 +134,7 @@ export const bubbleText: Record<string, string> = {
 
 export const stepsText: Record<string, string> = {
   fontSize: "11px",
-  color: "#999",
+  color: "var(--aai-text-muted)",
   marginTop: "4px",
 } as const;
 
@@ -138,8 +142,8 @@ export const transcriptBubble: Record<string, string> = {
   display: "inline-block",
   maxWidth: "80%",
   padding: "8px 12px",
-  borderRadius: "12px",
-  background: "#e3f2fd",
+  borderRadius: "var(--aai-radius)",
+  background: "var(--aai-surface-light)",
   opacity: "0.6",
   textAlign: "left",
 } as const;

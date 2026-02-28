@@ -1,6 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import agent from "../agent.ts";
+import { agent } from "../agent.ts";
 
 /** Create a mock ctx.fetch that returns the given data as JSON. */
 function mockFetch(data: unknown): typeof globalThis.fetch {

@@ -49,15 +49,6 @@ export function parseServerMessage(data: string): ServerMessage | null {
   }
 }
 
-// ── Callback interface (backward compat) ───────────────────────
-
-export interface SessionCallbacks {
-  onStateChange: (state: AgentState) => void;
-  onMessage: (msg: Message) => void;
-  onTranscript: (text: string) => void;
-  onError: (message: string) => void;
-}
-
 // ── VoiceSession ───────────────────────────────────────────────
 
 export class VoiceSession extends EventTarget {
@@ -82,17 +73,9 @@ export class VoiceSession extends EventTarget {
   // Heartbeat
   private pongReceived = true;
 
-  constructor(options: AgentOptions, callbacks?: SessionCallbacks) {
+  constructor(options: AgentOptions) {
     super();
     this.options = options;
-
-    // Wire legacy callbacks as event listeners for backward compat
-    if (callbacks) {
-      this.on("stateChange", callbacks.onStateChange);
-      this.on("message", callbacks.onMessage);
-      this.on("transcript", callbacks.onTranscript);
-      this.on("error", (err) => callbacks.onError(err.message));
-    }
   }
 
   // ── Typed event helpers ───────────────────────────────────────

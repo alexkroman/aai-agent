@@ -190,29 +190,9 @@ export interface ToolSchema {
   parameters: Record<string, unknown>;
 }
 
-// ── Worker IPC Message Types ────────────────────────────────────
+// ── Worker Config Type ──────────────────────────────────────────
 
-/** Messages sent from the main process to a Worker. */
-export type WorkerInMessage =
-  | { type: "init"; slug: string; secrets: Record<string, string> }
-  | {
-    type: "tool.call";
-    callId: string;
-    name: string;
-    args: Record<string, unknown>;
-  };
-
-/** Messages sent from a Worker to the main process. */
-export type WorkerOutMessage =
-  | {
-    type: "ready";
-    slug: string;
-    config: WorkerReadyConfig;
-    toolSchemas: ToolSchema[];
-  }
-  | { type: "tool.result"; callId: string; result: string };
-
-/** Agent config as sent by the worker in the "ready" message (matches AgentOptions). */
+/** Agent config as returned by WorkerApi.getConfig() (matches AgentOptions). */
 export interface WorkerReadyConfig {
   name?: string;
   instructions: string;

@@ -10,11 +10,13 @@
     "jsr:@std/async@1": "1.2.0",
     "jsr:@std/async@^1.1.0": "1.2.0",
     "jsr:@std/bytes@^1.0.2": "1.0.6",
+    "jsr:@std/cli@1": "1.0.28",
     "jsr:@std/collections@1": "1.1.6",
     "jsr:@std/data-structures@^1.0.10": "1.0.10",
     "jsr:@std/dotenv@*": "0.225.6",
     "jsr:@std/encoding@^1.0.5": "1.0.10",
     "jsr:@std/expect@1": "1.0.18",
+    "jsr:@std/fs@1": "1.0.23",
     "jsr:@std/fs@^1.0.22": "1.0.23",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/media-types@*": "1.1.0",
@@ -24,6 +26,8 @@
     "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/regexp@1": "1.0.1",
     "jsr:@std/testing@1": "1.0.17",
+    "npm:@preact/signals@2": "2.8.1_preact@10.28.4",
+    "npm:comlink@4": "4.4.2",
     "npm:esbuild@0.27": "0.27.3",
     "npm:preact@10": "10.28.4",
     "npm:remark@15": "15.0.1",
@@ -56,6 +60,9 @@
     },
     "@std/bytes@1.0.6": {
       "integrity": "f6ac6adbd8ccd99314045f5703e23af0a68d7f7e58364b47d2c7f408aeb5820a"
+    },
+    "@std/cli@1.0.28": {
+      "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
     },
     "@std/collections@1.1.6": {
       "integrity": "b458160ce65ea5ad35da05d0a5cbee4b583677c8b443a10d7beb0c4ac63f2baa"
@@ -104,7 +111,7 @@
         "jsr:@std/assert@^1.0.17",
         "jsr:@std/async@^1.1.0",
         "jsr:@std/data-structures",
-        "jsr:@std/fs",
+        "jsr:@std/fs@^1.0.22",
         "jsr:@std/internal",
         "jsr:@std/path@^1.1.4"
       ]
@@ -241,6 +248,16 @@
       "os": ["win32"],
       "cpu": ["x64"]
     },
+    "@preact/signals-core@1.13.0": {
+      "integrity": "sha512-slT6XeTCAbdql61GVLlGU4x7XHI7kCZV5Um5uhE4zLX4ApgiiXc0UYFvVOKq06xcovzp7p+61l68oPi563ARKg=="
+    },
+    "@preact/signals@2.8.1_preact@10.28.4": {
+      "integrity": "sha512-wX6U0SpcCukZTJBs5ChljvBZb3XmYzA5gd4vKHgX8wZZKaQCo2WHtmThdLx+mcVvlBa5u3XShC7ffbETJD4BiQ==",
+      "dependencies": [
+        "@preact/signals-core",
+        "preact"
+      ]
+    },
     "@types/debug@4.1.12": {
       "integrity": "sha512-vIChWdVG3LG1SMxEvI/AK+FWJthlrqlTu7fbrlywTkkaONwk/UAGaULXRlf8vkzFBLVm0zkMdCquhL5aOjhXPQ==",
       "dependencies": [
@@ -264,6 +281,9 @@
     },
     "character-entities@2.0.2": {
       "integrity": "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ=="
+    },
+    "comlink@4.4.2": {
+      "integrity": "sha512-OxGdvBmJuNKSCMO4NTl1L47VRp6xn2wG4F/2hYzB6tiCb709otOxtEYCSvK80PtjODfXXZu8ds+Nw5kVCjqd2g=="
     },
     "debug@4.4.3": {
       "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
@@ -649,13 +669,17 @@
       "jsr:@pikisoft/duckduckgo-search@*",
       "jsr:@std/assert@1",
       "jsr:@std/async@1",
+      "jsr:@std/cli@1",
       "jsr:@std/collections@1",
       "jsr:@std/dotenv@*",
       "jsr:@std/expect@1",
+      "jsr:@std/fs@1",
       "jsr:@std/media-types@1",
       "jsr:@std/path@1",
       "jsr:@std/regexp@1",
       "jsr:@std/testing@1",
+      "npm:@preact/signals@2",
+      "npm:comlink@4",
       "npm:esbuild@0.27",
       "npm:preact@10",
       "npm:remark@15",

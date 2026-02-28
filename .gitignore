@@ -27,3 +27,4 @@ __pycache__/
 uv.lock
 .mypy_cache
 cov_profile
+bundles/

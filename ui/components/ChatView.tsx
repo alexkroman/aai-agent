@@ -1,49 +1,43 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { AgentState, Message } from "../types.ts";
+import { useSession } from "../context.tsx";
 import { StateIndicator } from "./StateIndicator.tsx";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { Transcript } from "./Transcript.tsx";
 import * as styles from "./styles.ts";
 
-interface ChatViewProps {
-  state: AgentState;
-  messages: Message[];
-  transcript: string;
-  error: string;
-  running: boolean;
-  onToggle: () => void;
-  onReset: () => void;
-}
-
-export function ChatView(
-  { state, messages, transcript, error, running, onToggle, onReset }:
-    ChatViewProps,
-) {
+export function ChatView() {
+  const { state, messages, transcript, error, running, toggle, reset } =
+    useSession();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, transcript]);
+  }, [messages.value.length, transcript.value]);
 
   return (
     <div style={styles.container}>
-      <StateIndicator state={state} />
-      <ErrorBanner error={error} />
+      <StateIndicator state={state.value} />
+      <ErrorBanner error={error.value} />
       <div style={styles.messagesContainer}>
-        {messages.map((msg, i) => <MessageBubble key={i} message={msg} />)}
-        <Transcript text={transcript} />
+        {messages.value.map((msg, i) => (
+          <MessageBubble
+            key={i}
+            message={msg}
+          />
+        ))}
+        <Transcript text={transcript.value} />
         <div ref={scrollRef} />
       </div>
       <div style={styles.buttonRow}>
         <button
           type="button"
-          style={running ? styles.stopButton : styles.resumeButton}
-          onClick={onToggle}
+          style={running.value ? styles.stopButton : styles.resumeButton}
+          onClick={toggle}
         >
-          {running ? "Stop" : "Resume"}
+          {running.value ? "Stop" : "Resume"}
         </button>
-        <button type="button" style={styles.resetButton} onClick={onReset}>
+        <button type="button" style={styles.resetButton} onClick={reset}>
           New Conversation
         </button>
       </div>

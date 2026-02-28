@@ -1,6 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import agent from "../agent.ts";
+import { agent } from "../agent.ts";
 
 describe("web-researcher agent", () => {
   it("has correct config", () => {

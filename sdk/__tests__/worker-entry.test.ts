@@ -1,56 +1,38 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { z } from "zod";
+import * as Comlink from "comlink";
 import { Agent } from "../agent.ts";
 import { startWorker } from "../worker-entry.ts";
-import type { WorkerInMessage, WorkerOutMessage } from "./_test-utils.ts";
+import type { WorkerApi } from "../worker-entry.ts";
 
-/** Typed self interface for worker simulation. */
-interface WorkerSelf {
-  postMessage: (msg: WorkerOutMessage) => void;
-  onmessage: ((event: MessageEvent<WorkerInMessage>) => void) | null;
-}
+/**
+ * Creates a MessageChannel-based harness that simulates Worker <-> main
+ * Comlink tunnel. port1 is the worker-side endpoint passed to startWorker(),
+ * port2 is the main-side endpoint wrapped by Comlink.wrap().
+ */
+function createComlinkHarness(
+  agent: Agent,
+  secrets: Record<string, string> = {},
+) {
+  const channel = new MessageChannel();
 
-// Simulate Worker's self.onmessage / self.postMessage
-function createWorkerHarness(agent: Agent) {
-  const postedMessages: WorkerOutMessage[] = [];
+  // Expose the worker API on port1 (the "worker side")
+  startWorker(agent, secrets, undefined, channel.port1);
 
-  // Save original
-  const originalPostMessage = (globalThis as unknown as { self: WorkerSelf })
-    .self?.postMessage;
-  const originalOnMessage = (globalThis as unknown as { self: WorkerSelf })
-    .self?.onmessage;
-
-  // Ensure self exists and mock postMessage
-  const selfObj = globalThis as unknown as { self: WorkerSelf };
-  selfObj.self ??= selfObj as unknown as WorkerSelf;
-  selfObj.self.postMessage = (msg: WorkerOutMessage) => {
-    postedMessages.push(msg);
-  };
-
-  startWorker(agent);
-
-  // Get the onmessage handler that startWorker set up
-  const handler = selfObj.self.onmessage;
-
-  async function send(data: WorkerInMessage) {
-    await handler?.(new MessageEvent("message", { data }));
-  }
+  // Wrap port2 (the "main side") with Comlink
+  const workerApi = Comlink.wrap<WorkerApi>(channel.port2);
 
   function restore() {
-    if (originalPostMessage) {
-      selfObj.self.postMessage = originalPostMessage;
-    }
-    if (originalOnMessage) {
-      selfObj.self.onmessage = originalOnMessage;
-    }
+    channel.port1.close();
+    channel.port2.close();
   }
 
-  return { send, postedMessages, restore };
+  return { workerApi, restore };
 }
 
-describe("startWorker", () => {
-  it("responds to init with ready message", async () => {
+describe("startWorker (Comlink)", () => {
+  it("getConfig() returns correct config", async () => {
     const agent = new Agent({
       name: "TestBot",
       instructions: "Test",
@@ -58,28 +40,20 @@ describe("startWorker", () => {
       voice: "jess",
     });
 
-    const harness = createWorkerHarness(agent);
+    const harness = createComlinkHarness(agent, { KEY: "val" });
     try {
-      await harness.send({
-        type: "init",
-        slug: "test-bot",
-        secrets: { KEY: "val" },
-      });
-
-      expect(harness.postedMessages.length).toBe(1);
-      const msg = harness.postedMessages[0];
-      expect(msg.type).toBe("ready");
-      if (msg.type === "ready") {
-        expect(msg.slug).toBe("test-bot");
-        expect(msg.config.name).toBe("TestBot");
-        expect(Array.isArray(msg.toolSchemas)).toBe(true);
-      }
+      const result = await harness.workerApi.getConfig();
+      expect(result.config.name).toBe("TestBot");
+      expect(result.config.instructions).toBe("Test");
+      expect(result.config.greeting).toBe("Hi!");
+      expect(result.config.voice).toBe("jess");
+      expect(Array.isArray(result.toolSchemas)).toBe(true);
     } finally {
       harness.restore();
     }
   });
 
-  it("handles tool.call with valid tool", async () => {
+  it("executeTool() with valid tool", async () => {
     const agent = new Agent({
       name: "Bot",
       instructions: "Test",
@@ -91,35 +65,18 @@ describe("startWorker", () => {
       handler: ({ name }) => `Hello, ${name}!`,
     });
 
-    const harness = createWorkerHarness(agent);
+    const harness = createComlinkHarness(agent);
     try {
-      await harness.send({
-        type: "init",
-        slug: "bot",
-        secrets: {},
+      const result = await harness.workerApi.executeTool("greet", {
+        name: "World",
       });
-
-      await harness.send({
-        type: "tool.call",
-        callId: "call-1",
-        name: "greet",
-        args: { name: "World" },
-      });
-
-      const results = harness.postedMessages.filter(
-        (m) => m.type === "tool.result",
-      );
-      expect(results.length).toBe(1);
-      if (results[0].type === "tool.result") {
-        expect(results[0].callId).toBe("call-1");
-        expect(results[0].result).toBe("Hello, World!");
-      }
+      expect(result).toBe("Hello, World!");
     } finally {
       harness.restore();
     }
   });
 
-  it("handles tool.call with unknown tool", async () => {
+  it("executeTool() with unknown tool", async () => {
     const agent = new Agent({
       name: "Bot",
       instructions: "Test",
@@ -127,65 +84,17 @@ describe("startWorker", () => {
       voice: "jess",
     });
 
-    const harness = createWorkerHarness(agent);
+    const harness = createComlinkHarness(agent);
     try {
-      await harness.send({ type: "init", slug: "bot", secrets: {} });
-      await harness.send({
-        type: "tool.call",
-        callId: "call-2",
-        name: "nonexistent",
-        args: {},
-      });
-
-      const results = harness.postedMessages.filter(
-        (m) => m.type === "tool.result",
-      );
-      expect(results.length).toBe(1);
-      if (results[0].type === "tool.result") {
-        expect(results[0].result).toContain("Error");
-        expect(results[0].result).toContain("nonexistent");
-      }
+      const result = await harness.workerApi.executeTool("nonexistent", {});
+      expect(result).toContain("Error");
+      expect(result).toContain("nonexistent");
     } finally {
       harness.restore();
     }
   });
 
-  it("handles tool.call with invalid args", async () => {
-    const agent = new Agent({
-      name: "Bot",
-      instructions: "Test",
-      greeting: "Hi",
-      voice: "jess",
-    }).tool("greet", {
-      description: "Greet",
-      parameters: z.object({ name: z.string() }),
-      handler: ({ name }) => `Hello, ${name}!`,
-    });
-
-    const harness = createWorkerHarness(agent);
-    try {
-      await harness.send({ type: "init", slug: "bot", secrets: {} });
-      await harness.send({
-        type: "tool.call",
-        callId: "call-3",
-        name: "greet",
-        args: { name: 123 as unknown as string },
-      });
-
-      const results = harness.postedMessages.filter(
-        (m) => m.type === "tool.result",
-      );
-      expect(results.length).toBe(1);
-      if (results[0].type === "tool.result") {
-        expect(results[0].result).toContain("Error");
-        expect(results[0].result).toContain("Invalid arguments");
-      }
-    } finally {
-      harness.restore();
-    }
-  });
-
-  it("handles tool.call when handler throws", async () => {
+  it("executeTool() when handler throws", async () => {
     const agent = new Agent({
       name: "Bot",
       instructions: "Test",
@@ -199,30 +108,17 @@ describe("startWorker", () => {
       },
     });
 
-    const harness = createWorkerHarness(agent);
+    const harness = createComlinkHarness(agent);
     try {
-      await harness.send({ type: "init", slug: "bot", secrets: {} });
-      await harness.send({
-        type: "tool.call",
-        callId: "call-4",
-        name: "fail",
-        args: {},
-      });
-
-      const results = harness.postedMessages.filter(
-        (m) => m.type === "tool.result",
-      );
-      expect(results.length).toBe(1);
-      if (results[0].type === "tool.result") {
-        expect(results[0].result).toContain("Error");
-        expect(results[0].result).toContain("boom");
-      }
+      const result = await harness.workerApi.executeTool("fail", {});
+      expect(result).toContain("Error");
+      expect(result).toContain("boom");
     } finally {
       harness.restore();
     }
   });
 
-  it("returns 'null' when handler returns null", async () => {
+  it("executeTool() returns 'null' when handler returns null", async () => {
     const agent = new Agent({
       name: "Bot",
       instructions: "Test",
@@ -234,22 +130,10 @@ describe("startWorker", () => {
       handler: () => null,
     });
 
-    const harness = createWorkerHarness(agent);
+    const harness = createComlinkHarness(agent);
     try {
-      await harness.send({ type: "init", slug: "bot", secrets: {} });
-      await harness.send({
-        type: "tool.call",
-        callId: "call-5",
-        name: "noop",
-        args: {},
-      });
-
-      const results = harness.postedMessages.filter(
-        (m) => m.type === "tool.result",
-      );
-      if (results[0].type === "tool.result") {
-        expect(results[0].result).toBe("null");
-      }
+      const result = await harness.workerApi.executeTool("noop", {});
+      expect(result).toBe("null");
     } finally {
       harness.restore();
     }

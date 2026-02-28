@@ -1,5 +1,5 @@
 // mod.ts — Public SDK entry point.
-// Agents import from here: import { Agent, z } from "../../mod.ts";
+// Agents import from here: import { Agent } from "@aai/sdk";
 
 export { Agent } from "./sdk/agent.ts";
 export type {
@@ -9,4 +9,3 @@ export type {
   ToolDef,
 } from "./sdk/agent.ts";
 export { fetchJSON } from "./sdk/fetch-json.ts";
-export { z } from "zod";

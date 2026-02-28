@@ -1,55 +1,77 @@
 // worker-entry.ts — Thin worker: holds agent config + tool handlers only.
 // The main process runs VoiceSession/STT/LLM/TTS.
-// Tool calls are proxied here via postMessage.
+// Tool calls are proxied here via Comlink (replaces manual postMessage protocol).
 
+import * as Comlink from "comlink";
 import { agentToolsToSchemas } from "./protocol.ts";
 import type { Agent } from "./agent.ts";
-import { executeToolCall } from "./tool-executor.ts";
-import type { WorkerInMessage, WorkerOutMessage } from "./types.ts";
+import type { ToolSchema, WorkerReadyConfig } from "./types.ts";
+import { TIMEOUTS } from "./shared-protocol.ts";
 
-export function startWorker(agent: Agent): void {
-  let secrets: Record<string, string> = {};
+/** API exposed to the main process via Comlink. */
+export interface WorkerApi {
+  getConfig(): { config: WorkerReadyConfig; toolSchemas: ToolSchema[] };
+  executeTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string>;
+}
+
+/**
+ * Start the worker.
+ * @param precomputedSchemas If provided, used instead of computing via zod.
+ *   This allows building with a zod shim for smaller bundles.
+ * @param endpoint Comlink endpoint to expose the API on (defaults to self).
+ *   Pass a MessagePort for testing.
+ */
+export function startWorker(
+  agent: Agent,
+  secrets: Record<string, string>,
+  precomputedSchemas?: ToolSchema[],
+  endpoint?: Comlink.Endpoint,
+): void {
   const toolHandlers = agent.getToolHandlers();
 
-  self.onmessage = async (event: MessageEvent<WorkerInMessage>) => {
-    const msg = event.data;
+  // Use pre-computed schemas if available (zod may be shimmed out),
+  // otherwise compute them at runtime (for dev/standalone mode).
+  const toolSchemas = precomputedSchemas ?? agentToolsToSchemas(agent.tools);
 
-    switch (msg.type) {
-      case "init": {
-        secrets = msg.secrets;
-        const toolSchemas = agentToolsToSchemas(agent.tools);
-        const ready: WorkerOutMessage = {
-          type: "ready",
-          slug: msg.slug,
-          config: agent.config,
-          toolSchemas,
-        };
-        self.postMessage(ready);
-        break;
+  const api: WorkerApi = {
+    getConfig() {
+      return { config: agent.config, toolSchemas };
+    },
+
+    async executeTool(
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<string> {
+      const tool = toolHandlers.get(name);
+      if (!tool) {
+        return `Error: Unknown tool "${name}"`;
       }
 
-      case "tool.call": {
-        const { callId, name, args } = msg;
-        const tool = toolHandlers.get(name);
-        if (!tool) {
-          const errMsg: WorkerOutMessage = {
-            type: "tool.result",
-            callId,
-            result: `Error: Unknown tool "${name}"`,
-          };
-          self.postMessage(errMsg);
-          break;
-        }
-
-        const result = await executeToolCall(name, args, tool, secrets);
-        const resultMsg: WorkerOutMessage = {
-          type: "tool.result",
-          callId,
-          result,
+      try {
+        const signal = AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER);
+        const ctx = {
+          secrets: { ...secrets },
+          fetch: globalThis.fetch,
+          signal,
         };
-        self.postMessage(resultMsg);
-        break;
+        const result = await Promise.race([
+          Promise.resolve(tool.handler(args as Record<string, unknown>, ctx)),
+          new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+        ]);
+        if (result == null) return "null";
+        return typeof result === "string" ? result : JSON.stringify(result);
+      } catch (err) {
+        return `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
-    }
+    },
   };
+
+  Comlink.expose(api, endpoint);
 }

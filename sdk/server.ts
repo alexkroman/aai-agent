@@ -2,6 +2,7 @@
 // Deno-native: uses Deno.serve(), Deno.upgradeWebSocket(), standard WebSocket API.
 
 import { Hono } from "@hono/hono";
+import { compress } from "@hono/hono/compress";
 import { cors } from "@hono/hono/cors";
 import type { PlatformConfig } from "./config.ts";
 import { callLLM } from "./llm.ts";
@@ -75,8 +76,9 @@ export function createAgentApp(options: ServerHandlerOptions): Hono {
   const app = new Hono();
   const sessions = new Map<string, VoiceSession>();
 
-  // CORS middleware
+  // CORS + gzip compression
   app.use("*", cors());
+  app.use("*", compress());
 
   // Health check
   app.get("/health", (c) => c.json({ status: "ok" }));

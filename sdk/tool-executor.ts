@@ -5,7 +5,6 @@
 // Validates arguments against the tool's Zod schema before calling the handler.
 
 import { z } from "zod";
-import { deadline } from "@std/async/deadline";
 import { TIMEOUTS } from "./shared-protocol.ts";
 import { createLogger } from "./logger.ts";
 
@@ -22,6 +21,22 @@ export interface ToolHandler {
 export interface ToolContext {
   secrets: Record<string, string>;
   fetch: typeof globalThis.fetch;
+  signal?: AbortSignal;
+}
+
+/** Race a promise against AbortSignal.timeout(). */
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  _message?: string,
+): Promise<T> {
+  const signal = AbortSignal.timeout(ms);
+  return new Promise<T>((resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), {
+      once: true,
+    });
+    promise.then(resolve, reject);
+  });
 }
 
 /** Interface for tool execution — satisfied by ToolExecutor and WorkerToolExecutor. */
@@ -49,15 +64,18 @@ export async function executeToolCall(
   }
 
   try {
+    const signal = AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER);
     const ctx: ToolContext = {
       secrets: { ...secrets },
       fetch: globalThis.fetch,
+      signal,
     };
-    const result = await deadline(
+    const result = await withTimeout(
       Promise.resolve(
         tool.handler(parsed.data as Record<string, unknown>, ctx),
       ),
       TIMEOUTS.TOOL_HANDLER,
+      `Tool "${name}" timed out after ${TIMEOUTS.TOOL_HANDLER}ms`,
     );
     if (result === null || result === undefined) return "null";
     return typeof result === "string" ? result : JSON.stringify(result);

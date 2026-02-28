@@ -1,6 +1,7 @@
-import { Agent, z } from "../../mod.ts";
+import { Agent } from "@aai/sdk";
+import { z } from "zod";
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Coda",
   instructions:
     `You are Coda, a problem-solving assistant who answers questions by writing and running JavaScript code.
@@ -67,5 +68,3 @@ Examples of questions you MUST use code for:
     }
   },
 });
-
-export default agent;

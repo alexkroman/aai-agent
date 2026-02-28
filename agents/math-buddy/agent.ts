@@ -1,6 +1,7 @@
-import { Agent, z } from "../../mod.ts";
+import { Agent } from "@aai/sdk";
+import { z } from "zod";
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Math Buddy",
   instructions:
     `You are Math Buddy, a friendly math assistant. You help with calculations,
@@ -118,5 +119,3 @@ When doing multi-step math, show your work briefly.`,
       return { min: lo, max: hi, result };
     },
   });
-
-export default agent;

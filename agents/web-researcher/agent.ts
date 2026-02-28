@@ -1,6 +1,6 @@
-import { Agent } from "../../mod.ts";
+import { Agent } from "@aai/sdk";
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Scout",
   instructions:
     `You are Scout, a research assistant who finds answers by searching the web.
@@ -20,5 +20,3 @@ RULES:
     "Transcribe search queries, technical terms, names, places, dates, and URLs accurately.",
   builtinTools: ["web_search", "visit_webpage"],
 });
-
-export default agent;

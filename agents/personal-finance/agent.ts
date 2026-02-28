@@ -1,4 +1,5 @@
-import { Agent, fetchJSON, z } from "../../mod.ts";
+import { Agent, fetchJSON } from "@aai/sdk";
+import { z } from "zod";
 
 // ── Response schemas (only validate fields we actually use) ─────
 
@@ -11,7 +12,7 @@ const CryptoPriceResponse = z.record(
   z.record(z.string(), z.number()).optional(),
 );
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Penny",
   instructions:
     `You are Penny, a friendly personal finance assistant. You help people with
@@ -232,5 +233,3 @@ Rules:
       };
     },
   });
-
-export default agent;

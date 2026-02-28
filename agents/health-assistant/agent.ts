@@ -1,4 +1,5 @@
-import { Agent, fetchJSON, z } from "../../mod.ts";
+import { Agent, fetchJSON } from "@aai/sdk";
+import { z } from "zod";
 
 // ── Response schemas (only validate fields we actually use) ─────
 
@@ -42,7 +43,7 @@ const RxInteractionResponse = z.object({
   ).optional(),
 }).passthrough();
 
-const agent = new Agent({
+export const agent = new Agent({
   name: "Dr. Sage",
   instructions:
     `You are Dr. Sage, a friendly health information assistant. You help people
@@ -230,5 +231,3 @@ Rules:
 function str(field: unknown): string | undefined {
   return Array.isArray(field) ? field[0] : undefined;
 }
-
-export default agent;

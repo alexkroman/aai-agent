@@ -1,11 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { FakeTime } from "@std/testing/time";
-import {
-  parseServerMessage,
-  type SessionCallbacks,
-  VoiceSession,
-} from "../session.ts";
+import { parseServerMessage, VoiceSession } from "../session.ts";
 import { MSG } from "../../sdk/shared-protocol.ts";
 import type { AgentOptions } from "../types.ts";
 import { PING_INTERVAL_MS } from "../types.ts";
@@ -205,31 +201,14 @@ describe("VoiceSession", () => {
 
   function createSession(
     opts: AgentOptions = defaultOptions,
-    callbacks?: SessionCallbacks,
   ): VoiceSession {
-    return new VoiceSession(opts, callbacks);
+    return new VoiceSession(opts);
   }
 
   describe("constructor", () => {
     it("creates a session in connecting state", () => {
       const session = createSession();
       expect(session).toBeDefined();
-    });
-
-    it("wires legacy callbacks", () => {
-      const states: string[] = [];
-      const messages: unknown[] = [];
-      const transcripts: string[] = [];
-      const errors: string[] = [];
-
-      const _session = createSession(defaultOptions, {
-        onStateChange: (s: string) => states.push(s),
-        onMessage: (m: unknown) => messages.push(m),
-        onTranscript: (t: string) => transcripts.push(t),
-        onError: (e: string) => errors.push(e),
-      });
-
-      expect(_session).toBeDefined();
     });
   });
 
