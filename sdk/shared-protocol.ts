@@ -1,6 +1,5 @@
 // shared-protocol.ts — Single source of truth for the WebSocket protocol.
-// Imported by both server/ and browser/ code.
-// Also absorbs constants previously in constants.ts.
+// Imported by both sdk/ and ui/ code.
 
 /** WebSocket message type strings (browser <-> server protocol). */
 export const MSG = {
@@ -31,19 +30,6 @@ export const TIMEOUTS = {
   TOOL_HANDLER: 30_000,
   /** STT token expiration in seconds */
   STT_TOKEN_EXPIRES: 480,
-} as const;
-
-/** HTTP/WebSocket path constants. */
-export const PATHS = {
-  WEBSOCKET: "/session",
-  HEALTH: "/health",
-  CLIENT_JS: "/client.js",
-} as const;
-
-/** Audio sample rates. */
-export const SAMPLE_RATES = {
-  STT: 16_000,
-  TTS: 24_000,
 } as const;
 
 /** Maximum LLM tool-call iterations per turn. */

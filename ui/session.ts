@@ -1,21 +1,40 @@
 // session.ts — VoiceSession: WebSocket session management for voice agents.
 // Simplified: no auth/configure — agent is configured server-side.
 
-import { MSG, type ErrorMessage, type ServerMessage } from "../server/shared-protocol.js";
+import {
+  type ErrorMessage,
+  MSG,
+  type ServerMessage,
+} from "../sdk/shared-protocol.ts";
 
 import {
-  type AgentState,
   type AgentOptions,
+  type AgentState,
   type Message,
-  VALID_TRANSITIONS,
   PING_INTERVAL_MS,
-  toWebSocketUrl,
-} from "./types.js";
+  VALID_TRANSITIONS,
+} from "./types.ts";
 
-import { TypedEmitter, type SessionEventMap } from "./emitter.js";
-import { SessionError, SessionErrorCode } from "./errors.js";
-import { ReconnectStrategy } from "./reconnect.js";
-import { startMicCapture, createAudioPlayer, type AudioPlayer } from "./audio.js";
+import { SessionError, SessionErrorCode } from "./errors.ts";
+import { ReconnectStrategy } from "./reconnect.ts";
+import {
+  type AudioPlayer,
+  createAudioPlayer,
+  startMicCapture,
+} from "./audio.ts";
+
+// ── Typed event helpers ─────────────────────────────────────────
+
+export interface SessionEventMap {
+  stateChange: AgentState;
+  message: Message;
+  transcript: string;
+  error: SessionError;
+  connected: void;
+  disconnected: { intentional: boolean };
+  audioReady: void;
+  reset: void;
+}
 
 // ── Protocol parser ──────────────────────────────────────────────
 
@@ -24,7 +43,9 @@ const KNOWN_SERVER_TYPES = new Set<string>(Object.values(MSG));
 function parseServerMessage(data: string): ServerMessage | null {
   try {
     const msg = JSON.parse(data);
-    if (typeof msg !== "object" || msg === null || typeof msg.type !== "string") return null;
+    if (
+      typeof msg !== "object" || msg === null || typeof msg.type !== "string"
+    ) return null;
     if (!KNOWN_SERVER_TYPES.has(msg.type)) return null;
     return msg as ServerMessage;
   } catch {
@@ -43,7 +64,7 @@ export interface SessionCallbacks {
 
 // ── VoiceSession ───────────────────────────────────────────────
 
-export class VoiceSession extends TypedEmitter<SessionEventMap> {
+export class VoiceSession extends EventTarget {
   private ws: WebSocket | null = null;
   private player: AudioPlayer | null = null;
   private micCleanup: (() => void) | null = null;
@@ -52,13 +73,14 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
 
   // Reconnection
   private reconnector = new ReconnectStrategy();
-  private intentionalDisconnect = false;
+
+  // Connection lifecycle — abort to tear down ws listeners + ping
+  private connectionController: AbortController | null = null;
 
   // Cancel/reset synchronization
   private cancelling = false;
 
   // Heartbeat
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pongReceived = true;
 
   constructor(options: AgentOptions, callbacks?: SessionCallbacks) {
@@ -74,13 +96,36 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     }
   }
 
+  // ── Typed event helpers ───────────────────────────────────────
+
+  on<K extends keyof SessionEventMap>(
+    event: K,
+    handler: SessionEventMap[K] extends void ? () => void
+      : (data: SessionEventMap[K]) => void,
+  ): () => void {
+    const wrapper = ((e: Event) => {
+      // deno-lint-ignore no-explicit-any
+      (handler as any)((e as CustomEvent).detail);
+    }) as EventListener;
+    this.addEventListener(event, wrapper);
+    return () => this.removeEventListener(event, wrapper);
+  }
+
+  protected emit<K extends keyof SessionEventMap>(
+    event: K,
+    ...args: SessionEventMap[K] extends void ? [] : [SessionEventMap[K]]
+  ): void {
+    this.dispatchEvent(new CustomEvent(event, { detail: args[0] }));
+  }
+
   private changeState(newState: AgentState): void {
     if (newState === this.currentState) return;
+    const g = globalThis as Record<string, unknown>;
     if (
-      typeof globalThis.process !== "undefined" &&
-      (globalThis.process as Record<string, unknown>).env &&
-      ((globalThis.process as Record<string, Record<string, string>>).env)
-        ?.NODE_ENV !== "production" &&
+      typeof g.process !== "undefined" &&
+      (g.process as Record<string, unknown>).env &&
+      (g.process as Record<string, Record<string, string>>).env
+          ?.NODE_ENV !== "production" &&
       !VALID_TRANSITIONS[this.currentState].has(newState)
     ) {
       console.warn(
@@ -92,35 +137,40 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   }
 
   connect(): void {
-    this.intentionalDisconnect = false;
+    this.connectionController?.abort();
+    const controller = new AbortController();
+    this.connectionController = controller;
+    const { signal } = controller;
+
     this.cancelling = false;
-    const platformUrl = toWebSocketUrl(
-      this.options.platformUrl || window.location.origin,
+    const wsUrl = new URL(
+      "/session",
+      this.options.platformUrl || globalThis.location.origin,
     );
-    const ws = new WebSocket(`${platformUrl}/session`);
+    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(wsUrl);
     this.ws = ws;
     ws.binaryType = "arraybuffer";
 
-    ws.onopen = () => {
-      // No auth/configure needed — session starts immediately server-side.
+    ws.addEventListener("open", () => {
       this.changeState("ready");
-      this.startPing();
-    };
+      this.startPing(signal);
+    }, { signal });
 
-    ws.onmessage = (event) => {
+    ws.addEventListener("message", (event) => {
       this.handleServerMessage(event);
-    };
+    }, { signal });
 
-    ws.onclose = () => {
-      this.stopPing();
-      if (this.intentionalDisconnect) {
+    ws.addEventListener("close", () => {
+      if (signal.aborted) {
         this.changeState("connecting");
         return;
       }
+      controller.abort();
       this.emit("disconnected", { intentional: false });
       this.cleanupAudio();
       this.scheduleReconnect();
-    };
+    }, { signal });
   }
 
   private handleServerMessage(event: MessageEvent): void {
@@ -222,10 +272,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     }
   }
 
-  private startPing(): void {
-    this.stopPing();
+  private startPing(signal: AbortSignal): void {
     this.pongReceived = true;
-    this.pingInterval = setInterval(() => {
+    const id = setInterval(() => {
       if (!this.pongReceived) {
         this.ws?.close();
         return;
@@ -235,13 +284,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         this.ws.send(JSON.stringify({ type: MSG.PING }));
       }
     }, PING_INTERVAL_MS);
-  }
-
-  private stopPing(): void {
-    if (this.pingInterval !== null) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
+    signal.addEventListener("abort", () => clearInterval(id));
   }
 
   private scheduleReconnect(): void {
@@ -290,9 +333,9 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   }
 
   disconnect(): void {
-    this.intentionalDisconnect = true;
+    this.connectionController?.abort();
+    this.connectionController = null;
     this.cancelling = false;
-    this.stopPing();
     this.reconnector.cancel();
     this.cleanupAudio();
     this.ws?.close();

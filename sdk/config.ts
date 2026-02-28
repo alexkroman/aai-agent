@@ -1,5 +1,6 @@
 // config.ts — Centralized environment variable loading (Deno-native).
 
+import { z } from "zod";
 import {
   DEFAULT_MODEL,
   DEFAULT_STT_CONFIG,
@@ -7,6 +8,15 @@ import {
   type STTConfig,
   type TTSConfig,
 } from "./types.ts";
+
+const EnvSchema = z.object({
+  ASSEMBLYAI_API_KEY: z.string().min(1, "ASSEMBLYAI_API_KEY is required"),
+  ASSEMBLYAI_TTS_API_KEY: z.string().min(
+    1,
+    "ASSEMBLYAI_TTS_API_KEY is required",
+  ),
+  LLM_MODEL: z.string().optional(),
+});
 
 /** Platform configuration loaded from environment variables. */
 export interface PlatformConfig {
@@ -25,27 +35,17 @@ export interface PlatformConfig {
 export function loadPlatformConfig(
   env: Record<string, string | undefined>,
 ): PlatformConfig {
-  const apiKey = env.ASSEMBLYAI_API_KEY;
-  const ttsApiKey = env.ASSEMBLYAI_TTS_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("ASSEMBLYAI_API_KEY environment variable is required");
-  }
-  if (!ttsApiKey) {
-    throw new Error("ASSEMBLYAI_TTS_API_KEY environment variable is required");
-  }
+  const parsed = EnvSchema.parse(env);
 
   return {
-    apiKey,
-    ttsApiKey,
+    apiKey: parsed.ASSEMBLYAI_API_KEY,
+    ttsApiKey: parsed.ASSEMBLYAI_TTS_API_KEY,
     sttConfig: { ...DEFAULT_STT_CONFIG },
     ttsConfig: {
       ...DEFAULT_TTS_CONFIG,
-      wssUrl: env.ASSEMBLYAI_TTS_WSS_URL ?? DEFAULT_TTS_CONFIG.wssUrl,
-      apiKey: ttsApiKey,
+      apiKey: parsed.ASSEMBLYAI_TTS_API_KEY,
     },
-    model: env.LLM_MODEL ?? DEFAULT_MODEL,
-    llmGatewayBase:
-      env.LLM_GATEWAY_BASE ?? "https://llm-gateway.assemblyai.com/v1",
+    model: parsed.LLM_MODEL ?? DEFAULT_MODEL,
+    llmGatewayBase: "https://llm-gateway.assemblyai.com/v1",
   };
 }

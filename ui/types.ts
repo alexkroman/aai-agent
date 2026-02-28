@@ -40,13 +40,3 @@ export interface AgentOptions {
   /** Platform URL to connect to. Defaults to window.location.origin. */
   platformUrl?: string;
 }
-
-// ── URL helpers ───────────────────────────────────────────────
-
-/** Convert an HTTP(S) URL to WS(S). Pass-through if already ws(s). */
-export function toWebSocketUrl(url: string): string {
-  if (url.startsWith("wss://") || url.startsWith("ws://")) return url;
-  if (url.startsWith("https://")) return "wss://" + url.slice("https://".length);
-  if (url.startsWith("http://")) return "ws://" + url.slice("http://".length);
-  return url;
-}

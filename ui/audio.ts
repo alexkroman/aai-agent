@@ -1,18 +1,18 @@
 // audio.ts — Microphone capture and audio playback via AudioWorklet.
 
-import { MIC_BUFFER_SECONDS } from "./types.js";
+import { MIC_BUFFER_SECONDS } from "./types.ts";
 
 // Worklet source is inlined as text by esbuild (text loader for .worklet.js)
-// @ts-expect-error — esbuild text import
+// @ts-ignore — esbuild text import, default export is a string at runtime
 import pcm16CaptureWorklet from "./worklets/pcm16-capture.worklet.js";
-// @ts-expect-error — esbuild text import
+// @ts-ignore — esbuild text import, default export is a string at runtime
 import pcm16PlaybackWorklet from "./worklets/pcm16-playback.worklet.js";
 
 // ── Audio capture (PCM16 via AudioWorklet) ──────────────────────
 
 export async function startMicCapture(
   ws: WebSocket,
-  sampleRate: number
+  sampleRate: number,
 ): Promise<() => void> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { sampleRate, echoCancellation: true, noiseSuppression: true },
@@ -20,14 +20,21 @@ export async function startMicCapture(
 
   const ctx = new AudioContext({ sampleRate });
   await ctx.resume();
-  console.log("[mic] AudioContext state:", ctx.state, "sampleRate:", ctx.sampleRate);
+  console.log(
+    "[mic] AudioContext state:",
+    ctx.state,
+    "sampleRate:",
+    ctx.sampleRate,
+  );
   const source = ctx.createMediaStreamSource(stream);
 
   // Buffer ~100ms of audio (1600 samples at 16kHz) before sending.
   // AssemblyAI requires frames between 50-1000ms; AudioWorklet's
   // process() fires every 128 samples (8ms) which is too small.
   const minSamples = Math.floor(sampleRate * MIC_BUFFER_SECONDS);
-  const blob = new Blob([pcm16CaptureWorklet], { type: "application/javascript" });
+  const blob = new Blob([pcm16CaptureWorklet as unknown as string], {
+    type: "application/javascript",
+  });
   const blobUrl = URL.createObjectURL(blob);
   await ctx.audioWorklet.addModule(blobUrl);
   URL.revokeObjectURL(blobUrl);
@@ -36,10 +43,17 @@ export async function startMicCapture(
   const worklet = new AudioWorkletNode(ctx, "pcm16", {
     processorOptions: { minSamples },
   });
-  worklet.port.onmessage = (e) => {
+  worklet.port.onmessage = (e: MessageEvent) => {
     frameCount++;
     if (frameCount <= 3) {
-      console.log("[mic] Frame", frameCount, "bytes:", e.data.byteLength, "wsReady:", ws.readyState);
+      console.log(
+        "[mic] Frame",
+        frameCount,
+        "bytes:",
+        e.data.byteLength,
+        "wsReady:",
+        ws.readyState,
+      );
     }
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(e.data);
@@ -49,7 +63,7 @@ export async function startMicCapture(
   worklet.connect(ctx.destination);
 
   return () => {
-    stream.getTracks().forEach((t) => t.stop());
+    stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
     ctx.close();
   };
 }
@@ -63,12 +77,14 @@ export interface AudioPlayer {
 }
 
 export async function createAudioPlayer(
-  sampleRate: number
+  sampleRate: number,
 ): Promise<AudioPlayer> {
   const ctx = new AudioContext({ sampleRate });
   await ctx.resume(); // Ensure AudioContext is not suspended (autoplay policy)
 
-  const blob = new Blob([pcm16PlaybackWorklet], { type: "application/javascript" });
+  const blob = new Blob([pcm16PlaybackWorklet as unknown as string], {
+    type: "application/javascript",
+  });
   const blobUrl = URL.createObjectURL(blob);
   await ctx.audioWorklet.addModule(blobUrl);
   URL.revokeObjectURL(blobUrl);

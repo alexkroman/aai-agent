@@ -1,7 +1,128 @@
 // voice-cleaner.ts — Text normalization for TTS.
 
-import numberToWords from "number-to-words";
-const { toWords, toWordsOrdinal } = numberToWords;
+// Inline number-to-words to avoid npm dependency.
+const ONES = [
+  "",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const TENS = [
+  "",
+  "",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+];
+const SCALES = ["", "thousand", "million", "billion", "trillion"];
+
+function toWords(n: number): string {
+  if (n === 0) return "zero";
+  if (n < 0) return "negative " + toWords(-n);
+
+  const parts: string[] = [];
+  let scaleIdx = 0;
+  let remaining = Math.floor(Math.abs(n));
+
+  while (remaining > 0) {
+    const chunk = remaining % 1000;
+    if (chunk > 0) {
+      const chunkWords = chunkToWords(chunk);
+      const scale = SCALES[scaleIdx];
+      parts.unshift(scale ? `${chunkWords} ${scale}` : chunkWords);
+    }
+    remaining = Math.floor(remaining / 1000);
+    scaleIdx++;
+  }
+
+  return parts.join(" ");
+}
+
+function chunkToWords(n: number): string {
+  const parts: string[] = [];
+  if (n >= 100) {
+    parts.push(ONES[Math.floor(n / 100)] + " hundred");
+    n %= 100;
+  }
+  if (n >= 20) {
+    const ten = TENS[Math.floor(n / 10)];
+    const one = ONES[n % 10];
+    parts.push(one ? `${ten}-${one}` : ten);
+  } else if (n > 0) {
+    parts.push(ONES[n]);
+  }
+  return parts.join(" ");
+}
+
+const ORDINAL_ONES = [
+  "",
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
+];
+const ORDINAL_TENS = [
+  "",
+  "",
+  "twentieth",
+  "thirtieth",
+  "fortieth",
+  "fiftieth",
+  "sixtieth",
+  "seventieth",
+  "eightieth",
+  "ninetieth",
+];
+
+function toWordsOrdinal(n: number): string {
+  if (n <= 0) return toWords(n);
+  if (n < 20) return ORDINAL_ONES[n];
+  if (n < 100) {
+    const rem = n % 10;
+    if (rem === 0) return ORDINAL_TENS[Math.floor(n / 10)];
+    return TENS[Math.floor(n / 10)] + "-" + ORDINAL_ONES[rem];
+  }
+  // For larger numbers, append "th" to the cardinal form
+  const words = toWords(n);
+  if (words.endsWith("y")) return words.slice(0, -1) + "ieth";
+  return words + "th";
+}
 
 // Pre-compiled regex patterns
 const RE_CODE_BLOCKS = /```[\s\S]*?```/g;
@@ -88,7 +209,9 @@ export function normalizeVoiceText(text: string): string {
     const currency = CURRENCY_MAP[symbol] ?? "currency";
     if (numClean.includes(".")) {
       const [dollars, cents] = numClean.split(".");
-      return `${num2words(parseInt(dollars))} ${currency} and ${num2words(parseInt(cents))} cents`;
+      return `${num2words(parseInt(dollars))} ${currency} and ${
+        num2words(parseInt(cents))
+      } cents`;
     }
     return `${num2words(parseInt(numClean))} ${currency}`;
   });

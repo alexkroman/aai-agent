@@ -8,7 +8,7 @@ const BUNDLE_DIR = "dist/client";
 await Deno.mkdir(BUNDLE_DIR, { recursive: true });
 
 await build({
-  entryPoints: ["browser/client.ts"],
+  entryPoints: ["ui/client.tsx"],
   bundle: true,
   format: "esm",
   outfile: `${BUNDLE_DIR}/client.js`,
@@ -16,6 +16,8 @@ await build({
   sourcemap: true,
   target: "es2022",
   loader: { ".worklet.js": "text" },
+  jsx: "automatic",
+  jsxImportSource: "preact",
 });
 
 console.log(`Built ${BUNDLE_DIR}/client.js`);

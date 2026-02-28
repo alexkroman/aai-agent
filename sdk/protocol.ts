@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import type { ToolSchema } from "./types.ts";
-import type { ToolDef } from "../sdk/agent.ts";
+import type { ToolDef } from "./agent.ts";
 
 /**
  * Convert a single Zod type to a JSON Schema fragment.

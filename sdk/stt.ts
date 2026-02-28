@@ -1,14 +1,17 @@
 // stt.ts — AssemblyAI token creation + WebSocket client with auto-refresh.
 // Deno-native: uses standard WebSocket API, Uint8Array instead of Buffer.
 
+import { z } from "zod";
 import { TIMEOUTS } from "./shared-protocol.ts";
 import { ERR_INTERNAL } from "./errors.ts";
 import { createLogger } from "./logger.ts";
-import { SttMessageSchema, type STTConfig } from "./types.ts";
+import { type STTConfig, SttMessageSchema } from "./types.ts";
 
 const log = createLogger("stt");
 
 const TOKEN_URL = "https://streaming.assemblyai.com/v3/token";
+
+const SttTokenResponseSchema = z.object({ token: z.string() });
 
 /** Fraction of token lifetime at which to trigger refresh (80%). */
 const TOKEN_REFRESH_RATIO = 0.8;
@@ -16,7 +19,7 @@ const TOKEN_REFRESH_RATIO = 0.8;
 /**
  * Create an ephemeral streaming token for AssemblyAI STT.
  */
-export async function createSttToken(
+async function createSttToken(
   apiKey: string,
   expiresIn: number,
 ): Promise<string> {
@@ -28,7 +31,8 @@ export async function createSttToken(
   if (!resp.ok) {
     throw new Error(ERR_INTERNAL.sttTokenFailed(resp.status, resp.statusText));
   }
-  const data = (await resp.json()) as { token: string };
+  const json = await resp.json();
+  const data = SttTokenResponseSchema.parse(json);
   return data.token;
 }
 
@@ -159,7 +163,7 @@ function connectSttWs(
 /**
  * STT connection wrapper with automatic token refresh for long sessions.
  */
-export class SttConnection implements SttHandle {
+class SttConnection implements SttHandle {
   private apiKey: string;
   private config: STTConfig;
   private events: SttEvents;
@@ -255,7 +259,7 @@ export class SttConnection implements SttHandle {
 /**
  * Connect to AssemblyAI STT with automatic token refresh for long sessions.
  */
-export async function connectStt(
+export function connectStt(
   apiKey: string,
   config: STTConfig,
   events: SttEvents,

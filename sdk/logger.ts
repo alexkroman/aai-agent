@@ -3,26 +3,44 @@
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 type LogLevel = keyof typeof LOG_LEVELS;
 
-const currentLevel: LogLevel =
-  (Deno.env.get("LOG_LEVEL") as LogLevel | undefined) ?? "info";
-const threshold = LOG_LEVELS[currentLevel] ?? LOG_LEVELS.info;
-const isDev = Deno.env.get("DENO_ENV") !== "production";
+// Defaults — call configureLogger() to override (avoids Deno.env in Workers).
+let isDev = true;
+let threshold: number = LOG_LEVELS.info;
+
+/** Set log level and environment. Call once at startup or on Worker init. */
+export function configureLogger(opts: {
+  logLevel?: string;
+  denoEnv?: string;
+}): void {
+  if (opts.logLevel) {
+    threshold = LOG_LEVELS[opts.logLevel as LogLevel] ?? threshold;
+  }
+  if (opts.denoEnv) {
+    isDev = opts.denoEnv !== "production";
+  }
+}
 
 export interface Logger {
   debug(data: Record<string, unknown>, msg?: string): void;
-  info(data: Record<string, unknown>, msg?: string): void;
-  warn(data: Record<string, unknown>, msg?: string): void;
-  error(data: Record<string, unknown>, msg?: string): void;
   debug(msg: string): void;
+  info(data: Record<string, unknown>, msg?: string): void;
   info(msg: string): void;
+  warn(data: Record<string, unknown>, msg?: string): void;
   warn(msg: string): void;
+  error(data: Record<string, unknown>, msg?: string): void;
   error(msg: string): void;
 }
 
-export function createLogger(name: string, meta?: Record<string, string>): Logger {
+export function createLogger(
+  name: string,
+  meta?: Record<string, string>,
+): Logger {
   const base = { name, ...meta };
 
-  function log(level: LogLevel, args: [Record<string, unknown>, string?] | [string]) {
+  function log(
+    level: LogLevel,
+    args: [Record<string, unknown>, string?] | [string],
+  ) {
     if (LOG_LEVELS[level] < threshold) return;
 
     const data = typeof args[0] === "string"
@@ -32,12 +50,8 @@ export function createLogger(name: string, meta?: Record<string, string>): Logge
     if (isDev) {
       const ts = new Date().toISOString().slice(11, 23);
       const msg = data.msg || "";
-      const rest = { ...data };
-      delete rest.name;
-      delete rest.msg;
-      const extra = Object.keys(rest).length
-        ? " " + JSON.stringify(rest)
-        : "";
+      const { name: _, msg: __, ...rest } = data;
+      const extra = Object.keys(rest).length ? " " + JSON.stringify(rest) : "";
       console.log(`${ts} [${level.toUpperCase()}] ${name}: ${msg}${extra}`);
     } else {
       console.log(JSON.stringify({ level, ts: Date.now(), ...data }));

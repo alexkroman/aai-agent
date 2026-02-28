@@ -1,7 +1,12 @@
 // llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
 
 import { ERR_INTERNAL } from "./errors.ts";
-import type { ChatMessage, LLMResponse, ToolSchema } from "./types.ts";
+import {
+  type ChatMessage,
+  type LLMResponse,
+  LLMResponseSchema,
+  type ToolSchema,
+} from "./types.ts";
 
 /**
  * Replace empty text content with "..." (gateway rejects empty text blocks).
@@ -59,5 +64,14 @@ export async function callLLM(
     throw new Error(ERR_INTERNAL.llmRequestFailed(resp.status, text));
   }
 
-  return (await resp.json()) as LLMResponse;
+  const json = await resp.json();
+  const parsed = LLMResponseSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid LLM response: ${
+        parsed.error.issues.map((i) => i.message).join(", ")
+      }`,
+    );
+  }
+  return parsed.data;
 }

@@ -58,12 +58,12 @@ export class TtsClient {
   /**
    * Synthesize text via Orpheus TTS and stream PCM16 audio chunks.
    */
-  async synthesize(
+  synthesize(
     text: string,
     onAudio: (chunk: Uint8Array) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (signal?.aborted) return;
+    if (signal?.aborted) return Promise.resolve();
 
     // Take the warm connection or create a fresh one
     let ws: WebSocket;

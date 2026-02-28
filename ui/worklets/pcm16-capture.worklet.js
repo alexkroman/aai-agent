@@ -5,7 +5,8 @@ class PCM16Processor extends AudioWorkletProcessor {
     super();
     this._buf = [];
     this._len = 0;
-    this._min = (options.processorOptions && options.processorOptions.minSamples) || 1600;
+    this._min =
+      (options.processorOptions && options.processorOptions.minSamples) || 1600;
   }
   process(inputs) {
     const input = inputs[0][0];

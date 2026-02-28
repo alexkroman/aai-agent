@@ -1,10 +1,10 @@
 // reconnect.ts — Reconnection strategy with exponential backoff.
 
 import {
-  MAX_RECONNECT_ATTEMPTS,
-  MAX_BACKOFF_MS,
   INITIAL_BACKOFF_MS,
-} from "./types.js";
+  MAX_BACKOFF_MS,
+  MAX_RECONNECT_ATTEMPTS,
+} from "./types.ts";
 
 export class ReconnectStrategy {
   private attempts = 0;
