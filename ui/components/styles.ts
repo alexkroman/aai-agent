@@ -1,4 +1,4 @@
-// styles.ts — Centralized inline style objects using CSS custom properties.
+// Centralized inline style objects using CSS custom properties.
 
 import type { AgentState } from "../types.ts";
 

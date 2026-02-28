@@ -1,4 +1,4 @@
-// reconnect.ts — Reconnection strategy with exponential backoff.
+// Reconnection strategy with exponential backoff.
 
 import {
   INITIAL_BACKOFF_MS,

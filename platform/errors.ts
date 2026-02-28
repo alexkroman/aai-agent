@@ -1,8 +1,9 @@
-// errors.ts — Centralized error message constants for the platform.
+// Centralized error message constants for the platform.
 
 /** Error messages sent to the browser (user-facing). */
 export const ERR = {
   STT_CONNECT_FAILED: "Failed to connect to speech recognition",
+  STT_DISCONNECTED: "Speech recognition disconnected",
   CHAT_FAILED: "Chat failed",
   TTS_FAILED: "TTS synthesis failed",
 } as const;

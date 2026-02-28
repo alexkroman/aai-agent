@@ -1,4 +1,4 @@
-// context.tsx — Preact context for SessionSignals. No prop-drilling needed.
+// Preact context for SessionSignals. No prop-drilling needed.
 
 import { createContext } from "preact";
 import { useContext } from "preact/hooks";

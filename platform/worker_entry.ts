@@ -1,11 +1,12 @@
 import * as Comlink from "comlink";
 import { agentToolsToSchemas } from "./protocol.ts";
-import type { Agent } from "../sdk/agent.ts";
-import type { ToolSchema, WorkerReadyConfig } from "./types.ts";
-import { TIMEOUTS } from "../sdk/shared_protocol.ts";
+import { type AgentDef, toToolHandlers } from "../sdk/agent.ts";
+import type { AgentConfig, ToolSchema } from "./types.ts";
+
+const TOOL_HANDLER_TIMEOUT = 30_000;
 
 export interface WorkerApi {
-  getConfig(): { config: WorkerReadyConfig; toolSchemas: ToolSchema[] };
+  getConfig(): { config: AgentConfig; toolSchemas: ToolSchema[] };
   executeTool(
     name: string,
     args: Record<string, unknown>,
@@ -13,17 +14,26 @@ export interface WorkerApi {
 }
 
 export function startWorker(
-  agent: Agent,
+  agent: AgentDef,
   secrets: Record<string, string>,
   precomputedSchemas?: ToolSchema[],
   endpoint?: Comlink.Endpoint,
 ): void {
-  const toolHandlers = agent.getToolHandlers();
+  const toolHandlers = toToolHandlers(agent.tools);
   const toolSchemas = precomputedSchemas ?? agentToolsToSchemas(agent.tools);
+
+  const config: AgentConfig = {
+    name: agent.name,
+    instructions: agent.instructions,
+    greeting: agent.greeting,
+    voice: agent.voice,
+    prompt: agent.prompt,
+    builtinTools: agent.builtinTools ? [...agent.builtinTools] : undefined,
+  };
 
   const api: WorkerApi = {
     getConfig() {
-      return { config: agent.config, toolSchemas };
+      return { config, toolSchemas };
     },
 
     async executeTool(
@@ -37,7 +47,7 @@ export function startWorker(
         const ctx = {
           secrets: { ...secrets },
           fetch: globalThis.fetch,
-          signal: AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER),
+          signal: AbortSignal.timeout(TOOL_HANDLER_TIMEOUT),
         };
         const result = await Promise.resolve(
           tool.handler(args as Record<string, unknown>, ctx),

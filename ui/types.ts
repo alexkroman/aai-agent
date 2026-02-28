@@ -1,10 +1,8 @@
-// types.ts — Shared types, constants, and pure utility functions for the client.
-
-import { TIMEOUTS } from "../sdk/shared-protocol.ts";
+// Shared types, constants, and pure utility functions for the client.
 
 // ── Named constants (replace magic numbers) ────────────────────
 
-export const PING_INTERVAL_MS = TIMEOUTS.PING_INTERVAL;
+export const PING_INTERVAL_MS = 30_000;
 export const MAX_RECONNECT_ATTEMPTS = 5;
 export const MAX_BACKOFF_MS = 16_000;
 export const INITIAL_BACKOFF_MS = 1_000;

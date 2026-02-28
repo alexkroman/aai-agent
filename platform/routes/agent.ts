@@ -1,21 +1,21 @@
 import { Hono } from "@hono/hono";
 import { HTTPException } from "@hono/hono/http-exception";
-import { createLogger } from "../../sdk/logger.ts";
+import { getLogger } from "../../sdk/logger.ts";
 import { renderAgentPage } from "../html.ts";
 import { FAVICON_SVG } from "../html.ts";
-import { handleSessionWebSocket } from "../ws-handler.ts";
-import { createServerSession } from "../session-factory.ts";
+import { handleSessionWebSocket } from "../ws_handler.ts";
+import { createServerSession } from "../session_factory.ts";
 import { ServerSession } from "../session.ts";
 import {
   type AgentInfo,
   type AgentSlot,
-  ComlinkToolExecutor,
+  createComlinkExecutor,
   ensureAgent,
   trackSessionClose,
   trackSessionOpen,
-} from "../worker-pool.ts";
+} from "../worker_pool.ts";
 
-const log = createLogger("agent-routes");
+const log = getLogger("agent-routes");
 
 export function createAgentRoutes(ctx: {
   slots: Map<string, AgentSlot>;
@@ -36,7 +36,7 @@ export function createAgentRoutes(ctx: {
       if (!agents.includes(info)) agents.push(info);
       return c.html(renderAgentPage(info.name, `/${slug}`));
     } catch (err) {
-      log.error({ slug, err }, "Failed to initialize agent");
+      log.error("Failed to initialize agent", { slug, err });
       throw new HTTPException(500, {
         message: "Agent failed to initialize",
       });
@@ -67,7 +67,7 @@ export function createAgentRoutes(ctx: {
       info = await ensureAgent(slot, bundleDir);
       if (!agents.includes(info)) agents.push(info);
     } catch (err) {
-      log.error({ slug, err }, "Failed to initialize agent for session");
+      log.error("Failed to initialize agent for session", { slug, err });
       throw new HTTPException(500, {
         message: "Agent failed to initialize",
       });
@@ -76,13 +76,13 @@ export function createAgentRoutes(ctx: {
     const { socket, response } = Deno.upgradeWebSocket(c.req.raw);
     handleSessionWebSocket(socket, sessions, {
       createSession: (sessionId, ws) => {
-        const toolExecutor = new ComlinkToolExecutor(info.workerApi);
+        const executeTool = createComlinkExecutor(info.workerApi);
         return createServerSession(
           sessionId,
           ws,
           info.config,
           info.toolSchemas,
-          { platformConfig: slot.platformConfig, toolExecutor },
+          { platformConfig: slot.platformConfig, executeTool },
         );
       },
       logContext: { slug: info.slug },

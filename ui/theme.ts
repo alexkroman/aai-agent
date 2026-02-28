@@ -1,4 +1,4 @@
-// theme.ts — CSS custom property theme system. Zero runtime overhead.
+// CSS custom property theme system. Zero runtime overhead.
 
 import type { AgentState } from "./types.ts";
 

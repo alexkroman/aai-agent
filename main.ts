@@ -1,8 +1,7 @@
-// main.ts — Orchestrator entry point.
+// Orchestrator entry point.
 // Loads root .env, starts the deploy-based orchestrator, scans bundleDir.
 
 import { createOrchestrator } from "./platform/orchestrator.ts";
-import { configureLogger } from "./sdk/logger.ts";
 
 // Best-effort .env loading
 try {
@@ -12,12 +11,7 @@ try {
   // .env not found or @std/dotenv not available — that's fine
 }
 
-configureLogger({
-  logLevel: Deno.env.get("LOG_LEVEL"),
-  denoEnv: Deno.env.get("DENO_ENV"),
-});
-
-const bundleDir = Deno.env.get("BUNDLE_DIR") ?? "bundles";
+const bundleDir = Deno.env.get("BUNDLE_DIR") ?? "dist/bundle";
 const { app, agents } = await createOrchestrator({ bundleDir });
 
 const port = parseInt(Deno.env.get("PORT") ?? "3000");

@@ -1,18 +1,17 @@
 import type { PlatformConfig } from "./config.ts";
-import type { AgentConfig } from "../sdk/types.ts";
+import type { AgentConfig } from "./types.ts";
 import type { ToolSchema } from "./types.ts";
-import type { IToolExecutor } from "./tool-executor.ts";
+import type { ExecuteTool } from "./tool_executor.ts";
 import type { SessionDeps, SessionTransport } from "./session.ts";
 import { ServerSession } from "./session.ts";
 import { connectStt } from "./stt.ts";
 import { callLLM } from "./llm.ts";
 import { TtsClient } from "./tts.ts";
-import { normalizeVoiceText } from "./util/voice-cleaner.ts";
-import { executeBuiltinTool } from "./builtin-tools.ts";
+import { executeBuiltinTool } from "./builtin_tools.ts";
 
 export interface SessionFactoryOptions {
   platformConfig: PlatformConfig;
-  toolExecutor: IToolExecutor;
+  executeTool: ExecuteTool;
   depsOverride?: Partial<SessionDeps>;
 }
 
@@ -32,9 +31,7 @@ export function createServerSession(
     callLLM: opts.depsOverride?.callLLM ?? callLLM,
     ttsClient: opts.depsOverride?.ttsClient ??
       new TtsClient(opts.platformConfig.ttsConfig),
-    toolExecutor: opts.depsOverride?.toolExecutor ?? opts.toolExecutor,
-    normalizeVoiceText: opts.depsOverride?.normalizeVoiceText ??
-      normalizeVoiceText,
+    executeTool: opts.depsOverride?.executeTool ?? opts.executeTool,
     executeBuiltinTool: opts.depsOverride?.executeBuiltinTool ??
       executeBuiltinTool,
   };

@@ -1,23 +1,25 @@
-import { describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { assert, assertEquals } from "@std/assert";
 import { z } from "zod";
 import { createAgentApp } from "./server.ts";
 import { FAVICON_SVG, renderAgentPage } from "./html.ts";
-import { Agent } from "../sdk/agent.ts";
+import { defineAgent, tool } from "../sdk/agent.ts";
 import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "./types.ts";
 import type { PlatformConfig } from "./config.ts";
 import { createMockSessionDeps } from "./_test_utils.ts";
 
 function makeTestAgent() {
-  return new Agent({
+  return defineAgent({
     name: "TestBot",
     instructions: "You are a test bot.",
     greeting: "Hello!",
     voice: "jess",
-  }).tool("echo", {
-    description: "Echo input",
-    parameters: z.object({ text: z.string() }),
-    handler: ({ text }) => text,
+    tools: {
+      echo: tool({
+        description: "Echo input",
+        parameters: z.object({ text: z.string() }),
+        handler: ({ text }) => text,
+      }),
+    },
   });
 }
 
@@ -32,145 +34,160 @@ function makeTestConfig(): PlatformConfig {
   };
 }
 
-describe("renderAgentPage", () => {
-  it("returns HTML with agent name", () => {
-    const page = renderAgentPage("MyBot").toString();
-    expect(page).toContain("<title>MyBot</title>");
-    expect(page).toContain("<!DOCTYPE html>");
-  });
-
-  it("includes basePath in script URL", () => {
-    const page = renderAgentPage("Bot", "/my-agent").toString();
-    expect(page).toContain("/my-agent/client.js");
-  });
-
-  it("uses empty basePath by default", () => {
-    const page = renderAgentPage("Bot").toString();
-    expect(page).toContain('"/client.js"');
-  });
-
-  it("includes platformUrl in script", () => {
-    const page = renderAgentPage("Bot", "/agent").toString();
-    expect(page).toContain("/agent");
-  });
-
-  it("escapes HTML characters in name", () => {
-    const page = renderAgentPage('<script>alert("xss")</script>').toString();
-    expect(page).not.toContain("<script>alert");
-    expect(page).toContain("&lt;script&gt;");
-  });
-
-  it("escapes HTML characters in basePath", () => {
-    const page = renderAgentPage("Bot", '"><script>alert(1)</script>')
-      .toString();
-    expect(page).not.toContain('"><script>');
-    expect(page).toContain("&quot;&gt;&lt;script&gt;");
-  });
+Deno.test("renderAgentPage - returns HTML with agent name", () => {
+  const page = renderAgentPage("MyBot").toString();
+  assert(page.includes("<title>MyBot</title>"));
+  assert(page.includes("<!DOCTYPE html>"));
 });
 
-describe("createAgentApp", () => {
+Deno.test("renderAgentPage - includes basePath in script URL", () => {
+  const page = renderAgentPage("Bot", "/my-agent").toString();
+  assert(page.includes("/my-agent/client.js"));
+});
+
+Deno.test("renderAgentPage - uses empty basePath by default", () => {
+  const page = renderAgentPage("Bot").toString();
+  assert(page.includes('"/client.js"'));
+});
+
+Deno.test("renderAgentPage - includes platformUrl in script", () => {
+  const page = renderAgentPage("Bot", "/agent").toString();
+  assert(page.includes("/agent"));
+});
+
+Deno.test("renderAgentPage - escapes HTML characters in name", () => {
+  const page = renderAgentPage('<script>alert("xss")</script>').toString();
+  assert(!page.includes("<script>alert"));
+  assert(page.includes("&lt;script&gt;"));
+});
+
+Deno.test("renderAgentPage - escapes HTML characters in basePath", () => {
+  const page = renderAgentPage("Bot", '"><script>alert(1)</script>')
+    .toString();
+  assert(!page.includes('"><script>'));
+  assert(page.includes("&quot;&gt;&lt;script&gt;"));
+});
+
+Deno.test("createAgentApp - GET /health returns ok", async () => {
   const app = createAgentApp({
     agent: makeTestAgent(),
     secrets: {},
     platformConfig: makeTestConfig(),
   });
-
-  it("GET /health returns ok", async () => {
-    const res = await app.request("/health");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.status).toBe("ok");
-  });
-
-  it("GET /favicon.ico returns SVG", async () => {
-    const res = await app.request("/favicon.ico");
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toBe(FAVICON_SVG);
-    expect(res.headers.get("Content-Type")).toBe("image/svg+xml");
-  });
-
-  it("GET /favicon.svg returns SVG", async () => {
-    const res = await app.request("/favicon.svg");
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toBe(FAVICON_SVG);
-  });
-
-  it("GET / returns HTML page", async () => {
-    const res = await app.request("/");
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toContain("TestBot");
-    expect(text).toContain("<!DOCTYPE html>");
-  });
-
-  it("GET /session without upgrade returns 400", async () => {
-    const res = await app.request("/session");
-    expect(res.status).toBe(400);
-    const text = await res.text();
-    expect(text).toContain("WebSocket");
-  });
-
-  it("favicon has Cache-Control header", async () => {
-    const res = await app.request("/favicon.ico");
-    expect(res.headers.get("Cache-Control")).toBe("public, max-age=86400");
-  });
-
-  it("accepts CORS preflight", async () => {
-    const res = await app.request("/health", {
-      method: "OPTIONS",
-      headers: { Origin: "http://example.com" },
-    });
-    // CORS middleware should respond
-    expect(res.status).toBeLessThan(500);
-  });
+  const res = await app.request("/health");
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.status, "ok");
 });
 
-describe("createAgentApp with sessionDepsOverride", () => {
-  it("accepts sessionDepsOverride option", () => {
-    const mocks = createMockSessionDeps();
-    const app = createAgentApp({
-      agent: makeTestAgent(),
-      secrets: { MY_KEY: "val" },
-      platformConfig: makeTestConfig(),
-      sessionDepsOverride: {
-        connectStt: mocks.deps.connectStt,
-        callLLM: mocks.deps.callLLM,
-        // deno-lint-ignore no-explicit-any
-        ttsClient: mocks.deps.ttsClient as any,
-        toolExecutor: mocks.deps.toolExecutor,
-        normalizeVoiceText: mocks.deps.normalizeVoiceText,
-      },
-    });
-    // App was created successfully with overrides
-    expect(app).toBeDefined();
+Deno.test("createAgentApp - GET /favicon.ico returns SVG", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
   });
+  const res = await app.request("/favicon.ico");
+  assertEquals(res.status, 200);
+  const text = await res.text();
+  assertEquals(text, FAVICON_SVG);
+  assertEquals(res.headers.get("Content-Type"), "image/svg+xml");
 });
 
-describe("createAgentApp with agent that has builtinTools", () => {
-  it("includes builtin tool schemas", async () => {
-    const agent = new Agent({
-      name: "ToolBot",
-      instructions: "Test",
-      greeting: "Hi",
-      voice: "jess",
-      builtinTools: ["web_search"],
-    });
-    const app = createAgentApp({
-      agent,
-      secrets: {},
-      platformConfig: makeTestConfig(),
-    });
-    // Just verify it creates without error
-    const res = await app.request("/health");
-    expect(res.status).toBe(200);
+Deno.test("createAgentApp - GET /favicon.svg returns SVG", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
   });
+  const res = await app.request("/favicon.svg");
+  assertEquals(res.status, 200);
+  const text = await res.text();
+  assertEquals(text, FAVICON_SVG);
 });
 
-describe("FAVICON_SVG", () => {
-  it("is a valid SVG string", () => {
-    expect(FAVICON_SVG).toContain("<svg");
-    expect(FAVICON_SVG).toContain("</svg>");
+Deno.test("createAgentApp - GET / returns HTML page", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
   });
+  const res = await app.request("/");
+  assertEquals(res.status, 200);
+  const text = await res.text();
+  assert(text.includes("TestBot"));
+  assert(text.includes("<!DOCTYPE html>"));
+});
+
+Deno.test("createAgentApp - GET /session without upgrade returns 400", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
+  });
+  const res = await app.request("/session");
+  assertEquals(res.status, 400);
+  const text = await res.text();
+  assert(text.includes("WebSocket"));
+});
+
+Deno.test("createAgentApp - favicon has Cache-Control header", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
+  });
+  const res = await app.request("/favicon.ico");
+  assertEquals(res.headers.get("Cache-Control"), "public, max-age=86400");
+});
+
+Deno.test("createAgentApp - accepts CORS preflight", async () => {
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: {},
+    platformConfig: makeTestConfig(),
+  });
+  const res = await app.request("/health", {
+    method: "OPTIONS",
+    headers: { Origin: "http://example.com" },
+  });
+  assert(res.status < 500);
+});
+
+Deno.test("createAgentApp - accepts sessionDepsOverride", () => {
+  const mocks = createMockSessionDeps();
+  const app = createAgentApp({
+    agent: makeTestAgent(),
+    secrets: { MY_KEY: "val" },
+    platformConfig: makeTestConfig(),
+    sessionDepsOverride: {
+      connectStt: mocks.deps.connectStt,
+      callLLM: mocks.deps.callLLM,
+      // deno-lint-ignore no-explicit-any
+      ttsClient: mocks.deps.ttsClient as any,
+      executeTool: mocks.deps.executeTool,
+    },
+  });
+  assert(app !== undefined);
+});
+
+Deno.test("createAgentApp - with builtinTools", async () => {
+  const agent = defineAgent({
+    name: "ToolBot",
+    instructions: "Test",
+    greeting: "Hi",
+    voice: "jess",
+    builtinTools: ["web_search"],
+  });
+  const app = createAgentApp({
+    agent,
+    secrets: {},
+    platformConfig: makeTestConfig(),
+  });
+  const res = await app.request("/health");
+  assertEquals(res.status, 200);
+});
+
+Deno.test("FAVICON_SVG - is a valid SVG string", () => {
+  assert(FAVICON_SVG.includes("<svg"));
+  assert(FAVICON_SVG.includes("</svg>"));
 });

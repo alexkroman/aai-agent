@@ -1,5 +1,5 @@
 import { useSession } from "../context.tsx";
-import { ChatView } from "./ChatView.tsx";
+import { ChatView } from "./chat_view.tsx";
 import * as styles from "./styles.ts";
 
 export function App() {

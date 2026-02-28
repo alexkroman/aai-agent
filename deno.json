@@ -24,6 +24,7 @@
     "@std/collections": "jsr:@std/collections@^1",
     "@std/dotenv": "jsr:@std/dotenv@*",
     "@std/fs": "jsr:@std/fs@^1",
+    "@std/log": "jsr:@std/log@^0.224",
 "@aai/sdk": "./mod.ts",
     "comlink": "npm:comlink@^4",
     "zod": "npm:zod@^4",

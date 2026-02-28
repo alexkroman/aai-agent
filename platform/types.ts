@@ -1,11 +1,9 @@
-// types.ts — Platform-specific type definitions for STT, TTS, and LLM services.
+// Platform-specific type definitions for STT, TTS, and LLM services.
 
 import { z } from "zod";
-import {
-  DEFAULT_STT_SAMPLE_RATE,
-  DEFAULT_TTS_SAMPLE_RATE,
-  MSG,
-} from "../sdk/shared-protocol.ts";
+
+const DEFAULT_STT_SAMPLE_RATE = 16_000;
+const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
 // ── STT Configuration ──────────────────────────────────────────────
 
@@ -97,9 +95,9 @@ export const SttMessageSchema = z
 
 /** Schema for browser control messages (audio_ready, cancel, reset). */
 export const ControlMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal(MSG.AUDIO_READY) }),
-  z.object({ type: z.literal(MSG.CANCEL) }),
-  z.object({ type: z.literal(MSG.RESET) }),
+  z.object({ type: z.literal("audio_ready") }),
+  z.object({ type: z.literal("cancel") }),
+  z.object({ type: z.literal("reset") }),
 ]);
 
 // ── OpenAI-compatible types for LLM ────────────────────────────────
@@ -147,10 +145,10 @@ export interface ToolSchema {
   parameters: Record<string, unknown>;
 }
 
-// ── Worker Config Type ──────────────────────────────────────────
+// ── Agent Config ────────────────────────────────────────────────
 
-/** Agent config as returned by WorkerApi.getConfig(). */
-export interface WorkerReadyConfig {
+/** Agent configuration passed between worker pool and sessions. */
+export interface AgentConfig {
   name?: string;
   instructions: string;
   greeting: string;

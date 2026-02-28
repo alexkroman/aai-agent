@@ -1,50 +1,23 @@
-/**
- * @module @aai/sdk
- *
- * Minimalistic Deno framework for building voice agent applications.
- *
- * @example
- * ```ts
- * import { Agent, z } from "@aai/sdk";
- *
- * export const agent = new Agent({ name: "My Assistant" })
- *   .tool("greet", {
- *     description: "Greet someone by name",
- *     parameters: z.object({ name: z.string() }),
- *     handler: ({ name }) => `Hello, ${name}!`,
- *   })
- *   .onConnect(({ sessionId }) => {
- *     console.log(`Session ${sessionId} connected`);
- *   });
- * ```
- */
+/** @module @aai/sdk */
 
-// ── Core ────────────────────────────────────────────────────────────
-
-export { Agent } from "./sdk/agent.ts";
+export {
+  DEFAULT_GREETING,
+  DEFAULT_INSTRUCTIONS,
+  defineAgent,
+  routes,
+  serve,
+  tool,
+  toToolHandlers,
+} from "./sdk/agent.ts";
 export type {
-  AgentHooks,
-  AgentOptions,
-  StoredToolDef,
+  AgentDef,
+  AgentInput,
   ToolContext,
   ToolDef,
+  ToolHandler,
 } from "./sdk/agent.ts";
-
-// ── Schema (locked version, avoids zod version drift) ───────────────
 
 export { z } from "zod";
 
-// ── Session lifecycle ───────────────────────────────────────────────
-
-export type {
-  ConnectHandler,
-  DisconnectHandler,
-  ErrorHandler,
-  SessionContext,
-  TurnHandler,
-} from "./sdk/types.ts";
-
-// ── Utilities ───────────────────────────────────────────────────────
-
-export { fetchJSON } from "./sdk/fetch-json.ts";
-export { createLogger, type Logger } from "./sdk/logger.ts";
+export { fetchJSON, HttpError } from "./sdk/fetch_json.ts";
+export { getLogger, type Logger } from "./sdk/logger.ts";

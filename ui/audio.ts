@@ -1,4 +1,4 @@
-// audio.ts — Microphone capture and audio playback via AudioWorklet.
+// Microphone capture and audio playback via AudioWorklet.
 
 import { MIC_BUFFER_SECONDS } from "./types.ts";
 

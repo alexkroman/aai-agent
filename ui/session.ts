@@ -1,13 +1,10 @@
-// session.ts — VoiceSession: WebSocket session management for voice agents.
+// VoiceSession: WebSocket session management for voice agents.
 // Simplified: no auth/configure — agent is configured server-side.
 
-import {
-  DEFAULT_STT_SAMPLE_RATE,
-  DEFAULT_TTS_SAMPLE_RATE,
-  type ErrorMessage,
-  MSG,
-  type ServerMessage,
-} from "../sdk/shared-protocol.ts";
+import type { ErrorMessage, ServerMessage } from "../sdk/shared_protocol.ts";
+
+const DEFAULT_STT_SAMPLE_RATE = 16_000;
+const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
 import {
   type AgentOptions,
@@ -36,7 +33,19 @@ export interface SessionEventMap {
 
 // ── Protocol parser ──────────────────────────────────────────────
 
-const KNOWN_SERVER_TYPES = new Set<string>(Object.values(MSG));
+const KNOWN_SERVER_TYPES: ReadonlySet<string> = new Set([
+  "ready",
+  "greeting",
+  "transcript",
+  "turn",
+  "thinking",
+  "chat",
+  "tts_done",
+  "cancelled",
+  "reset",
+  "error",
+  "pong",
+]);
 
 export function parseServerMessage(data: string): ServerMessage | null {
   try {
@@ -168,14 +177,17 @@ export class VoiceSession extends EventTarget {
     if (!msg) return;
 
     switch (msg.type) {
-      case MSG.READY: {
+      case "ready": {
         this.reconnector.reset();
         if (this.audioSetupInFlight) break;
         this.audioSetupInFlight = true;
         import("./audio.ts").then(({ createAudioPlayer, startMicCapture }) =>
           Promise.all([
             createAudioPlayer(msg.ttsSampleRate ?? DEFAULT_TTS_SAMPLE_RATE),
-            startMicCapture(this.ws!, msg.sampleRate ?? DEFAULT_STT_SAMPLE_RATE),
+            startMicCapture(
+              this.ws!,
+              msg.sampleRate ?? DEFAULT_STT_SAMPLE_RATE,
+            ),
           ])
         )
           .then(([player, micCleanup]) => {
@@ -187,7 +199,7 @@ export class VoiceSession extends EventTarget {
             }
             this.player = player;
             this.micCleanup = micCleanup;
-            this.ws.send(JSON.stringify({ type: MSG.AUDIO_READY }));
+            this.ws.send(JSON.stringify({ type: "audio_ready" }));
             this.emit("audioReady");
             this.changeState("listening");
             this.emit("connected");
@@ -207,21 +219,21 @@ export class VoiceSession extends EventTarget {
           });
         break;
       }
-      case MSG.GREETING:
+      case "greeting":
         this.emit("message", { role: "assistant", text: msg.text });
         this.changeState("speaking");
         break;
-      case MSG.TRANSCRIPT:
+      case "transcript":
         this.emit("transcript", msg.text);
         break;
-      case MSG.TURN:
+      case "turn":
         this.emit("message", { role: "user", text: msg.text });
         this.emit("transcript", "");
         break;
-      case MSG.THINKING:
+      case "thinking":
         this.changeState("thinking");
         break;
-      case MSG.CHAT:
+      case "chat":
         this.emit("message", {
           role: "assistant",
           text: msg.text,
@@ -229,23 +241,23 @@ export class VoiceSession extends EventTarget {
         });
         this.changeState("speaking");
         break;
-      case MSG.TTS_DONE:
+      case "tts_done":
         this.changeState("listening");
         break;
-      case MSG.CANCELLED:
+      case "cancelled":
         this.cancelling = false;
         this.player?.flush();
         this.changeState("listening");
         break;
-      case MSG.RESET:
+      case "reset":
         this.cancelling = false;
         this.player?.flush();
         this.emit("reset");
         break;
-      case MSG.PONG:
+      case "pong":
         this.pongReceived = true;
         break;
-      case MSG.ERROR: {
+      case "error": {
         const details = (msg as ErrorMessage).details;
         const fullMessage = details?.length
           ? `${msg.message}: ${details.join(", ")}`
@@ -270,7 +282,7 @@ export class VoiceSession extends EventTarget {
       }
       this.pongReceived = false;
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: MSG.PING }));
+        this.ws.send(JSON.stringify({ type: "ping" }));
       }
     }, PING_INTERVAL_MS);
     signal.addEventListener("abort", () => clearInterval(id));
@@ -308,7 +320,7 @@ export class VoiceSession extends EventTarget {
     this.changeState("listening");
     try {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: MSG.CANCEL }));
+        this.ws.send(JSON.stringify({ type: "cancel" }));
       }
     } catch {
       // Connection may have broken between readyState check and send
@@ -319,7 +331,7 @@ export class VoiceSession extends EventTarget {
     this.player?.flush();
     try {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: MSG.RESET }));
+        this.ws.send(JSON.stringify({ type: "reset" }));
         return;
       }
     } catch {

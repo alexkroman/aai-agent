@@ -1,8 +1,8 @@
-// protocol.ts — Tool schema helpers using Zod's built-in JSON Schema conversion.
+// Tool schema helpers using Zod's built-in JSON Schema conversion.
 
 import { z } from "zod";
 import type { ToolSchema } from "./types.ts";
-import type { StoredToolDef } from "../sdk/agent.ts";
+import type { ToolDef } from "../sdk/agent.ts";
 
 /**
  * Convert a Zod object schema to JSON Schema.
@@ -17,10 +17,10 @@ export function zodToJsonSchema(
  * Convert Agent tool definitions to OpenAI tool schemas.
  */
 export function agentToolsToSchemas(
-  tools: Map<string, StoredToolDef>,
+  tools: Readonly<Record<string, ToolDef>>,
 ): ToolSchema[] {
   const schemas: ToolSchema[] = [];
-  for (const [name, def] of tools) {
+  for (const [name, def] of Object.entries(tools)) {
     schemas.push({
       name,
       description: def.description,

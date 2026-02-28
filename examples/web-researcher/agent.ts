@@ -1,6 +1,6 @@
-import { Agent } from "@aai/sdk";
+import { defineAgent } from "@aai/sdk";
 
-export const agent = new Agent({
+export default defineAgent({
   name: "Scout",
   instructions:
     `You are Scout, a research assistant who finds answers by searching the web.

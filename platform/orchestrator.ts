@@ -1,23 +1,23 @@
 import { walk } from "@std/fs/walk";
 import { Hono } from "@hono/hono";
-import { createLogger } from "../sdk/logger.ts";
+import { getLogger } from "../sdk/logger.ts";
 import { applyMiddleware } from "./middleware.ts";
 import { favicon } from "./routes/favicon.ts";
 import { createHealthRoute } from "./routes/health.ts";
 import { createDeployRoute } from "./routes/deploy.ts";
 import { createAgentRoutes } from "./routes/agent.ts";
-import { type AgentInfo, type AgentSlot, registerSlot } from "./worker-pool.ts";
+import { type AgentInfo, type AgentSlot, registerSlot } from "./worker_pool.ts";
 import { ServerSession } from "./session.ts";
 import {
   type AgentMetadata,
   listAgents as kvListAgents,
   openKv,
   setAgent as kvSetAgent,
-} from "./kv-store.ts";
+} from "./kv_store.ts";
 
 export type { AgentInfo };
 
-const log = createLogger("orchestrator");
+const log = getLogger("orchestrator");
 
 export async function createOrchestrator(opts: {
   bundleDir?: string;
@@ -38,12 +38,12 @@ export async function createOrchestrator(opts: {
     try {
       await Deno.stat(`${bundleDir}/${meta.slug}/manifest.json`);
     } catch {
-      log.warn({ slug: meta.slug }, "KV agent missing from disk, skipping");
+      log.warn("KV agent missing from disk, skipping", { slug: meta.slug });
       continue;
     }
     if (registerSlot(slots, meta)) {
       kvSlugs.add(meta.slug);
-      log.info({ slug: meta.slug }, "Loaded agent from KV");
+      log.info("Loaded agent from KV", { slug: meta.slug });
     }
   }
 
@@ -64,10 +64,9 @@ export async function createOrchestrator(opts: {
         const manifest: AgentMetadata = JSON.parse(text);
         if (registerSlot(slots, manifest)) {
           await kvSetAgent(kv, manifest);
-          log.info(
-            { slug: manifest.slug },
-            "Loaded existing deploy (backfilled to KV)",
-          );
+          log.info("Loaded existing deploy (backfilled to KV)", {
+            slug: manifest.slug,
+          });
         }
       } catch {
         // skip malformed manifests
@@ -75,7 +74,7 @@ export async function createOrchestrator(opts: {
     }
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) {
-      log.warn({ err }, "Error scanning bundle directory");
+      log.warn("Error scanning bundle directory", { err });
     }
   }
 

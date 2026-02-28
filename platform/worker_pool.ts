@@ -1,16 +1,16 @@
 import { toFileUrl } from "@std/path";
 import * as Comlink from "comlink";
 import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
-import { createLogger } from "../sdk/logger.ts";
+import { getLogger } from "../sdk/logger.ts";
 import { getBuiltinToolSchemas } from "./builtin_tools.ts";
 import { deadline } from "@std/async/deadline";
-import type { IToolExecutor } from "./tool_executor.ts";
-import type { AgentConfig } from "../sdk/types.ts";
+import type { ExecuteTool } from "./tool_executor.ts";
+import type { AgentConfig } from "./types.ts";
 import type { ToolSchema } from "./types.ts";
 import type { WorkerApi } from "./worker_entry.ts";
 import type { AgentMetadata } from "./kv_store.ts";
 
-const log = createLogger("worker-pool");
+const log = getLogger("worker-pool");
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 30_000;
@@ -34,13 +34,14 @@ export interface AgentSlot {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-export class ComlinkToolExecutor implements IToolExecutor {
-  constructor(private workerApi: Comlink.Remote<WorkerApi>) {}
-
-  async execute(name: string, args: Record<string, unknown>): Promise<string> {
+/** Create an ExecuteTool function that delegates to a worker via Comlink. */
+export function createComlinkExecutor(
+  workerApi: Comlink.Remote<WorkerApi>,
+): ExecuteTool {
+  return async (name, args) => {
     try {
       return await deadline(
-        this.workerApi.executeTool(name, args),
+        workerApi.executeTool(name, args),
         TOOL_TIMEOUT_MS,
       );
     } catch (err) {
@@ -49,9 +50,7 @@ export class ComlinkToolExecutor implements IToolExecutor {
       }
       throw err;
     }
-  }
-
-  dispose(): void {}
+  };
 }
 
 export async function spawnAgent(
@@ -61,7 +60,7 @@ export async function spawnAgent(
   const { slug } = slot;
   const workerPath = `${bundleDir}/${slug}/worker.js`;
 
-  log.info({ slug }, "Spawning agent worker");
+  log.info("Spawning agent worker", { slug });
 
   // deno-lint-ignore no-explicit-any
   const worker = new (Worker as any)(toFileUrl(workerPath).href, {
@@ -71,7 +70,7 @@ export async function spawnAgent(
       permissions: {
         net: true,
         read: false,
-        env: false,
+        env: true,
         run: false,
         write: false,
         ffi: false,
@@ -82,7 +81,7 @@ export async function spawnAgent(
   worker.addEventListener(
     "error",
     ((event: ErrorEvent) => {
-      log.error({ slug, error: event.message }, "Worker error");
+      log.error("Worker error", { slug, error: event.message });
       if (slot.live?.worker === worker) slot.live = undefined;
     }) as EventListener,
   );
@@ -124,7 +123,7 @@ export async function spawnAgent(
     config: agentConfig,
     toolSchemas: allToolSchemas,
   };
-  log.info({ slug, name: agentInfo.name }, "Agent loaded");
+  log.info("Agent loaded", { slug, name: agentInfo.name });
   return agentInfo;
 }
 
@@ -163,7 +162,7 @@ export function trackSessionClose(
   if (slot.activeSessions === 0 && slot.live) {
     slot.idleTimer = setTimeout(() => {
       if (slot.activeSessions === 0 && slot.live) {
-        log.info({ slug: slot.slug }, "Evicting idle agent Worker");
+        log.info("Evicting idle agent Worker", { slug: slot.slug });
         slot.live.worker.terminate();
         const idx = agents.indexOf(slot.live);
         if (idx !== -1) agents.splice(idx, 1);
@@ -182,10 +181,10 @@ export function registerSlot(
   try {
     platformConfig = loadPlatformConfig(metadata.env);
   } catch (err) {
-    log.warn(
-      { slug: metadata.slug, err },
-      "Skipping deploy — missing platform config",
-    );
+    log.warn("Skipping deploy — missing platform config", {
+      slug: metadata.slug,
+      err,
+    });
     return false;
   }
 

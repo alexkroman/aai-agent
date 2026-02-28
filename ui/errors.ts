@@ -1,4 +1,4 @@
-// errors.ts — Typed error codes for client-side session errors.
+// Typed error codes for client-side session errors.
 
 export enum SessionErrorCode {
   AUDIO_SETUP_FAILED = "AUDIO_SETUP_FAILED",

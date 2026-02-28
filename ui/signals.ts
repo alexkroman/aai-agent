@@ -1,4 +1,4 @@
-// signals.ts — Bridges VoiceSession events into Preact signals.
+// Bridges VoiceSession events into Preact signals.
 
 import { signal } from "@preact/signals";
 import type { VoiceSession } from "./session.ts";

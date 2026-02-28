@@ -1,4 +1,4 @@
-// mount.tsx — Wires session + signals + context + theme + render.
+// Wires session + signals + context + theme + render.
 
 import { render } from "preact";
 import type { ComponentType } from "preact";
@@ -22,6 +22,8 @@ export function mount(
       applyTheme(container as HTMLElement, theme);
       document.body.style.margin = "0";
       document.body.style.background = theme.bg;
+      document.body.style.color = theme.text;
+      document.body.style.fontFamily = theme.font;
 
       const session = new VoiceSession({ platformUrl });
       const signals = createSessionSignals(session);

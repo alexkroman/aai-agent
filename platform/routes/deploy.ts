@@ -1,11 +1,11 @@
 import { Hono } from "@hono/hono";
 import { HTTPException } from "@hono/hono/http-exception";
 import { loadPlatformConfig } from "../config.ts";
-import { createLogger } from "../../sdk/logger.ts";
-import type { AgentInfo, AgentSlot } from "../worker-pool.ts";
-import { setAgent as kvSetAgent } from "../kv-store.ts";
+import { getLogger } from "../../sdk/logger.ts";
+import type { AgentInfo, AgentSlot } from "../worker_pool.ts";
+import { setAgent as kvSetAgent } from "../kv_store.ts";
 
-const log = createLogger("deploy");
+const log = getLogger("deploy");
 
 export function createDeployRoute(ctx: {
   slots: Map<string, AgentSlot>;
@@ -46,7 +46,7 @@ export function createDeployRoute(ctx: {
 
     const existing = slots.get(body.slug);
     if (existing?.live) {
-      log.info({ slug: body.slug }, "Replacing existing deploy");
+      log.info("Replacing existing deploy", { slug: body.slug });
       existing.live.worker.terminate();
       const idx = agents.indexOf(existing.live);
       if (idx !== -1) agents.splice(idx, 1);
@@ -74,7 +74,7 @@ export function createDeployRoute(ctx: {
       activeSessions: 0,
     });
 
-    log.info({ slug: body.slug }, "Deploy received");
+    log.info("Deploy received", { slug: body.slug });
     return c.json({ ok: true, message: `Deployed ${body.slug}` });
   });
 

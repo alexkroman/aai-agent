@@ -1,4 +1,4 @@
-// mod.ts — Single public API for @aai/ui.
+// Single public API for @aai/ui.
 //
 // Re-exports Preact essentials and goober so custom UIs only need
 // a single import: `import { css, useEffect, mount, ... } from "@aai/ui"`.
@@ -9,7 +9,7 @@ import { setup } from "goober";
 setup(h);
 
 // Preact re-exports (so users don't need preact as a direct dependency)
-export { h, Fragment } from "preact";
+export { Fragment, h } from "preact";
 export {
   useCallback,
   useEffect,
@@ -40,9 +40,9 @@ export type { Theme } from "./theme.ts";
 export { mount } from "./mount.tsx";
 
 // Components (cherry-pick for custom layouts)
-export { App } from "./components/App.tsx";
-export { ChatView } from "./components/ChatView.tsx";
-export { MessageBubble } from "./components/MessageBubble.tsx";
-export { StateIndicator } from "./components/StateIndicator.tsx";
-export { ErrorBanner } from "./components/ErrorBanner.tsx";
-export { Transcript } from "./components/Transcript.tsx";
+export { App } from "./components/app.tsx";
+export { ChatView } from "./components/chat_view.tsx";
+export { MessageBubble } from "./components/message_bubble.tsx";
+export { StateIndicator } from "./components/state_indicator.tsx";
+export { ErrorBanner } from "./components/error_banner.tsx";
+export { Transcript } from "./components/transcript.tsx";

@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSession } from "../context.tsx";
-import { StateIndicator } from "./StateIndicator.tsx";
-import { ErrorBanner } from "./ErrorBanner.tsx";
-import { MessageBubble } from "./MessageBubble.tsx";
-import { Transcript } from "./Transcript.tsx";
+import { StateIndicator } from "./state_indicator.tsx";
+import { ErrorBanner } from "./error_banner.tsx";
+import { MessageBubble } from "./message_bubble.tsx";
+import { Transcript } from "./transcript.tsx";
 import * as styles from "./styles.ts";
 
 export function ChatView() {

@@ -1,15 +1,14 @@
-import { deadline } from "@std/async/deadline";
-import { TIMEOUTS } from "../sdk/shared_protocol.ts";
-import { createLogger } from "../sdk/logger.ts";
-import type { ToolContext, ToolHandler } from "../sdk/tool_executor.ts";
+import { getLogger } from "../sdk/logger.ts";
+import type { ToolContext, ToolHandler } from "../sdk/agent.ts";
 
-const log = createLogger("tool-executor");
+const log = getLogger("tool-executor");
+const TOOL_HANDLER_TIMEOUT = 30_000;
 
-/** Interface for tool execution — satisfied by ToolExecutor and ComlinkToolExecutor. */
-export interface IToolExecutor {
-  execute(name: string, args: Record<string, unknown>): Promise<string>;
-  dispose(): void;
-}
+/** A function that executes a named tool. */
+export type ExecuteTool = (
+  name: string,
+  args: Record<string, unknown>,
+) => Promise<string>;
 
 export async function executeToolCall(
   name: string,
@@ -26,50 +25,35 @@ export async function executeToolCall(
   }
 
   try {
-    const signal = AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER);
+    const signal = AbortSignal.timeout(TOOL_HANDLER_TIMEOUT);
     const ctx: ToolContext = {
       secrets: { ...secrets },
       fetch: globalThis.fetch,
       signal,
     };
-    const result = await deadline(
-      Promise.resolve(
-        tool.handler(parsed.data as Record<string, unknown>, ctx),
-      ),
-      TIMEOUTS.TOOL_HANDLER,
+    const result = await Promise.resolve(
+      tool.handler(parsed.data as Record<string, unknown>, ctx),
     );
-    if (result === null || result === undefined) return "null";
+    if (result == null) return "null";
     return typeof result === "string" ? result : JSON.stringify(result);
   } catch (err) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
-      log.warn({ tool: name }, "Tool execution timed out");
-      return `Error: Tool "${name}" timed out after ${TIMEOUTS.TOOL_HANDLER}ms`;
+      log.warn("Tool execution timed out", { tool: name });
+      return `Error: Tool "${name}" timed out after ${TOOL_HANDLER_TIMEOUT}ms`;
     }
-    log.warn({ err, tool: name }, "Tool execution failed");
+    log.warn("Tool execution failed", { err, tool: name });
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
-export class ToolExecutor implements IToolExecutor {
-  private tools: Map<string, ToolHandler>;
-  private secrets: Record<string, string>;
-
-  constructor(
-    tools: Map<string, ToolHandler>,
-    secrets: Record<string, string>,
-  ) {
-    this.tools = tools;
-    this.secrets = secrets;
-  }
-
-  async execute(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
-    const tool = this.tools.get(name);
-    if (!tool) return `Error: Unknown tool "${name}"`;
-    return await executeToolCall(name, args, tool, this.secrets);
-  }
-
-  dispose(): void {}
+/** Create an ExecuteTool function from a tool map and secrets. */
+export function createToolExecutor(
+  tools: Map<string, ToolHandler>,
+  secrets: Record<string, string>,
+): ExecuteTool {
+  return (name, args) => {
+    const tool = tools.get(name);
+    if (!tool) return Promise.resolve(`Error: Unknown tool "${name}"`);
+    return executeToolCall(name, args, tool, secrets);
+  };
 }

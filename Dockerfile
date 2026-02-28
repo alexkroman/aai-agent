@@ -10,7 +10,7 @@ RUN deno install
 COPY platform/ platform/
 COPY sdk/ sdk/
 COPY ui/ ui/
-COPY scripts/ scripts/
+COPY cli/ cli/
 COPY mod.ts main.ts ./
 COPY examples/ examples/
 

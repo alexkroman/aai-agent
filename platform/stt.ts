@@ -1,10 +1,11 @@
 import { deadline } from "@std/async/deadline";
-import { TIMEOUTS } from "../sdk/shared-protocol.ts";
 import { ERR_INTERNAL } from "./errors.ts";
-import { createLogger } from "../sdk/logger.ts";
+
+const STT_CONNECTION_TIMEOUT = 10_000;
+import { getLogger } from "../sdk/logger.ts";
 import { type STTConfig, SttMessageSchema } from "./types.ts";
 
-const log = createLogger("stt");
+const log = getLogger("stt");
 
 export type SttWebSocketFactory = (
   url: string,
@@ -77,23 +78,22 @@ async function connectSttWs(
           try {
             parsed = JSON.parse(event.data);
           } catch (err) {
-            log.warn({ err }, "Failed to parse message");
+            log.warn("Failed to parse message", { err });
             return;
           }
 
           const result = SttMessageSchema.safeParse(parsed);
           if (!result.success) {
-            log.warn(
-              { error: result.error.message },
-              "Invalid STT message, skipping",
-            );
+            log.warn("Invalid STT message, skipping", {
+              error: result.error.message,
+            });
             return;
           }
 
           const msg = result.data;
           msgCount++;
           if (msgCount <= 5) {
-            log.debug({ msgCount, type: msg.type }, "STT message");
+            log.debug("STT message", { msgCount, type: msg.type });
           }
           if (msg.type === "Transcript") {
             events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
@@ -118,15 +118,20 @@ async function connectSttWs(
 
         ws.onclose = (event: CloseEvent) => {
           if (event.code !== 1000) {
-            log.error(
-              { code: event.code, reason: event.reason ?? "" },
-              "WebSocket closed unexpectedly",
+            log.error("WebSocket closed unexpectedly", {
+              code: event.code,
+              reason: event.reason ?? "",
+            });
+            events.onError(
+              new Error(
+                `STT WebSocket closed unexpectedly (code ${event.code})`,
+              ),
             );
           }
           events.onClose();
         };
       }),
-      TIMEOUTS.STT_CONNECTION,
+      STT_CONNECTION_TIMEOUT,
     );
   } catch (err) {
     ws.close();

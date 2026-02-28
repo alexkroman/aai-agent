@@ -2,11 +2,11 @@ import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
 import { DOMParser } from "@b-fuze/deno-dom";
 import { mapNotNullish } from "@std/collections/map-not-nullish";
-import { createLogger } from "../sdk/logger.ts";
+import { getLogger } from "../sdk/logger.ts";
 import { zodToJsonSchema } from "./protocol.ts";
 import type { ToolSchema } from "./types.ts";
 
-const log = createLogger("builtin-tools");
+const log = getLogger("builtin-tools");
 
 export function htmlToText(html: string): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -54,7 +54,7 @@ const webSearch: BuiltinTool = {
     const { query, max_results } = webSearchParams.parse(args);
     const maxResults = max_results ?? 5;
 
-    log.info({ query, maxResults }, "web_search");
+    log.info("web_search", { query, maxResults });
 
     const results: { title: string; url: string; description: string }[] = [];
     for await (const r of ddg.text(query)) {
@@ -82,7 +82,7 @@ const visitWebpage: BuiltinTool = {
   execute: async (args) => {
     const { url } = visitWebpageParams.parse(args);
 
-    log.info({ url }, "visit_webpage");
+    log.info("visit_webpage", { url });
 
     const resp = await fetch(url, {
       headers: {
@@ -149,7 +149,7 @@ export async function executeBuiltinTool(
   try {
     return await tool.execute(parsed.data as Record<string, unknown>);
   } catch (err) {
-    log.error({ err, tool: name }, "Built-in tool execution failed");
+    log.error("Built-in tool execution failed", { err, tool: name });
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }

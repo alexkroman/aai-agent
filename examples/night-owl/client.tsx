@@ -1,4 +1,4 @@
-// client.tsx — Custom dark-mode UI for Night Owl.
+// Custom dark-mode UI for Night Owl.
 
 import {
   css,
@@ -165,7 +165,10 @@ function NightOwl() {
 
       <div class={messagesClass}>
         {messages.value.map((msg, i) => (
-          <MessageBubble key={i} message={msg} />
+          <MessageBubble
+            key={i}
+            message={msg}
+          />
         ))}
         <Transcript text={transcript.value} />
         <div ref={scrollRef} />

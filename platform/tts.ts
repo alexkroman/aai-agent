@@ -1,7 +1,7 @@
-import { createLogger } from "../sdk/logger.ts";
+import { getLogger } from "../sdk/logger.ts";
 import type { TTSConfig } from "./types.ts";
 
-const log = createLogger("tts");
+const log = getLogger("tts");
 
 export interface ITtsClient {
   synthesize(
@@ -51,13 +51,13 @@ export class TtsClient {
     try {
       ws = this.createWs(this.config);
     } catch (err) {
-      log.warn({ error: err }, "warmUp: failed to create WebSocket");
+      log.warn("warmUp: failed to create WebSocket", { error: err });
       return;
     }
 
     ws.onerror = (e) => {
       const msg = e instanceof ErrorEvent ? e.message : "unknown";
-      log.warn({ error: msg }, "warmUp failed");
+      log.warn("warmUp failed", { error: msg });
       if (this.warmWs === ws) this.warmWs = null;
     };
 
@@ -152,15 +152,23 @@ export class TtsClient {
           event.data.arrayBuffer()
             .then((buf) => onAudio(new Uint8Array(buf)))
             .catch((err) => {
-              log.warn({ error: err }, "Failed to read TTS Blob audio");
+              log.warn("Failed to read TTS Blob audio", { error: err });
             });
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event: CloseEvent) => {
         signal?.removeEventListener("abort", onAbort);
         this.warmUp();
-        resolve();
+        if (event.code !== 1000 && event.code !== 1005) {
+          reject(
+            new Error(
+              `TTS WebSocket closed unexpectedly (code ${event.code})`,
+            ),
+          );
+        } else {
+          resolve();
+        }
       };
 
       ws.onerror = () => {
