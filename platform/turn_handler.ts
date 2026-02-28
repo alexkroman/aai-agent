@@ -1,4 +1,4 @@
-import type { Logger } from "../sdk/logger.ts";
+import type { Logger } from "../_utils/logger.ts";
 
 const MAX_TOOL_ITERATIONS = 3;
 import type { CallLLMOptions } from "./llm.ts";

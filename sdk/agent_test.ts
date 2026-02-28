@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { z } from "zod";
-import { defineAgent, tool, toToolHandlers } from "./agent.ts";
+import { defineAgent, tool } from "./agent.ts";
 
 Deno.test("defineAgent - fills defaults", () => {
   const agent = defineAgent({ name: "Minimal" });
@@ -67,28 +67,4 @@ Deno.test("tool - identity function preserves definition", () => {
   assertEquals(def.description, "Test");
   assertEquals(def.parameters, schema);
   assertEquals(def.handler, handler);
-});
-
-Deno.test("toToolHandlers - converts tools to Map", () => {
-  const schema = z.object({ name: z.string() });
-  const handler = () => "result";
-  const agent = defineAgent({
-    name: "Test",
-    tools: {
-      greet: tool({ description: "Greet", parameters: schema, handler }),
-    },
-  });
-
-  const handlers = toToolHandlers(agent.tools);
-  assertEquals(handlers.size, 1);
-  const th = handlers.get("greet");
-  assert(th !== undefined);
-  assertEquals(th.schema, schema);
-  assertEquals(th.handler, handler);
-});
-
-Deno.test("toToolHandlers - empty when no tools", () => {
-  const agent = defineAgent({ name: "Test" });
-  const handlers = toToolHandlers(agent.tools);
-  assertEquals(handlers.size, 0);
 });

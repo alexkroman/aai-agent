@@ -1,7 +1,7 @@
 // VoiceSession: WebSocket session management for voice agents.
 // Simplified: no auth/configure — agent is configured server-side.
 
-import type { ErrorMessage, ServerMessage } from "../sdk/shared_protocol.ts";
+import type { ErrorMessage, ServerMessage } from "../_protocol.ts";
 
 const DEFAULT_STT_SAMPLE_RATE = 16_000;
 const DEFAULT_TTS_SAMPLE_RATE = 24_000;

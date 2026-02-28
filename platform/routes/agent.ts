@@ -1,6 +1,6 @@
 import { Hono } from "@hono/hono";
 import { HTTPException } from "@hono/hono/http-exception";
-import { getLogger } from "../../sdk/logger.ts";
+import { getLogger } from "../../_utils/logger.ts";
 import { renderAgentPage } from "../html.ts";
 import { FAVICON_SVG } from "../html.ts";
 import { handleSessionWebSocket } from "../ws_handler.ts";

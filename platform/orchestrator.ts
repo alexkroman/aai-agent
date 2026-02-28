@@ -1,6 +1,6 @@
 import { walk } from "@std/fs/walk";
 import { Hono } from "@hono/hono";
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import { applyMiddleware } from "./middleware.ts";
 import { favicon } from "./routes/favicon.ts";
 import { createHealthRoute } from "./routes/health.ts";

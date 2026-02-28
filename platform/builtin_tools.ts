@@ -2,7 +2,7 @@ import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
 import { DOMParser } from "@b-fuze/deno-dom";
 import { mapNotNullish } from "@std/collections/map-not-nullish";
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import { zodToJsonSchema } from "./protocol.ts";
 import type { ToolSchema } from "./types.ts";
 

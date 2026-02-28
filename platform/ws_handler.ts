@@ -1,4 +1,4 @@
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import type { AgentConfig } from "./types.ts";
 import { ControlMessageSchema } from "./types.ts";
 import { ServerSession } from "./session.ts";

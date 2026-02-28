@@ -1,7 +1,7 @@
 import type { PlatformConfig } from "./config.ts";
 import { ERR } from "./errors.ts";
 import type { CallLLMOptions } from "./llm.ts";
-import { getLogger, type Logger } from "../sdk/logger.ts";
+import { getLogger, type Logger } from "../_utils/logger.ts";
 import type { ExecuteTool } from "./tool_executor.ts";
 import type { SttEvents, SttHandle } from "./stt.ts";
 import type { ITtsClient } from "./tts.ts";

@@ -1,6 +1,11 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { z } from "zod";
-import { createToolExecutor, executeToolCall } from "./tool_executor.ts";
+import {
+  createToolExecutor,
+  executeToolCall,
+  toToolHandlers,
+} from "./tool_executor.ts";
+import { defineAgent, tool } from "../sdk/agent.ts";
 import type { ToolHandler } from "../sdk/agent.ts";
 
 function handler(
@@ -81,4 +86,28 @@ Deno.test("createToolExecutor - dispatches to named tool", async () => {
 Deno.test("createToolExecutor - returns error for unknown tool", async () => {
   const exec = createToolExecutor(new Map(), {});
   assertStringIncludes(await exec("nope", {}), "Unknown tool");
+});
+
+Deno.test("toToolHandlers - converts tools to Map", () => {
+  const schema = z.object({ name: z.string() });
+  const h = () => "result";
+  const agent = defineAgent({
+    name: "Test",
+    tools: {
+      greet: tool({ description: "Greet", parameters: schema, handler: h }),
+    },
+  });
+
+  const handlers = toToolHandlers(agent.tools);
+  assertEquals(handlers.size, 1);
+  const th = handlers.get("greet");
+  assert(th !== undefined);
+  assertEquals(th.schema, schema);
+  assertEquals(th.handler, h);
+});
+
+Deno.test("toToolHandlers - empty when no tools", () => {
+  const agent = defineAgent({ name: "Test" });
+  const handlers = toToolHandlers(agent.tools);
+  assertEquals(handlers.size, 0);
 });

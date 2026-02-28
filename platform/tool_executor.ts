@@ -1,5 +1,5 @@
-import { getLogger } from "../sdk/logger.ts";
-import type { ToolContext, ToolHandler } from "../sdk/agent.ts";
+import { getLogger } from "../_utils/logger.ts";
+import type { ToolContext, ToolDef, ToolHandler } from "../sdk/agent.ts";
 
 const log = getLogger("tool-executor");
 const TOOL_HANDLER_TIMEOUT = 30_000;
@@ -56,4 +56,18 @@ export function createToolExecutor(
     if (!tool) return Promise.resolve(`Error: Unknown tool "${name}"`);
     return executeToolCall(name, args, tool, secrets);
   };
+}
+
+/** Convert an AgentDef's tools record to a Map<string, ToolHandler> for ToolExecutor. */
+export function toToolHandlers(
+  tools: Readonly<Record<string, ToolDef>>,
+): Map<string, ToolHandler> {
+  const handlers = new Map<string, ToolHandler>();
+  for (const [name, def] of Object.entries(tools)) {
+    handlers.set(name, {
+      schema: def.parameters,
+      handler: def.handler as ToolHandler["handler"],
+    });
+  }
+  return handlers;
 }

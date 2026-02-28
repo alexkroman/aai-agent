@@ -4,7 +4,7 @@ import { executeTurn, type TurnContext } from "./turn_handler.ts";
 import { createMockLLMResponse } from "./_test_utils.ts";
 import type { ChatMessage, LLMResponse } from "./types.ts";
 import type { CallLLMOptions } from "./llm.ts";
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 
 const noopLogger = getLogger("test-turn");
 

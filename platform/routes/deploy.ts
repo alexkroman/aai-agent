@@ -1,7 +1,7 @@
 import { Hono } from "@hono/hono";
 import { HTTPException } from "@hono/hono/http-exception";
 import { loadPlatformConfig } from "../config.ts";
-import { getLogger } from "../../sdk/logger.ts";
+import { getLogger } from "../../_utils/logger.ts";
 import type { AgentInfo, AgentSlot } from "../worker_pool.ts";
 import { setAgent as kvSetAgent } from "../kv_store.ts";
 

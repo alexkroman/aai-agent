@@ -2,7 +2,7 @@ import { deadline } from "@std/async/deadline";
 import { ERR_INTERNAL } from "./errors.ts";
 
 const STT_CONNECTION_TIMEOUT = 10_000;
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import { type STTConfig, SttMessageSchema } from "./types.ts";
 
 const log = getLogger("stt");

@@ -2,7 +2,7 @@ import type { Hono } from "@hono/hono";
 import { compress } from "@hono/hono/compress";
 import { cors } from "@hono/hono/cors";
 import { HTTPException } from "@hono/hono/http-exception";
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 
 const log = getLogger("middleware");
 

@@ -1,7 +1,7 @@
 import { toFileUrl } from "@std/path";
 import * as Comlink from "comlink";
 import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import { getBuiltinToolSchemas } from "./builtin_tools.ts";
 import { deadline } from "@std/async/deadline";
 import type { ExecuteTool } from "./tool_executor.ts";

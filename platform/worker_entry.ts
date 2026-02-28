@@ -1,6 +1,7 @@
 import * as Comlink from "comlink";
 import { agentToolsToSchemas } from "./protocol.ts";
-import { type AgentDef, toToolHandlers } from "../sdk/agent.ts";
+import type { AgentDef } from "../sdk/agent.ts";
+import { toToolHandlers } from "./tool_executor.ts";
 import type { AgentConfig, ToolSchema } from "./types.ts";
 
 const TOOL_HANDLER_TIMEOUT = 30_000;

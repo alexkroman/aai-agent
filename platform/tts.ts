@@ -1,4 +1,4 @@
-import { getLogger } from "../sdk/logger.ts";
+import { getLogger } from "../_utils/logger.ts";
 import type { TTSConfig } from "./types.ts";
 
 const log = getLogger("tts");

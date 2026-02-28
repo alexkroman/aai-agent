@@ -1,6 +1,11 @@
 /** @module @aai/platform */
 
-export { createAgentApp, type ServerHandlerOptions } from "./server.ts";
+export {
+  createAgentApp,
+  routes,
+  serve,
+  type ServerHandlerOptions,
+} from "./server.ts";
 export { createOrchestrator } from "./orchestrator.ts";
 export { loadPlatformConfig, type PlatformConfig } from "./config.ts";
 export {
