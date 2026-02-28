@@ -1,0 +1,22 @@
+app = 'voice-agent-api'
+primary_region = 'sjc'
+
+[build]
+
+[env]
+  PORT = "80"
+  CLIENT_DIR = "/app/dist/client"
+
+[processes]
+  app = "deno run --allow-net --allow-read --allow-env agents/code-interpreter/agent.ts"
+
+[http_service]
+  internal_port = 80
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1

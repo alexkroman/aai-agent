@@ -1,0 +1,59 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-all scripts/dev.ts",
+    "serve": "deno run --allow-all --unstable-worker-options main.ts",
+    "start": "deno run --allow-net --allow-read --allow-env scripts/serve-agent.ts",
+    "build:client": "deno run --allow-all scripts/build-client.ts",
+    "test": "deno test --allow-net --allow-read --allow-env",
+    "check": "deno check platform/**/*.ts sdk/**/*.ts ui/**/*.ts ui/**/*.tsx agents/**/*.ts main.ts && deno lint && deno fmt --check && deno test --allow-net --allow-read --allow-env"
+  },
+  "imports": {
+    "@std/testing": "jsr:@std/testing@^1",
+    "@std/expect": "jsr:@std/expect@^1",
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/path": "jsr:@std/path@^1",
+    "@std/dotenv": "jsr:@std/dotenv@*",
+    "zod": "npm:zod@^3.24",
+    "@hono/hono": "jsr:@hono/hono@^4",
+    "@pikisoft/duckduckgo-search": "jsr:@pikisoft/duckduckgo-search@*",
+    "esbuild": "npm:esbuild@^0.27",
+    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11",
+    "preact": "npm:preact@^10",
+    "preact/hooks": "npm:preact@^10/hooks"
+  },
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.ns", "deno.window", "dom", "dom.iterable", "esnext"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  },
+  "test": {
+    "include": [
+      "sdk/__tests__/",
+      "agents/"
+    ]
+  },
+  "fmt": {
+    "include": [
+      "platform/",
+      "sdk/",
+      "ui/",
+      "scripts/",
+      "agents/",
+      "main.ts",
+      "mod.ts"
+    ]
+  },
+  "lint": {
+    "include": [
+      "platform/",
+      "sdk/",
+      "ui/",
+      "scripts/",
+      "agents/",
+      "main.ts",
+      "mod.ts"
+    ]
+  }
+}

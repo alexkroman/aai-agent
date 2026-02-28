@@ -4,8 +4,8 @@ node_modules/
 # Build output
 dist/
 
-# Example lockfiles (use platform/package-lock.json only)
-examples/*/package-lock.json
+# Agent secrets
+agents/*/.env
 
 # Environment and secrets
 .env
