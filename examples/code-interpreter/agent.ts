@@ -1,8 +1,8 @@
-import { defineAgent, tool, z } from "@aai/sdk";
+import { Agent, tool, z } from "@aai/sdk";
 
 const TIMEOUT_MS = 5_000;
 
-export default defineAgent({
+export default new Agent({
   name: "Coda",
   instructions:
     `You are Coda, a problem-solving assistant who answers questions by writing and running JavaScript code.

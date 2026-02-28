@@ -1,6 +1,147 @@
-import { defineAgent, tool, z } from "@aai/sdk";
+import { Agent, tool, z } from "@aai/sdk";
 
-export default defineAgent({
+// Safe expression evaluator — recursive descent, no eval()
+export function evaluate(input: string): number {
+  const s = input.replace(/\s/g, "");
+  let pos = 0;
+
+  const funcs: Record<string, (n: number) => number> = {
+    sqrt: Math.sqrt,
+    sin: Math.sin,
+    cos: Math.cos,
+    tan: Math.tan,
+    abs: Math.abs,
+    round: Math.round,
+    floor: Math.floor,
+    ceil: Math.ceil,
+    log: Math.log,
+    log10: Math.log10,
+  };
+  const consts: Record<string, number> = { PI: Math.PI, E: Math.E };
+
+  function parseExpr(): number {
+    let left = parseTerm();
+    while (s[pos] === "+" || s[pos] === "-") {
+      const op = s[pos++];
+      left = op === "+" ? left + parseTerm() : left - parseTerm();
+    }
+    return left;
+  }
+
+  function parseTerm(): number {
+    let left = parsePower();
+    while (
+      (s[pos] === "*" && s[pos + 1] !== "*") ||
+      s[pos] === "/" ||
+      s[pos] === "%"
+    ) {
+      const op = s[pos++];
+      const right = parsePower();
+      left = op === "*"
+        ? left * right
+        : op === "/"
+        ? left / right
+        : left % right;
+    }
+    return left;
+  }
+
+  function parsePower(): number {
+    const base = parseUnary();
+    if (s[pos] === "*" && s[pos + 1] === "*") {
+      pos += 2;
+      return base ** parsePower(); // right-associative
+    }
+    return base;
+  }
+
+  function parseUnary(): number {
+    if (s[pos] === "-") {
+      pos++;
+      return -parseAtom();
+    }
+    if (s[pos] === "+") pos++;
+    return parseAtom();
+  }
+
+  function parseAtom(): number {
+    if (s[pos] === "(") {
+      pos++;
+      const val = parseExpr();
+      if (s[pos] !== ")") throw new Error("Missing ')'");
+      pos++;
+      return val;
+    }
+
+    // Named identifier — handles both "sqrt(...)" and "Math.sqrt(...)"
+    const nameMatch = s.slice(pos).match(/^(?:Math\.)?([a-zA-Z_]\w*)/);
+    if (nameMatch) {
+      pos += nameMatch[0].length;
+      const key = nameMatch[1];
+      if (Object.hasOwn(consts, key)) return consts[key];
+      if (Object.hasOwn(funcs, key)) {
+        if (s[pos] !== "(") throw new Error(`Expected '(' after ${key}`);
+        pos++;
+        const arg = parseExpr();
+        if (s[pos] !== ")") throw new Error("Missing ')'");
+        pos++;
+        return funcs[key](arg);
+      }
+      throw new Error(`Unknown: ${key}`);
+    }
+
+    // Number literal
+    const numMatch = s.slice(pos).match(/^\d+\.?\d*([eE][+-]?\d+)?/);
+    if (numMatch) {
+      pos += numMatch[0].length;
+      return parseFloat(numMatch[0]);
+    }
+
+    throw new Error(`Unexpected: '${s[pos] ?? "end of input"}'`);
+  }
+
+  const result = parseExpr();
+  if (pos < s.length) throw new Error(`Unexpected: '${s[pos]}'`);
+  return result;
+}
+
+// Unit conversion factors normalized to a base per category
+const factors: Record<string, number> = {
+  m: 1,
+  ft: 0.3048,
+  in: 0.0254,
+  cm: 0.01,
+  km: 1000,
+  mi: 1609.344,
+  yd: 0.9144,
+  g: 1,
+  kg: 1000,
+  lb: 453.592,
+  oz: 28.3495,
+  mg: 0.001,
+  L: 1,
+  gal: 3.78541,
+  ml: 0.001,
+  cup: 0.236588,
+  fl_oz: 0.0295735,
+};
+
+const temps = new Set(["C", "F", "K"]);
+
+export function convertTemp(value: number, from: string, to: string): number {
+  const c = from === "F"
+    ? ((value - 32) * 5) / 9
+    : from === "K"
+    ? value - 273.15
+    : value;
+  return to === "F" ? (c * 9) / 5 + 32 : to === "K" ? c + 273.15 : c;
+}
+
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+export default new Agent({
   name: "Math Buddy",
   instructions:
     `You are Math Buddy, a friendly math assistant. You help with calculations,
@@ -14,118 +155,86 @@ When doing multi-step math, show your work briefly.`,
   tools: {
     calculate: tool({
       description:
-        "Evaluate a mathematical expression. Supports +, -, *, /, **, %, parentheses, and Math functions like sqrt, sin, cos, abs, round, floor, ceil, log, PI, E.",
+        "Evaluate a mathematical expression. Supports +, -, *, /, **, %, parentheses, and functions: sqrt, sin, cos, tan, abs, round, floor, ceil, log, PI, E.",
       parameters: z.object({
         expression: z
           .string()
-          .describe(
-            "Math expression to evaluate, e.g. '(12 + 8) * 3' or 'Math.sqrt(144)'",
-          ),
+          .describe("Math expression, e.g. '(12 + 8) * 3' or 'sqrt(144)'"),
       }),
       handler: ({ expression }) => {
-        if (
-          !/^[\d\s+\-*/().%,eE]+$/.test(expression.replace(/Math\.\w+/g, ""))
-        ) {
-          return { error: "Expression contains invalid characters" };
+        try {
+          const result = evaluate(expression);
+          if (!isFinite(result)) {
+            return { error: "Result is not a finite number" };
+          }
+          return { expression, result };
+        } catch (e) {
+          return { error: (e as Error).message };
         }
-        const fn = new Function(`"use strict"; return (${expression})`);
-        const result = fn();
-        if (typeof result !== "number" || !isFinite(result)) {
-          return { error: "Expression did not produce a valid number" };
-        }
-        return { expression, result };
       },
     }),
     convert_units: tool({
       description:
-        "Convert a value between common units. Supports length (m/ft/in/cm/km/mi), weight (kg/lb/oz/g), temperature (C/F/K), and volume (L/gal/ml/cup).",
+        "Convert between common units. Length (m/ft/in/cm/km/mi/yd), weight (kg/lb/oz/g/mg), temperature (C/F/K), volume (L/gal/ml/cup/fl_oz).",
       parameters: z.object({
         value: z.number().describe("Numeric value to convert"),
-        from: z.string().describe("Source unit (e.g. 'km', 'lb', 'F')"),
-        to: z.string().describe("Target unit (e.g. 'mi', 'kg', 'C')"),
+        from: z.string().describe("Source unit, e.g. 'km'"),
+        to: z.string().describe("Target unit, e.g. 'mi'"),
       }),
       handler: ({ value, from, to }) => {
-        const conversions: Record<string, number> = {
-          m: 1,
-          ft: 0.3048,
-          in: 0.0254,
-          cm: 0.01,
-          km: 1000,
-          mi: 1609.344,
-          yd: 0.9144,
-          g: 1,
-          kg: 1000,
-          lb: 453.592,
-          oz: 28.3495,
-          mg: 0.001,
-          L: 1,
-          gal: 3.78541,
-          ml: 0.001,
-          cup: 0.236588,
-          fl_oz: 0.0295735,
-        };
-
-        const temps = ["C", "F", "K"];
-        if (temps.includes(from) && temps.includes(to)) {
-          let celsius = value;
-          if (from === "F") celsius = ((value - 32) * 5) / 9;
-          if (from === "K") celsius = value - 273.15;
-          let result = celsius;
-          if (to === "F") result = (celsius * 9) / 5 + 32;
-          if (to === "K") result = celsius + 273.15;
+        if (temps.has(from) && temps.has(to)) {
           return {
             value,
             from,
             to,
-            result: Math.round(result * 1000) / 1000,
+            result: round3(convertTemp(value, from, to)),
           };
         }
-
-        const fromFactor = conversions[from];
-        const toFactor = conversions[to];
-        if (!fromFactor || !toFactor) {
-          return { error: `Unknown unit: ${!fromFactor ? from : to}` };
-        }
-        const baseValue = value * fromFactor;
-        const result = baseValue / toFactor;
+        if (!factors[from]) return { error: `Unknown unit: ${from}` };
+        if (!factors[to]) return { error: `Unknown unit: ${to}` };
         return {
           value,
           from,
           to,
-          result: Math.round(result * 1000) / 1000,
+          result: round3((value * factors[from]) / factors[to]),
         };
       },
     }),
     roll_dice: tool({
-      description:
-        "Roll one or more dice. Specify the number of dice and sides per die.",
+      description: "Roll one or more dice with a given number of sides.",
       parameters: z.object({
-        count: z.number().describe("Number of dice to roll (default 1)"),
-        sides: z.number().describe("Number of sides per die (default 6)"),
+        count: z.number().int().min(1).max(100).default(1).describe(
+          "Number of dice",
+        ),
+        sides: z.number().int().min(2).max(1000).default(6).describe(
+          "Sides per die",
+        ),
       }),
       handler: ({ count, sides }) => {
-        const c = Math.min(Math.max(Math.round(count ?? 1), 1), 100);
-        const s = Math.min(Math.max(Math.round(sides ?? 6), 2), 1000);
-        const rolls: number[] = [];
-        for (let i = 0; i < c; i++) {
-          rolls.push(Math.floor(Math.random() * s) + 1);
-        }
-        const total = rolls.reduce((a, b) => a + b, 0);
-        return { dice: `${c}d${s}`, rolls, total };
+        const rolls = Array.from(
+          { length: count },
+          () => Math.floor(Math.random() * sides) + 1,
+        );
+        return {
+          dice: `${count}d${sides}`,
+          rolls,
+          total: rolls.reduce((a, b) => a + b, 0),
+        };
       },
     }),
     random_number: tool({
       description: "Generate a random integer between min and max (inclusive).",
       parameters: z.object({
-        min: z.number().describe("Minimum value (default 1)"),
-        max: z.number().describe("Maximum value (default 100)"),
+        min: z.number().int().default(1).describe("Minimum value"),
+        max: z.number().int().default(100).describe("Maximum value"),
       }),
       handler: ({ min, max }) => {
-        const lo = Math.round(min ?? 1);
-        const hi = Math.round(max ?? 100);
-        if (lo > hi) return { error: "min must be less than or equal to max" };
-        const result = Math.floor(Math.random() * (hi - lo + 1)) + lo;
-        return { min: lo, max: hi, result };
+        if (min > max) return { error: "min must be ≤ max" };
+        return {
+          min,
+          max,
+          result: Math.floor(Math.random() * (max - min + 1)) + min,
+        };
       },
     }),
   },

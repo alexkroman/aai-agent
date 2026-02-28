@@ -23,8 +23,8 @@ export const workletTextPlugin: Plugin = {
   },
 };
 import type { AgentEntry } from "./_discover.ts";
-import { agentToolsToSchemas } from "../platform/protocol.ts";
-import type { ToolSchema } from "../platform/types.ts";
+import { agentToolsToSchemas } from "../server/protocol.ts";
+import type { ToolSchema } from "../server/types.ts";
 
 const configPath = resolve("deno.json");
 const zodShimPath = resolve("cli/_zod_shim.ts");
@@ -60,7 +60,7 @@ export async function bundleAgent(
   // Worker — zod aliased to shim
   const tempEntry = resolve(outDir, "_worker_entry.ts");
   const agentAbsolute = resolve(agent.entryPoint);
-  const workerEntryAbsolute = resolve("platform/worker_entry.ts");
+  const workerEntryAbsolute = resolve("server/worker_entry.ts");
 
   await Deno.writeTextFile(
     tempEntry,
@@ -93,7 +93,6 @@ export async function bundleAgent(
     metafile: true,
     external: [
       "*.wasm",
-      "*/server.ts",
       "*/config.ts",
       "@hono/*",
       "@std/dotenv",

@@ -1,7 +1,7 @@
 // Orchestrator entry point.
 // Loads root .env, starts the deploy-based orchestrator, scans bundleDir.
 
-import { createOrchestrator } from "./platform/orchestrator.ts";
+import { createOrchestrator } from "./server/orchestrator.ts";
 
 // Best-effort .env loading
 try {

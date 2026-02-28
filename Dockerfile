@@ -7,8 +7,7 @@ COPY deno.json deno.lock* ./
 RUN deno install
 
 # Copy source
-COPY platform/ platform/
-COPY sdk/ sdk/
+COPY server/ server/
 COPY ui/ ui/
 COPY cli/ cli/
 COPY mod.ts main.ts ./

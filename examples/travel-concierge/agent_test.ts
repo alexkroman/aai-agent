@@ -1,24 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
+import {
+  stubFetch,
+  stubFetchError,
+  testCtx,
+} from "../../server/_tool_test_utils.ts";
 import agent from "./agent.ts";
 
-/** Create a mock ctx.fetch that returns the given data as JSON. */
-function mockFetch(data: unknown): typeof globalThis.fetch {
-  return (() =>
-    Promise.resolve(
-      new Response(JSON.stringify(data), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )) as unknown as typeof globalThis.fetch;
-}
-
-/** Create a mock ctx.fetch that returns an HTTP error. */
-function mockFetchError(status: number, body: string): typeof globalThis.fetch {
-  return (() =>
-    Promise.resolve(
-      new Response(body, { status }),
-    )) as unknown as typeof globalThis.fetch;
-}
+// ── Config ───────────────────────────────────────────────────────
 
 Deno.test("travel-concierge - has correct config", () => {
   assertEquals(agent.name, "Aria");
@@ -35,44 +23,30 @@ Deno.test("travel-concierge - has convert_currency tool", () => {
   assert("convert_currency" in agent.tools);
 });
 
-Deno.test("travel-concierge - weather forecast for valid city", async () => {
-  let _callCount = 0;
-  const mockCtxFetch = (() => {
-    _callCount++;
-    if (_callCount === 1) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            results: [
-              {
-                latitude: 48.8566,
-                longitude: 2.3522,
-                name: "Paris",
-                country: "France",
-              },
-            ],
-          }),
-        ),
-      );
-    }
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          daily: {
-            time: ["2024-01-01", "2024-01-02"],
-            temperature_2m_max: [10, 12],
-            temperature_2m_min: [2, 4],
-            precipitation_sum: [0, 5],
-            weathercode: [0, 61],
-          },
-        }),
-      ),
-    );
-  }) as unknown as typeof globalThis.fetch;
+// ── Weather ──────────────────────────────────────────────────────
 
+Deno.test("travel-concierge - weather forecast for valid city", async () => {
   const result = (await agent.tools.get_weather_forecast.handler(
     { city: "Paris" },
-    { secrets: {}, fetch: mockCtxFetch },
+    testCtx(stubFetch({
+      "geocoding-api": {
+        results: [{
+          latitude: 48.8566,
+          longitude: 2.3522,
+          name: "Paris",
+          country: "France",
+        }],
+      },
+      "api.open-meteo": {
+        daily: {
+          time: ["2024-01-01", "2024-01-02"],
+          temperature_2m_max: [10, 12],
+          temperature_2m_min: [2, 4],
+          precipitation_sum: [0, 5],
+          weathercode: [0, 61],
+        },
+      },
+    })),
   )) as Record<string, unknown>;
 
   assertEquals(result.city, "Paris");
@@ -88,104 +62,77 @@ Deno.test("travel-concierge - weather forecast for valid city", async () => {
 });
 
 Deno.test("travel-concierge - weather city not found", async () => {
-  const ctx = { secrets: {}, fetch: mockFetch({ results: [] }) };
   const result = (await agent.tools.get_weather_forecast.handler(
     { city: "Nonexistentville" },
-    ctx,
+    testCtx(stubFetch({ "geocoding-api": { results: [] } })),
   )) as Record<string, unknown>;
   assertEquals(result.error, "City not found: Nonexistentville");
 });
 
 Deno.test("travel-concierge - weather geocoding API fails", async () => {
-  const ctx = { secrets: {}, fetch: mockFetchError(500, "Server Error") };
   const result = (await agent.tools.get_weather_forecast.handler(
     { city: "Paris" },
-    ctx,
+    testCtx(stubFetchError(500, "Server Error")),
   )) as Record<string, unknown>;
   assert(result.error !== undefined);
 });
 
 Deno.test("travel-concierge - weather API fails", async () => {
-  let _callCount = 0;
-  const mockCtxFetch = (() => {
-    _callCount++;
-    if (_callCount === 1) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            results: [
-              {
-                latitude: 48.8,
-                longitude: 2.3,
-                name: "Paris",
-                country: "France",
-              },
-            ],
-          }),
-        ),
-      );
+  const fetch = ((input: string | URL) => {
+    const url = String(input);
+    if (url.includes("geocoding-api")) {
+      return Promise.resolve(Response.json({
+        results: [{
+          latitude: 48.8,
+          longitude: 2.3,
+          name: "Paris",
+          country: "France",
+        }],
+      }));
     }
     return Promise.resolve(new Response("Server Error", { status: 500 }));
-  }) as unknown as typeof globalThis.fetch;
+  }) as typeof globalThis.fetch;
 
   const result = (await agent.tools.get_weather_forecast.handler(
     { city: "Paris" },
-    { secrets: {}, fetch: mockCtxFetch },
+    testCtx(fetch),
   )) as Record<string, unknown>;
   assert(result.error !== undefined);
 });
 
 Deno.test("travel-concierge - unknown weather codes", async () => {
-  let _callCount = 0;
-  const mockCtxFetch = (() => {
-    _callCount++;
-    if (_callCount === 1) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            results: [
-              {
-                latitude: 48.8,
-                longitude: 2.3,
-                name: "Paris",
-                country: "France",
-              },
-            ],
-          }),
-        ),
-      );
-    }
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          daily: {
-            time: ["2024-01-01"],
-            temperature_2m_max: [10],
-            temperature_2m_min: [2],
-            precipitation_sum: [0],
-            weathercode: [999],
-          },
-        }),
-      ),
-    );
-  }) as unknown as typeof globalThis.fetch;
-
   const result = (await agent.tools.get_weather_forecast.handler(
     { city: "Paris" },
-    { secrets: {}, fetch: mockCtxFetch },
+    testCtx(stubFetch({
+      "geocoding-api": {
+        results: [{
+          latitude: 48.8,
+          longitude: 2.3,
+          name: "Paris",
+          country: "France",
+        }],
+      },
+      "api.open-meteo": {
+        daily: {
+          time: ["2024-01-01"],
+          temperature_2m_max: [10],
+          temperature_2m_min: [2],
+          precipitation_sum: [0],
+          weathercode: [999],
+        },
+      },
+    })),
   )) as Record<string, unknown>;
   const forecast = result.forecast as Record<string, unknown>[];
   assertEquals(forecast[0].condition, "Unknown");
 });
 
+// ── Currency ─────────────────────────────────────────────────────
+
 Deno.test("travel-concierge - convert_currency success", async () => {
-  const ctx = {
-    secrets: {},
-    fetch: mockFetch({ rates: { EUR: 0.92, GBP: 0.79 } }),
-  };
   const result = (await agent.tools.convert_currency.handler(
     { amount: 100, from: "usd", to: "eur" },
-    ctx,
+    testCtx(stubFetch({ "er-api": { rates: { EUR: 0.92, GBP: 0.79 } } })),
   )) as Record<string, unknown>;
   assertEquals(result.amount, 100);
   assertEquals(result.from, "USD");
@@ -195,22 +142,17 @@ Deno.test("travel-concierge - convert_currency success", async () => {
 });
 
 Deno.test("travel-concierge - convert_currency unknown target", async () => {
-  const ctx = {
-    secrets: {},
-    fetch: mockFetch({ rates: { EUR: 0.92 } }),
-  };
   const result = (await agent.tools.convert_currency.handler(
     { amount: 100, from: "USD", to: "XYZ" },
-    ctx,
+    testCtx(stubFetch({ "er-api": { rates: { EUR: 0.92 } } })),
   )) as Record<string, unknown>;
   assertEquals(result.error, "Unknown currency code: XYZ");
 });
 
 Deno.test("travel-concierge - convert_currency API failure", async () => {
-  const ctx = { secrets: {}, fetch: mockFetchError(500, "Server Error") };
   const result = (await agent.tools.convert_currency.handler(
     { amount: 100, from: "USD", to: "EUR" },
-    ctx,
+    testCtx(stubFetchError(500, "Server Error")),
   )) as Record<string, unknown>;
   assert(result.error !== undefined);
 });

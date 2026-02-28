@@ -1,25 +1,11 @@
-// Single public API for @aai/ui.
-//
-// Re-exports Preact essentials and goober so custom UIs only need
-// a single import: `import { css, useEffect, mount, ... } from "@aai/ui"`.
+// Public API for @aai/ui.
 
 import { h } from "preact";
 import { setup } from "goober";
 
 setup(h);
 
-// Preact re-exports (so users don't need preact as a direct dependency)
-export { Fragment, h } from "preact";
-export {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from "preact/hooks";
-
-// Goober re-export
+// CSS-in-JS (goober, pre-configured for Preact's h())
 export { css, keyframes, styled } from "goober";
 
 // Session
@@ -28,9 +14,12 @@ export type { SessionEventMap } from "./session.ts";
 export type { AgentOptions, AgentState, Message } from "./types.ts";
 
 // Signals + context
-export { createSessionSignals } from "./signals.ts";
-export type { SessionSignals } from "./signals.ts";
-export { SessionProvider, useSession } from "./context.tsx";
+export {
+  createSessionSignals,
+  SessionProvider,
+  useSession,
+} from "./signals.tsx";
+export type { SessionSignals } from "./signals.tsx";
 
 // Theme
 export { applyTheme, darkTheme, defaultTheme } from "./theme.ts";
@@ -38,11 +27,14 @@ export type { Theme } from "./theme.ts";
 
 // Mount helper
 export { mount } from "./mount.tsx";
+export type { MountHandle, MountOptions } from "./mount.tsx";
 
-// Components (cherry-pick for custom layouts)
-export { App } from "./components/app.tsx";
-export { ChatView } from "./components/chat_view.tsx";
-export { MessageBubble } from "./components/message_bubble.tsx";
-export { StateIndicator } from "./components/state_indicator.tsx";
-export { ErrorBanner } from "./components/error_banner.tsx";
-export { Transcript } from "./components/transcript.tsx";
+// Components
+export {
+  App,
+  ChatView,
+  ErrorBanner,
+  MessageBubble,
+  StateIndicator,
+  Transcript,
+} from "./components.tsx";

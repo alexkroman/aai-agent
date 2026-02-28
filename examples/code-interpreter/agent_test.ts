@@ -1,7 +1,8 @@
 import { assertEquals } from "@std/assert";
+import { testCtx } from "../../server/_tool_test_utils.ts";
 import agent from "./agent.ts";
 
-const ctx = { secrets: {}, fetch: globalThis.fetch };
+const ctx = testCtx();
 
 Deno.test("code-interpreter - has correct config", () => {
   assertEquals(agent.name, "Coda");
@@ -10,7 +11,9 @@ Deno.test("code-interpreter - has correct config", () => {
 });
 
 Deno.test("code-interpreter - evaluates an expression", async () => {
-  const result = await agent.tools.run_code.handler({ code: "console.log(2 + 3)" }, ctx);
+  const result = await agent.tools.run_code.handler({
+    code: "console.log(2 + 3)",
+  }, ctx);
   assertEquals(result, "5");
 });
 
@@ -31,6 +34,9 @@ Deno.test("code-interpreter - returns error on bad code", async () => {
 });
 
 Deno.test("code-interpreter - handles no output", async () => {
-  const result = await agent.tools.run_code.handler({ code: "const x = 1" }, ctx);
+  const result = await agent.tools.run_code.handler(
+    { code: "const x = 1" },
+    ctx,
+  );
   assertEquals(result, "Code ran successfully (no output)");
 });

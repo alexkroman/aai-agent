@@ -1,5 +1,4 @@
-// Custom dark-mode UI for Night Owl.
-
+import { useEffect, useRef } from "preact/hooks";
 import {
   css,
   darkTheme,
@@ -8,116 +7,95 @@ import {
   mount,
   StateIndicator,
   Transcript,
-  useEffect,
-  useRef,
   useSession,
 } from "@aai/ui";
 
-const heroClass = css`
+const hero = css`
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
   gap: 24px;
+
+  & h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 0;
+  }
+  & p {
+    color: var(--aai-text-muted);
+    font-size: 14px;
+    margin: 0;
+  }
+
+  & button {
+    margin-top: 16px;
+    padding: 14px 36px;
+    background: var(--aai-primary);
+    color: var(--aai-text);
+    border: none;
+    border-radius: var(--aai-radius);
+    font: 500 15px/1 inherit;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
 `;
 
-const heroIconClass = css`
-  font-size: 48px;
-`;
-
-const heroTitleClass = css`
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0;
-`;
-
-const heroSubtitleClass = css`
-  color: var(--aai-text-muted);
-  font-size: 14px;
-  margin: 0;
-`;
-
-const heroStartClass = css`
-  margin-top: 16px;
-  padding: 14px 36px;
-  background: var(--aai-primary);
-  color: var(--aai-text);
-  border: none;
-  border-radius: var(--aai-radius);
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  letter-spacing: 0.5px;
-`;
-
-const containerClass = css`
+const chat = css`
   max-width: 640px;
   margin: 0 auto;
   padding: 24px;
   min-height: 100vh;
-  box-sizing: border-box;
-`;
 
-const headerClass = css`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--aai-surface-light);
-`;
+  & .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--aai-surface-light);
 
-const headerIconClass = css`
-  font-size: 20px;
-`;
+    & span {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    & .status {
+      margin-left: auto;
+    }
+  }
 
-const headerTitleClass = css`
-  font-size: 16px;
-  font-weight: 600;
-`;
+  & .messages {
+    min-height: 300px;
+    max-height: 500px;
+    overflow-y: auto;
+    margin-bottom: 16px;
+    border: 1px solid var(--aai-surface-light);
+    border-radius: var(--aai-radius);
+    padding: 16px;
+    background: var(--aai-surface);
+  }
 
-const headerStatusClass = css`
-  margin-left: auto;
-`;
+  & .controls {
+    display: flex;
+    gap: 8px;
 
-const messagesClass = css`
-  min-height: 300px;
-  max-height: 500px;
-  overflow-y: auto;
-  margin-bottom: 16px;
-  border: 1px solid var(--aai-surface-light);
-  border-radius: var(--aai-radius);
-  padding: 16px;
-  background: var(--aai-surface);
-`;
-
-const controlsClass = css`
-  display: flex;
-  gap: 8px;
-`;
-
-const btnToggleClass = css`
-  padding: 10px 20px;
-  border: none;
-  border-radius: var(--aai-radius);
-  cursor: pointer;
-  font-size: 13px;
-  font-family: inherit;
-  font-weight: 500;
-  color: var(--aai-bg);
-`;
-
-const btnResetClass = css`
-  padding: 10px 20px;
-  border: 1px solid var(--aai-surface-light);
-  border-radius: var(--aai-radius);
-  background: transparent;
-  color: var(--aai-text-muted);
-  cursor: pointer;
-  font-size: 13px;
-  font-family: inherit;
+    & button {
+      padding: 10px 20px;
+      border-radius: var(--aai-radius);
+      font: 500 13px/1 inherit;
+      cursor: pointer;
+    }
+    & .toggle {
+      border: none;
+      color: var(--aai-bg);
+    }
+    & .reset {
+      border: 1px solid var(--aai-surface-light);
+      background: transparent;
+      color: var(--aai-text-muted);
+    }
+  }
 `;
 
 function NightOwl() {
@@ -132,38 +110,36 @@ function NightOwl() {
     toggle,
     reset,
   } = useSession();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.value.length, transcript.value]);
 
   if (!started.value) {
     return (
-      <div class={heroClass}>
-        <div class={heroIconClass}>&#x1F989;</div>
-        <h1 class={heroTitleClass}>Night Owl</h1>
-        <p class={heroSubtitleClass}>your evening companion</p>
-        <button type="button" class={heroStartClass} onClick={start}>
-          Start Conversation
-        </button>
+      <div class={hero}>
+        <div style="font-size:48px">&#x1F989;</div>
+        <h1>Night Owl</h1>
+        <p>your evening companion</p>
+        <button type="button" onClick={start}>Start Conversation</button>
       </div>
     );
   }
 
   return (
-    <div class={containerClass}>
-      <div class={headerClass}>
-        <div class={headerIconClass}>&#x1F989;</div>
-        <span class={headerTitleClass}>Night Owl</span>
-        <div class={headerStatusClass}>
+    <div class={chat}>
+      <div class="header">
+        <div style="font-size:20px">&#x1F989;</div>
+        <span>Night Owl</span>
+        <div class="status">
           <StateIndicator state={state.value} />
         </div>
       </div>
 
       <ErrorBanner error={error.value} />
 
-      <div class={messagesClass}>
+      <div class="messages">
         {messages.value.map((msg, i) => (
           <MessageBubble
             key={i}
@@ -171,13 +147,13 @@ function NightOwl() {
           />
         ))}
         <Transcript text={transcript.value} />
-        <div ref={scrollRef} />
+        <div ref={bottom} />
       </div>
 
-      <div class={controlsClass}>
+      <div class="controls">
         <button
           type="button"
-          class={btnToggleClass}
+          class="toggle"
           style={{
             background: running.value
               ? "var(--aai-state-speaking)"
@@ -187,7 +163,7 @@ function NightOwl() {
         >
           {running.value ? "Stop" : "Resume"}
         </button>
-        <button type="button" class={btnResetClass} onClick={reset}>
+        <button type="button" class="reset" onClick={reset}>
           New Conversation
         </button>
       </div>
@@ -195,4 +171,4 @@ function NightOwl() {
   );
 }
 
-export const VoiceAgent = mount(NightOwl, { theme: darkTheme });
+mount(NightOwl, { theme: darkTheme });

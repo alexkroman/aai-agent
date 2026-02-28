@@ -1,7 +1,8 @@
 import { assert, assertEquals } from "@std/assert";
+import { testCtx } from "../../server/_tool_test_utils.ts";
 import agent from "./agent.ts";
 
-const ctx = { secrets: {}, fetch: globalThis.fetch };
+const ctx = testCtx();
 
 Deno.test("night-owl - has correct config", () => {
   assertEquals(agent.name, "Night Owl");

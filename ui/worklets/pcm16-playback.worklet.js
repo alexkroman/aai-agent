@@ -1,6 +1,6 @@
-// PCM16 playback processor — receives float32 samples and outputs them.
-// Uses a pre-allocated ring buffer, pre-buffering, and fade-out/fade-in
-// to eliminate clicking and popping artifacts.
+// PCM16 playback processor — receives raw PCM16 ArrayBuffers, converts to
+// float32 on the worklet thread, and outputs via a pre-allocated ring buffer
+// with pre-buffering and fade-in/fade-out to eliminate clicking artifacts.
 
 const CAPACITY = 1440000; // ~60s at 24 kHz
 const PRE_BUFFER = 4800; // 200ms at 24 kHz — absorb network jitter
@@ -25,15 +25,19 @@ class PCM16PlaybackProcessor extends AudioWorkletProcessor {
         this._lastSample = 0;
         return;
       }
-      // Copy incoming samples into ring buffer at writePos
-      const incoming = e.data;
-      const len = incoming.length;
+      // Convert PCM16 → float32 on the worklet thread
+      const int16 = new Int16Array(e.data);
+      const len = int16.length;
       const cap = CAPACITY;
       const wp = this._writePos;
       const firstChunk = Math.min(len, cap - wp);
-      this._ring.set(incoming.subarray(0, firstChunk), wp);
+      for (let i = 0; i < firstChunk; i++) {
+        this._ring[wp + i] = int16[i] / 32768;
+      }
       if (firstChunk < len) {
-        this._ring.set(incoming.subarray(firstChunk), 0);
+        for (let i = 0; i < len - firstChunk; i++) {
+          this._ring[i] = int16[firstChunk + i] / 32768;
+        }
       }
       this._writePos = (wp + len) % cap;
     };

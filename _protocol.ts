@@ -1,5 +1,5 @@
 // WebSocket protocol types — the single source of truth for the wire format.
-// Types only, no runtime code. Imported by both platform/ and ui/.
+// Types only, no runtime code. Imported by both server/ and ui/.
 
 // ── Server -> Browser messages ──────────────────────────────────
 

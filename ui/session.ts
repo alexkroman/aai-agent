@@ -1,22 +1,89 @@
 // VoiceSession: WebSocket session management for voice agents.
-// Simplified: no auth/configure — agent is configured server-side.
 
 import type { ErrorMessage, ServerMessage } from "../_protocol.ts";
-
-const DEFAULT_STT_SAMPLE_RATE = 16_000;
-const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
 import {
   type AgentOptions,
   type AgentState,
+  INITIAL_BACKOFF_MS,
+  MAX_BACKOFF_MS,
+  MAX_RECONNECT_ATTEMPTS,
   type Message,
   PING_INTERVAL_MS,
   VALID_TRANSITIONS,
 } from "./types.ts";
 
-import { SessionError, SessionErrorCode } from "./errors.ts";
-import { ReconnectStrategy } from "./reconnect.ts";
-import type { AudioPlayer } from "./audio.ts";
+import type { AudioPlayer, MicCapture } from "./audio.ts";
+
+const DEFAULT_STT_SAMPLE_RATE = 16_000;
+const DEFAULT_TTS_SAMPLE_RATE = 24_000;
+
+// ── Session errors ──────────────────────────────────────────────
+
+export enum SessionErrorCode {
+  AUDIO_SETUP_FAILED = "AUDIO_SETUP_FAILED",
+  SERVER_ERROR = "SERVER_ERROR",
+  MAX_RECONNECTS = "MAX_RECONNECTS",
+}
+
+export class SessionError extends Error {
+  readonly code: SessionErrorCode;
+
+  constructor(code: SessionErrorCode, message: string) {
+    super(message);
+    this.name = "SessionError";
+    this.code = code;
+  }
+}
+
+// ── Reconnection strategy ───────────────────────────────────────
+
+export class ReconnectStrategy {
+  private attempts = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private readonly maxAttempts: number;
+  private readonly maxBackoff: number;
+  private readonly initialBackoff: number;
+
+  constructor(
+    maxAttempts = MAX_RECONNECT_ATTEMPTS,
+    maxBackoff = MAX_BACKOFF_MS,
+    initialBackoff = INITIAL_BACKOFF_MS,
+  ) {
+    this.maxAttempts = maxAttempts;
+    this.maxBackoff = maxBackoff;
+    this.initialBackoff = initialBackoff;
+  }
+
+  get canRetry(): boolean {
+    return this.attempts < this.maxAttempts;
+  }
+
+  schedule(cb: () => void): boolean {
+    if (!this.canRetry) return false;
+    const delay = Math.min(
+      this.initialBackoff * 2 ** this.attempts,
+      this.maxBackoff,
+    );
+    this.attempts++;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      cb();
+    }, delay);
+    return true;
+  }
+
+  cancel(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  reset(): void {
+    this.attempts = 0;
+  }
+}
 
 // ── Typed event helpers ─────────────────────────────────────────
 
@@ -65,7 +132,7 @@ export function parseServerMessage(data: string): ServerMessage | null {
 export class VoiceSession extends EventTarget {
   private ws: WebSocket | null = null;
   private player: AudioPlayer | null = null;
-  private micCleanup: (() => void) | null = null;
+  private mic: MicCapture | null = null;
   private options: AgentOptions;
   private currentState: AgentState = "connecting";
 
@@ -190,15 +257,15 @@ export class VoiceSession extends EventTarget {
             ),
           ])
         )
-          .then(([player, micCleanup]) => {
+          .then(([player, mic]) => {
             this.audioSetupInFlight = false;
             if (this.ws?.readyState !== WebSocket.OPEN) {
               player.close();
-              micCleanup();
+              mic.close();
               return;
             }
             this.player = player;
-            this.micCleanup = micCleanup;
+            this.mic = mic;
             this.ws.send(JSON.stringify({ type: "audio_ready" }));
             this.emit("audioReady");
             this.changeState("listening");
@@ -308,8 +375,8 @@ export class VoiceSession extends EventTarget {
 
   private cleanupAudio(): void {
     this.audioSetupInFlight = false;
-    this.micCleanup?.();
-    this.micCleanup = null;
+    this.mic?.close();
+    this.mic = null;
     this.player?.close();
     this.player = null;
   }

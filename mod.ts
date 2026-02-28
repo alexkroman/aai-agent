@@ -1,21 +1,19 @@
 /** @module @aai/sdk */
 
+export { Agent } from "./server/agent.ts";
+export { tool } from "./server/tool.ts";
 export {
   DEFAULT_GREETING,
   DEFAULT_INSTRUCTIONS,
-  defineAgent,
-  tool,
-} from "./sdk/mod.ts";
+} from "./server/agent_types.ts";
 export type {
-  AgentDef,
-  AgentInput,
+  AgentOptions,
   ToolContext,
   ToolDef,
   ToolHandler,
-} from "./sdk/mod.ts";
+} from "./server/agent_types.ts";
 
-export { routes, serve } from "./platform/server.ts";
-export { toToolHandlers } from "./platform/tool_executor.ts";
+export { toToolHandlers } from "./server/tool_executor.ts";
 
 export { z } from "zod";
 
