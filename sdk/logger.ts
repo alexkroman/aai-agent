@@ -31,6 +31,12 @@ export interface Logger {
   error(msg: string): void;
 }
 
+/** Reset logger to default state (isDev=true, threshold=info). For test cleanup. */
+export function resetLogger(): void {
+  isDev = true;
+  threshold = LOG_LEVELS.info;
+}
+
 export function createLogger(
   name: string,
   meta?: Record<string, string>,

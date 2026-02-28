@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
+import { mapNotNullish } from "@std/collections/map-not-nullish";
 import { createLogger } from "./logger.ts";
 import { zodToJsonSchema } from "./protocol.ts";
 import type { ToolSchema } from "./types.ts";
@@ -11,25 +12,20 @@ import type { ToolSchema } from "./types.ts";
 const log = createLogger("builtin-tools");
 
 /** Lightweight HTML → readable text. No DOM parser needed. */
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   let text = html;
-  // Strip script, style, head
   text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
   text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
   text = text.replace(/<head[\s\S]*?<\/head>/gi, "");
-  // Block elements → newlines
   text = text.replace(/<\/(p|div|h[1-6]|li|tr|blockquote|br\s*\/?)>/gi, "\n");
   text = text.replace(/<br\s*\/?>/gi, "\n");
-  // Strip remaining tags
   text = text.replace(/<[^>]+>/g, "");
-  // Decode common entities
   text = text.replace(/&amp;/g, "&");
   text = text.replace(/&lt;/g, "<");
   text = text.replace(/&gt;/g, ">");
   text = text.replace(/&quot;/g, '"');
   text = text.replace(/&#39;/g, "'");
   text = text.replace(/&nbsp;/g, " ");
-  // Collapse whitespace
   text = text.replace(/[ \t]+/g, " ");
   text = text.replace(/\n[ \t]+/g, "\n");
   text = text.replace(/\n{3,}/g, "\n\n");
@@ -134,14 +130,15 @@ const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
  * Get tool schemas for the requested built-in tools.
  */
 export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {
-  return names
-    .map((name) => BUILTIN_TOOLS[name])
-    .filter(Boolean)
-    .map((tool) => ({
+  return mapNotNullish(names, (name) => {
+    const tool = BUILTIN_TOOLS[name];
+    if (!tool) return null;
+    return {
       name: tool.name,
       description: tool.description,
       parameters: zodToJsonSchema(tool.parameters),
-    }));
+    };
+  });
 }
 
 /**
@@ -161,7 +158,7 @@ export async function executeBuiltinTool(
   }
 
   try {
-    return await tool.execute(args);
+    return await tool.execute(parsed.data as Record<string, unknown>);
   } catch (err) {
     log.error({ err, tool: name }, "Built-in tool execution failed");
     return `Error: ${err instanceof Error ? err.message : String(err)}`;

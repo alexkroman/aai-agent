@@ -36,7 +36,14 @@ export async function startMicCapture(
     type: "application/javascript",
   });
   const blobUrl = URL.createObjectURL(blob);
-  await ctx.audioWorklet.addModule(blobUrl);
+  try {
+    await ctx.audioWorklet.addModule(blobUrl);
+  } catch (err) {
+    URL.revokeObjectURL(blobUrl);
+    stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+    ctx.close().catch(() => {});
+    throw err;
+  }
   URL.revokeObjectURL(blobUrl);
 
   let frameCount = 0;
@@ -86,7 +93,13 @@ export async function createAudioPlayer(
     type: "application/javascript",
   });
   const blobUrl = URL.createObjectURL(blob);
-  await ctx.audioWorklet.addModule(blobUrl);
+  try {
+    await ctx.audioWorklet.addModule(blobUrl);
+  } catch (err) {
+    URL.revokeObjectURL(blobUrl);
+    ctx.close().catch(() => {});
+    throw err;
+  }
   URL.revokeObjectURL(blobUrl);
 
   const worklet = new AudioWorkletNode(ctx, "pcm16-playback");

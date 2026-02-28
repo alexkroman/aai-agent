@@ -1,4 +1,46 @@
-import { Agent, z } from "../../mod.ts";
+import { Agent, fetchJSON, z } from "../../mod.ts";
+
+// ── Response schemas (only validate fields we actually use) ─────
+
+const FdaDrugLabelResponse = z.object({
+  results: z.array(
+    z.object({
+      openfda: z.object({
+        generic_name: z.array(z.string()).optional(),
+        brand_name: z.array(z.string()).optional(),
+        manufacturer_name: z.array(z.string()).optional(),
+      }).passthrough().optional(),
+      purpose: z.array(z.string()).optional(),
+      indications_and_usage: z.array(z.string()).optional(),
+      warnings: z.array(z.string()).optional(),
+      dosage_and_administration: z.array(z.string()).optional(),
+      adverse_reactions: z.array(z.string()).optional(),
+    }).passthrough(),
+  ).optional(),
+}).passthrough();
+
+const RxCuiResponse = z.object({
+  idGroup: z.object({
+    rxnormId: z.array(z.string()).optional(),
+  }).passthrough(),
+}).passthrough();
+
+const RxInteractionResponse = z.object({
+  fullInteractionTypeGroup: z.array(
+    z.object({
+      fullInteractionType: z.array(
+        z.object({
+          interactionPair: z.array(
+            z.object({
+              description: z.string(),
+              severity: z.string(),
+            }).passthrough(),
+          ).optional(),
+        }).passthrough(),
+      ).optional(),
+    }).passthrough(),
+  ).optional(),
+}).passthrough();
 
 const agent = new Agent({
   name: "Dr. Sage",
@@ -15,54 +57,18 @@ Rules:
 - Use plain language first, then mention the medical term
 - Keep responses concise — this is a voice conversation
 - If symptoms sound urgent (chest pain, difficulty breathing, sudden numbness),
-  advise calling emergency services immediately`,
+  advise calling emergency services immediately
+- Use web_search to look up current symptom information when needed`,
   greeting:
     "Hi, I'm Dr. Sage! I can help you look up symptoms, medication info, drug interactions, and health metrics. Just remember — I'm not a real doctor, so always check with your healthcare provider. What can I help with?",
   voice: "tara",
   prompt:
     "Transcribe medical and health terms accurately including drug names like acetaminophen, ibuprofen, amoxicillin, metformin, lisinopril, atorvastatin, omeprazole, and levothyroxine. Listen for dosages like 500 milligrams, 10 milliliters, and 200 micrograms. Recognize symptoms, body parts, and medical terms like hypertension, tachycardia, dyspnea, edema, cholesterol, and gastrointestinal.",
+  builtinTools: ["web_search"],
 })
-  .tool("check_symptoms", {
-    description:
-      "Look up possible conditions matching a set of symptoms. Returns conditions ranked by likelihood.",
-    parameters: z.object({
-      symptoms: z
-        .string()
-        .describe(
-          "Comma-separated symptoms (e.g. 'headache, fever, sore throat')",
-        ),
-      age: z
-        .number()
-        .optional()
-        .describe("Patient age for more accurate results"),
-      sex: z
-        .string()
-        .optional()
-        .describe(
-          "Patient sex ('male' or 'female') for more accurate results",
-        ),
-    }),
-    handler: async ({ symptoms, age, sex }, ctx) => {
-      const params = new URLSearchParams({ symptoms });
-      if (age !== undefined) params.set("age", String(age));
-      if (sex) params.set("sex", sex);
-      const resp = await ctx.fetch(
-        `https://api.example.com/symptoms/check?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.secrets.HEALTH_API_KEY}`,
-          },
-        },
-      );
-      if (!resp.ok) {
-        return { error: `Symptom lookup failed: ${resp.statusText}` };
-      }
-      return resp.json();
-    },
-  })
   .tool("drug_info", {
     description:
-      "Look up detailed information about a medication including dosage, side effects, warnings, and what it's prescribed for.",
+      "Look up detailed information about a medication from the FDA database including usage, warnings, and side effects.",
     parameters: z.object({
       name: z
         .string()
@@ -71,21 +77,32 @@ Rules:
         ),
     }),
     handler: async ({ name }, ctx) => {
-      const resp = await ctx.fetch(
-        `https://api.example.com/drugs/${encodeURIComponent(name)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.secrets.HEALTH_API_KEY}`,
-          },
-        },
+      const encoded = encodeURIComponent(name.toLowerCase());
+      const data = await fetchJSON(
+        ctx.fetch,
+        `https://api.fda.gov/drug/label.json?search=openfda.generic_name:"${encoded}"+openfda.brand_name:"${encoded}"&limit=1`,
+        undefined,
+        FdaDrugLabelResponse,
       );
-      if (!resp.ok) return { error: `Drug lookup failed: ${resp.statusText}` };
-      return resp.json();
+      if ("error" in data) return { error: `Drug not found: ${name}` };
+      const results = data.results;
+      if (!results?.length) return { error: `No FDA data found for: ${name}` };
+      const drug = results[0];
+      const openfda = drug.openfda ?? {};
+      return {
+        name: openfda.generic_name?.[0] ?? name,
+        brand_names: openfda.brand_name ?? [],
+        purpose: str(drug.purpose) ?? str(drug.indications_and_usage) ?? "N/A",
+        warnings: str(drug.warnings)?.slice(0, 500) ?? "N/A",
+        dosage: str(drug.dosage_and_administration)?.slice(0, 500) ?? "N/A",
+        side_effects: str(drug.adverse_reactions)?.slice(0, 500) ?? "N/A",
+        manufacturer: openfda.manufacturer_name?.[0] ?? "N/A",
+      };
     },
   })
   .tool("check_interaction", {
     description:
-      "Check for known interactions between two or more medications.",
+      "Check for known interactions between two or more medications using the NIH database.",
     parameters: z.object({
       drugs: z
         .string()
@@ -94,20 +111,54 @@ Rules:
         ),
     }),
     handler: async ({ drugs }, ctx) => {
-      const resp = await ctx.fetch(
-        `https://api.example.com/drugs/interactions?drugs=${
-          encodeURIComponent(drugs)
-        }`,
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.secrets.HEALTH_API_KEY}`,
-          },
-        },
-      );
-      if (!resp.ok) {
-        return { error: `Interaction check failed: ${resp.statusText}` };
+      const drugNames = drugs.split(",").map((d) => d.trim().toLowerCase());
+
+      // Resolve each drug name to an RxCUI
+      const rxcuis: { name: string; rxcui: string }[] = [];
+      for (const drug of drugNames) {
+        const data = await fetchJSON(
+          ctx.fetch,
+          `https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${
+            encodeURIComponent(drug)
+          }`,
+          undefined,
+          RxCuiResponse,
+        );
+        if ("error" in data) continue;
+        const rxcui = data.idGroup.rxnormId?.[0];
+        if (rxcui) rxcuis.push({ name: drug, rxcui });
       }
-      return resp.json();
+
+      if (rxcuis.length < 2) {
+        return {
+          error: `Could not resolve all drug names. Found: ${
+            rxcuis.map((r) => r.name).join(", ") || "none"
+          }`,
+        };
+      }
+
+      const rxcuiList = rxcuis.map((r) => r.rxcui).join("+");
+      const data = await fetchJSON(
+        ctx.fetch,
+        `https://rxnav.nlm.nih.gov/REST/interaction/list.json?rxcuis=${rxcuiList}`,
+        undefined,
+        RxInteractionResponse,
+      );
+      if ("error" in data) return { error: "Interaction lookup failed" };
+
+      const interactions = data.fullInteractionTypeGroup
+        ?.flatMap((g) => g.fullInteractionType ?? [])
+        ?.flatMap((t) => t.interactionPair ?? [])
+        ?.map((pair) => ({
+          description: pair.description,
+          severity: pair.severity,
+        })) ?? [];
+
+      return {
+        drugs: rxcuis.map((r) => ({ name: r.name, rxcui: r.rxcui })),
+        interactions_found: interactions.length,
+        interactions: interactions.slice(0, 5),
+      };
     },
   })
   .tool("calculate_bmi", {
@@ -174,5 +225,10 @@ Rules:
       };
     },
   });
+
+/** Extract first string from an FDA field (which is always string[]). */
+function str(field: unknown): string | undefined {
+  return Array.isArray(field) ? field[0] : undefined;
+}
 
 export default agent;

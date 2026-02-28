@@ -1,4 +1,31 @@
-import { Agent, z } from "../../mod.ts";
+import { Agent, fetchJSON, z } from "../../mod.ts";
+
+// ── Response schemas (only validate fields we actually use) ─────
+
+const GeocodingResponse = z.object({
+  results: z.array(
+    z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+      name: z.string(),
+      country: z.string(),
+    }).passthrough(),
+  ).optional(),
+}).passthrough();
+
+const WeatherForecastResponse = z.object({
+  daily: z.object({
+    time: z.array(z.string()),
+    temperature_2m_max: z.array(z.number()),
+    temperature_2m_min: z.array(z.number()),
+    precipitation_sum: z.array(z.number()),
+    weathercode: z.array(z.number()),
+  }).passthrough(),
+}).passthrough();
+
+const ExchangeRateResponse = z.object({
+  rates: z.record(z.string(), z.number()),
+}).passthrough();
 
 const agent = new Agent({
   name: "Aria",
@@ -11,130 +38,114 @@ Rules:
 - When discussing costs, convert to the customer's preferred currency
 - Suggest specific restaurants, landmarks, and experiences
 - Be warm and enthusiastic but concise — this is a voice conversation
-- If the customer hasn't specified dates, ask for them before searching flights`,
+- If the customer hasn't specified dates, ask for them before searching flights
+- Use web_search to find current flight and hotel options, then visit_webpage for details`,
   greeting:
     "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
   voice: "tara",
   prompt:
     "Transcribe travel-related terms accurately including city names, airport codes like JFK SFO LAX CDG, airline names, hotel chains, currencies like USD EUR GBP JPY, and dates.",
+  builtinTools: ["web_search", "visit_webpage"],
 })
-  .tool("search_flights", {
-    description:
-      "Search for available flights between two cities on a given date",
-    parameters: z.object({
-      origin: z
-        .string()
-        .describe(
-          "Departure city or airport code (e.g. 'SFO', 'New York')",
-        ),
-      destination: z
-        .string()
-        .describe("Arrival city or airport code"),
-      date: z
-        .string()
-        .describe("Departure date in YYYY-MM-DD format"),
-      passengers: z
-        .number()
-        .optional()
-        .describe("Number of passengers (default 1)"),
-    }),
-    handler: async ({ origin, destination, date, passengers }, ctx) => {
-      const params = new URLSearchParams({
-        origin,
-        destination,
-        date,
-        passengers: String(passengers ?? 1),
-      });
-      const resp = await ctx.fetch(
-        `https://api.example.com/flights/search?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.secrets.FLIGHTS_API_KEY}`,
-          },
-        },
-      );
-      if (!resp.ok) {
-        return { error: `Flight search failed: ${resp.statusText}` };
-      }
-      return resp.json();
-    },
-  })
-  .tool("search_hotels", {
-    description:
-      "Search for hotels in a city with check-in and check-out dates",
-    parameters: z.object({
-      city: z.string().describe("City to search hotels in"),
-      check_in: z.string().describe("Check-in date (YYYY-MM-DD)"),
-      check_out: z.string().describe("Check-out date (YYYY-MM-DD)"),
-      guests: z
-        .number()
-        .optional()
-        .describe("Number of guests (default 2)"),
-      max_price: z
-        .number()
-        .optional()
-        .describe("Maximum price per night in USD"),
-    }),
-    handler: async ({ city, check_in, check_out, guests, max_price }, ctx) => {
-      const resp = await ctx.fetch("https://api.example.com/hotels/search", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.secrets.HOTELS_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          city,
-          check_in,
-          check_out,
-          guests: guests ?? 2,
-          max_price_usd: max_price,
-        }),
-      });
-      if (!resp.ok) {
-        return { error: `Hotel search failed: ${resp.statusText}` };
-      }
-      return resp.json();
-    },
-  })
   .tool("get_weather_forecast", {
-    description: "Get a 7-day weather forecast for a destination city",
+    description:
+      "Get a 7-day weather forecast for a destination city using Open-Meteo.",
     parameters: z.object({
-      city: z.string().describe("City name"),
+      city: z.string().describe("City name (e.g. 'Paris', 'Tokyo')"),
     }),
     handler: async ({ city }, ctx) => {
-      const resp = await ctx.fetch(
-        `https://api.example.com/weather/forecast?city=${
+      // Geocode city name to coordinates
+      const geo = await fetchJSON(
+        ctx.fetch,
+        `https://geocoding-api.open-meteo.com/v1/search?name=${
           encodeURIComponent(city)
-        }&days=7`,
-        { headers: { "X-Api-Key": ctx.secrets.WEATHER_API_KEY } },
+        }&count=1&language=en`,
+        undefined,
+        GeocodingResponse,
       );
-      if (!resp.ok) {
-        return { error: `Weather lookup failed: ${resp.statusText}` };
-      }
-      return resp.json();
+      if ("error" in geo) return geo;
+      const location = geo.results?.[0];
+      if (!location) return { error: `City not found: ${city}` };
+
+      const { latitude, longitude, name, country } = location;
+
+      // Fetch 7-day forecast
+      const weather = await fetchJSON(
+        ctx.fetch,
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7`,
+        undefined,
+        WeatherForecastResponse,
+      );
+      if ("error" in weather) return weather;
+
+      const { daily } = weather;
+
+      const weatherCodes: Record<number, string> = {
+        0: "Clear sky",
+        1: "Mainly clear",
+        2: "Partly cloudy",
+        3: "Overcast",
+        45: "Foggy",
+        48: "Depositing rime fog",
+        51: "Light drizzle",
+        53: "Moderate drizzle",
+        55: "Dense drizzle",
+        61: "Slight rain",
+        63: "Moderate rain",
+        65: "Heavy rain",
+        71: "Slight snow",
+        73: "Moderate snow",
+        75: "Heavy snow",
+        80: "Slight rain showers",
+        81: "Moderate rain showers",
+        82: "Violent rain showers",
+        85: "Slight snow showers",
+        86: "Heavy snow showers",
+        95: "Thunderstorm",
+        96: "Thunderstorm with slight hail",
+        99: "Thunderstorm with heavy hail",
+      };
+
+      const forecast = daily.time.map((date, i) => ({
+        date,
+        high_c: daily.temperature_2m_max[i],
+        low_c: daily.temperature_2m_min[i],
+        high_f: Math.round(daily.temperature_2m_max[i] * 9 / 5 + 32),
+        low_f: Math.round(daily.temperature_2m_min[i] * 9 / 5 + 32),
+        precipitation_mm: daily.precipitation_sum[i],
+        condition: weatherCodes[daily.weathercode[i]] ?? "Unknown",
+      }));
+
+      return { city: name, country, forecast };
     },
   })
   .tool("convert_currency", {
     description:
-      "Convert an amount from one currency to another using live exchange rates",
+      "Convert an amount from one currency to another using live exchange rates.",
     parameters: z.object({
       amount: z.number().describe("Amount to convert"),
       from: z.string().describe("Source currency code (e.g. 'USD')"),
       to: z.string().describe("Target currency code (e.g. 'EUR')"),
     }),
     handler: async ({ amount, from, to }, ctx) => {
-      const resp = await ctx.fetch(
-        `https://api.example.com/fx/convert?amount=${amount}&from=${from}&to=${to}`,
-        {
-          headers: {
-            Authorization: `Bearer ${ctx.secrets.FX_API_KEY}`,
-          },
-        },
+      const fromCode = from.toUpperCase();
+      const toCode = to.toUpperCase();
+      const data = await fetchJSON(
+        ctx.fetch,
+        `https://open.er-api.com/v6/latest/${fromCode}`,
+        undefined,
+        ExchangeRateResponse,
       );
-      if (!resp.ok) {
-        return { error: `Currency conversion failed: ${resp.statusText}` };
-      }
-      return resp.json();
+      if ("error" in data) return data;
+      const rate = data.rates[toCode];
+      if (!rate) return { error: `Unknown currency code: ${toCode}` };
+      return {
+        amount,
+        from: fromCode,
+        to: toCode,
+        rate: Math.round(rate * 10000) / 10000,
+        result: Math.round(amount * rate * 100) / 100,
+      };
     },
   });
 

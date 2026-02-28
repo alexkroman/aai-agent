@@ -1,40 +1,21 @@
-// stt.ts — AssemblyAI token creation + WebSocket client with auto-refresh.
-// Deno-native: uses standard WebSocket API, Uint8Array instead of Buffer.
+// stt.ts — AssemblyAI streaming STT WebSocket client.
+// Deno-native: uses standard WebSocket API with Authorization header (Deno 2.5+).
+// No temp tokens needed — server-side connections auth directly with the API key.
 
-import { z } from "zod";
+import { deadline } from "@std/async/deadline";
 import { TIMEOUTS } from "./shared-protocol.ts";
 import { ERR_INTERNAL } from "./errors.ts";
 import { createLogger } from "./logger.ts";
 import { type STTConfig, SttMessageSchema } from "./types.ts";
+import { createDenoWebSocket } from "./deno-ext.ts";
 
 const log = createLogger("stt");
 
-const TOKEN_URL = "https://streaming.assemblyai.com/v3/token";
-
-const SttTokenResponseSchema = z.object({ token: z.string() });
-
-/** Fraction of token lifetime at which to trigger refresh (80%). */
-const TOKEN_REFRESH_RATIO = 0.8;
-
-/**
- * Create an ephemeral streaming token for AssemblyAI STT.
- */
-async function createSttToken(
-  apiKey: string,
-  expiresIn: number,
-): Promise<string> {
-  const url = new URL(TOKEN_URL);
-  url.searchParams.set("expires_in_seconds", String(expiresIn));
-  const resp = await fetch(url, {
-    headers: { Authorization: apiKey },
-  });
-  if (!resp.ok) {
-    throw new Error(ERR_INTERNAL.sttTokenFailed(resp.status, resp.statusText));
-  }
-  const json = await resp.json();
-  const data = SttTokenResponseSchema.parse(json);
-  return data.token;
-}
+/** Factory for creating STT WebSocket connections. */
+export type SttWebSocketFactory = (
+  url: string,
+  options: { headers: Record<string, string> },
+) => WebSocket;
 
 /** Callbacks for STT events (transcripts, completed turns, errors, close). */
 export interface SttEvents {
@@ -44,7 +25,7 @@ export interface SttEvents {
   onClose: () => void;
 }
 
-/** Handle returned by connectStt / SttConnection. */
+/** Handle returned by connectStt. */
 export interface SttHandle {
   send: (audio: Uint8Array) => void;
   clear: () => void;
@@ -52,17 +33,17 @@ export interface SttHandle {
 }
 
 /**
- * Connect a single STT WebSocket (internal helper, no refresh logic).
+ * Connect a single STT WebSocket using the API key directly.
  */
-function connectSttWs(
-  token: string,
+async function connectSttWs(
+  apiKey: string,
   config: STTConfig,
   events: SttEvents,
+  createWebSocket?: SttWebSocketFactory,
 ): Promise<{ ws: WebSocket; handle: SttHandle }> {
   const params = new URLSearchParams({
     sample_rate: String(config.sampleRate),
     speech_model: config.speechModel,
-    token,
     format_turns: String(config.formatTurns),
     min_end_of_turn_silence_when_confident: String(
       config.minEndOfTurnSilenceWhenConfident,
@@ -73,196 +54,120 @@ function connectSttWs(
     params.set("prompt", config.prompt);
   }
 
-  const ws = new WebSocket(`${config.wssBase}?${params}`);
+  const url = `${config.wssBase}?${params}`;
+  const wsOpts = { headers: { Authorization: apiKey } };
+  // Deno 2.5+ supports custom headers on client WebSocket connections
+  let ws: WebSocket;
+  if (createWebSocket) {
+    ws = createWebSocket(url, wsOpts);
+  } else {
+    ws = createDenoWebSocket(url, wsOpts);
+  }
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.close();
-      reject(new Error(ERR_INTERNAL.sttConnectionTimeout()));
-    }, TIMEOUTS.STT_CONNECTION);
+  try {
+    return await deadline(
+      new Promise<{ ws: WebSocket; handle: SttHandle }>((resolve, reject) => {
+        ws.onopen = () => {
+          const handle: SttHandle = {
+            send(audio: Uint8Array) {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(audio);
+              }
+            },
+            clear() {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ForceEndpoint" }));
+              }
+            },
+            close() {
+              ws.close();
+            },
+          };
+          resolve({ ws, handle });
+        };
 
-    ws.onopen = () => {
-      clearTimeout(timeout);
-      const handle: SttHandle = {
-        send(audio: Uint8Array) {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(audio);
+        let msgCount = 0;
+        ws.onmessage = (event) => {
+          if (typeof event.data !== "string") return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(event.data);
+          } catch (err) {
+            log.warn({ err }, "Failed to parse message");
+            return;
           }
-        },
-        clear() {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "ForceEndpoint" }));
+
+          const result = SttMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            log.warn(
+              { error: result.error.message },
+              "Invalid STT message, skipping",
+            );
+            return;
           }
-        },
-        close() {
-          ws.close();
-        },
-      };
-      resolve({ ws, handle });
-    };
 
-    let msgCount = 0;
-    ws.onmessage = (event) => {
-      if (typeof event.data !== "string") return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(event.data);
-      } catch (err) {
-        log.warn({ err }, "Failed to parse message");
-        return;
-      }
+          const msg = result.data;
+          msgCount++;
+          if (msgCount <= 5) {
+            log.debug({ msgCount, type: msg.type }, "STT message");
+          }
+          if (msg.type === "Transcript") {
+            events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
+          } else if (msg.type === "Turn") {
+            const text = (msg.transcript ?? "").trim();
+            if (!text) return;
+            if (!msg.turn_is_formatted) {
+              events.onTranscript(text, false);
+              return;
+            }
+            events.onTurn(text);
+          }
+        };
 
-      const result = SttMessageSchema.safeParse(parsed);
-      if (!result.success) {
-        log.warn(
-          { error: result.error.message },
-          "Invalid STT message, skipping",
-        );
-        return;
-      }
+        ws.onerror = (event) => {
+          const err = event instanceof ErrorEvent
+            ? new Error(event.message)
+            : new Error("WebSocket error");
+          events.onError(err);
+          reject(err);
+        };
 
-      const msg = result.data;
-      msgCount++;
-      if (msgCount <= 5) {
-        log.debug({ msgCount, type: msg.type }, "STT message");
-      }
-      if (msg.type === "Transcript") {
-        events.onTranscript(msg.transcript ?? "", msg.is_final ?? false);
-      } else if (msg.type === "Turn") {
-        const text = (msg.transcript ?? "").trim();
-        if (!text) return;
-        if (!msg.turn_is_formatted) {
-          events.onTranscript(text, false);
-          return;
-        }
-        events.onTurn(text);
-      }
-    };
-
-    ws.onerror = (event) => {
-      clearTimeout(timeout);
-      const err = event instanceof ErrorEvent
-        ? new Error(event.message)
-        : new Error("WebSocket error");
-      events.onError(err);
-    };
-
-    ws.onclose = (event) => {
-      clearTimeout(timeout);
-      if (event.code !== 1000) {
-        log.error(
-          { code: event.code, reason: event.reason ?? "" },
-          "WebSocket closed unexpectedly",
-        );
-      }
-      events.onClose();
-    };
-  });
-}
-
-/**
- * STT connection wrapper with automatic token refresh for long sessions.
- */
-class SttConnection implements SttHandle {
-  private apiKey: string;
-  private config: STTConfig;
-  private events: SttEvents;
-  private currentHandle: SttHandle | null = null;
-  private currentWs: WebSocket | null = null;
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private closed = false;
-
-  private constructor(apiKey: string, config: STTConfig, events: SttEvents) {
-    this.apiKey = apiKey;
-    this.config = config;
-    this.events = events;
-  }
-
-  static async create(
-    apiKey: string,
-    config: STTConfig,
-    events: SttEvents,
-  ): Promise<SttConnection> {
-    const conn = new SttConnection(apiKey, config, events);
-    await conn.connect();
-    return conn;
-  }
-
-  private async connect(): Promise<void> {
-    const token = await createSttToken(
-      this.apiKey,
-      this.config.tokenExpiresIn,
+        ws.onclose = (event) => {
+          if (event.code !== 1000) {
+            log.error(
+              { code: event.code, reason: event.reason ?? "" },
+              "WebSocket closed unexpectedly",
+            );
+          }
+          events.onClose();
+        };
+      }),
+      TIMEOUTS.STT_CONNECTION,
     );
-    const { ws, handle } = await connectSttWs(
-      token,
-      this.config,
-      this.events,
-    );
-    this.currentWs = ws;
-    this.currentHandle = handle;
-    this.scheduleRefresh();
-  }
-
-  private scheduleRefresh(): void {
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    const refreshMs = this.config.tokenExpiresIn * 1000 * TOKEN_REFRESH_RATIO;
-    this.refreshTimer = setTimeout(() => this.refresh(), refreshMs);
-  }
-
-  private async refresh(): Promise<void> {
-    if (this.closed) return;
-    try {
-      const oldWs = this.currentWs;
-      const token = await createSttToken(
-        this.apiKey,
-        this.config.tokenExpiresIn,
-      );
-      if (this.closed) return;
-      const { ws, handle } = await connectSttWs(
-        token,
-        this.config,
-        this.events,
-      );
-      this.currentWs = ws;
-      this.currentHandle = handle;
-      this.scheduleRefresh();
-      try {
-        oldWs?.close();
-      } catch {
-        // ignore close errors on old connection
-      }
-    } catch (err) {
-      log.error({ err }, "Token refresh failed");
+  } catch (err) {
+    ws.close();
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error(ERR_INTERNAL.sttConnectionTimeout());
     }
-  }
-
-  send(audio: Uint8Array): void {
-    this.currentHandle?.send(audio);
-  }
-
-  clear(): void {
-    this.currentHandle?.clear();
-  }
-
-  close(): void {
-    this.closed = true;
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = null;
-    }
-    this.currentHandle?.close();
-    this.currentHandle = null;
-    this.currentWs = null;
+    throw err;
   }
 }
 
+/** Options for connectStt. */
+export interface ConnectSttOptions {
+  createWebSocket?: SttWebSocketFactory;
+}
+
 /**
- * Connect to AssemblyAI STT with automatic token refresh for long sessions.
+ * Connect to AssemblyAI STT with the API key directly via Authorization header.
  */
 export function connectStt(
   apiKey: string,
   config: STTConfig,
   events: SttEvents,
+  options?: ConnectSttOptions,
 ): Promise<SttHandle> {
-  return SttConnection.create(apiKey, config, events);
+  return connectSttWs(apiKey, config, events, options?.createWebSocket).then((
+    { handle },
+  ) => handle);
 }

@@ -95,10 +95,14 @@ If you need to list items, say "First," "Next," and "Finally."
 
 /** Appended to system instructions to enforce voice-friendly output. */
 export const VOICE_RULES =
-  "\n\nCRITICAL: When you produce your final answer, it will be spoken aloud by a TTS system. " +
-  "Write your answer exactly as you would say it out loud to a friend. " +
-  "One to two sentences max. No markdown, no bullet points, no numbered lists, no code. " +
-  "Sound like a human talking, not a document.";
+  "\n\nCRITICAL OUTPUT RULES — you MUST follow these for EVERY response:\n" +
+  "Your response will be spoken aloud by a TTS system and displayed as plain text.\n" +
+  "- NEVER use markdown: no **, no *, no _, no #, no `, no [](), no ---\n" +
+  "- NEVER use bullet points (-, *, •) or numbered lists (1., 2.)\n" +
+  "- NEVER use code blocks or inline code\n" +
+  "- Write exactly as you would say it out loud to a friend\n" +
+  '- Use short conversational sentences. To list things, say "First," "Next," "Finally,"\n' +
+  "- Keep responses concise — a few sentences max";
 
 /** Default greeting spoken when a session starts. */
 export const DEFAULT_GREETING =
@@ -160,7 +164,7 @@ const ChatMessageSchema = z.object({
 
 /** Zod schema for a single choice from an LLM response. */
 const LLMChoiceSchema = z.object({
-  index: z.number(),
+  index: z.number().optional(),
   message: ChatMessageSchema,
   finish_reason: z.string(),
 });
@@ -168,7 +172,7 @@ const LLMChoiceSchema = z.object({
 /** Zod schema for a complete LLM response (OpenAI chat completion format). */
 export const LLMResponseSchema = z
   .object({
-    id: z.string(),
+    id: z.string().optional(),
     choices: z.array(LLMChoiceSchema),
   })
   .passthrough();
@@ -184,4 +188,36 @@ export interface ToolSchema {
   description: string;
   /** JSON Schema for the tool's parameters. */
   parameters: Record<string, unknown>;
+}
+
+// ── Worker IPC Message Types ────────────────────────────────────
+
+/** Messages sent from the main process to a Worker. */
+export type WorkerInMessage =
+  | { type: "init"; slug: string; secrets: Record<string, string> }
+  | {
+    type: "tool.call";
+    callId: string;
+    name: string;
+    args: Record<string, unknown>;
+  };
+
+/** Messages sent from a Worker to the main process. */
+export type WorkerOutMessage =
+  | {
+    type: "ready";
+    slug: string;
+    config: WorkerReadyConfig;
+    toolSchemas: ToolSchema[];
+  }
+  | { type: "tool.result"; callId: string; result: string };
+
+/** Agent config as sent by the worker in the "ready" message (matches AgentOptions). */
+export interface WorkerReadyConfig {
+  name?: string;
+  instructions: string;
+  greeting: string;
+  voice: string;
+  prompt?: string;
+  builtinTools?: string[];
 }

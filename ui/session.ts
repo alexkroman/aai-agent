@@ -17,11 +17,7 @@ import {
 
 import { SessionError, SessionErrorCode } from "./errors.ts";
 import { ReconnectStrategy } from "./reconnect.ts";
-import {
-  type AudioPlayer,
-  createAudioPlayer,
-  startMicCapture,
-} from "./audio.ts";
+import type { AudioPlayer } from "./audio.ts";
 
 // ── Typed event helpers ─────────────────────────────────────────
 
@@ -40,7 +36,7 @@ export interface SessionEventMap {
 
 const KNOWN_SERVER_TYPES = new Set<string>(Object.values(MSG));
 
-function parseServerMessage(data: string): ServerMessage | null {
+export function parseServerMessage(data: string): ServerMessage | null {
   try {
     const msg = JSON.parse(data);
     if (
@@ -80,6 +76,9 @@ export class VoiceSession extends EventTarget {
   // Cancel/reset synchronization
   private cancelling = false;
 
+  // Guard against duplicate audio setup (e.g. two READY messages)
+  private audioSetupInFlight = false;
+
   // Heartbeat
   private pongReceived = true;
 
@@ -104,8 +103,9 @@ export class VoiceSession extends EventTarget {
       : (data: SessionEventMap[K]) => void,
   ): () => void {
     const wrapper = ((e: Event) => {
-      // deno-lint-ignore no-explicit-any
-      (handler as any)((e as CustomEvent).detail);
+      (handler as (data?: SessionEventMap[K]) => void)(
+        (e as CustomEvent).detail,
+      );
     }) as EventListener;
     this.addEventListener(event, wrapper);
     return () => this.removeEventListener(event, wrapper);
@@ -143,10 +143,8 @@ export class VoiceSession extends EventTarget {
     const { signal } = controller;
 
     this.cancelling = false;
-    const wsUrl = new URL(
-      "/session",
-      this.options.platformUrl || globalThis.location.origin,
-    );
+    const base = this.options.platformUrl || globalThis.location.origin;
+    const wsUrl = new URL("session", base.endsWith("/") ? base : base + "/");
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(wsUrl);
     this.ws = ws;
@@ -187,11 +185,16 @@ export class VoiceSession extends EventTarget {
     switch (msg.type) {
       case MSG.READY: {
         this.reconnector.reset();
-        Promise.all([
-          createAudioPlayer(msg.ttsSampleRate ?? 24000),
-          startMicCapture(this.ws!, msg.sampleRate ?? 16000),
-        ])
+        if (this.audioSetupInFlight) break;
+        this.audioSetupInFlight = true;
+        import("./audio.ts").then(({ createAudioPlayer, startMicCapture }) =>
+          Promise.all([
+            createAudioPlayer(msg.ttsSampleRate ?? 24000),
+            startMicCapture(this.ws!, msg.sampleRate ?? 16000),
+          ])
+        )
           .then(([player, micCleanup]) => {
+            this.audioSetupInFlight = false;
             if (this.ws?.readyState !== WebSocket.OPEN) {
               player.close();
               micCleanup();
@@ -205,6 +208,7 @@ export class VoiceSession extends EventTarget {
             this.emit("connected");
           })
           .catch((err) => {
+            this.audioSetupInFlight = false;
             if (this.ws?.readyState !== WebSocket.OPEN) return;
             console.error("Audio setup failed:", err);
             this.emit(
@@ -306,6 +310,7 @@ export class VoiceSession extends EventTarget {
   }
 
   private cleanupAudio(): void {
+    this.audioSetupInFlight = false;
     this.micCleanup?.();
     this.micCleanup = null;
     this.player?.close();
@@ -316,20 +321,28 @@ export class VoiceSession extends EventTarget {
     this.cancelling = true;
     this.player?.flush();
     this.changeState("listening");
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: MSG.CANCEL }));
+    try {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: MSG.CANCEL }));
+      }
+    } catch {
+      // Connection may have broken between readyState check and send
     }
   }
 
   reset(): void {
     this.player?.flush();
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: MSG.RESET }));
-    } else {
-      this.emit("reset");
-      this.disconnect();
-      this.connect();
+    try {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: MSG.RESET }));
+        return;
+      }
+    } catch {
+      // Connection may have broken between readyState check and send
     }
+    this.emit("reset");
+    this.disconnect();
+    this.connect();
   }
 
   disconnect(): void {

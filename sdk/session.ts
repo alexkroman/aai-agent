@@ -4,7 +4,7 @@
 import type { PlatformConfig } from "./config.ts";
 import { MAX_TOOL_ITERATIONS, MSG } from "./shared-protocol.ts";
 import { ERR } from "./errors.ts";
-import type { callLLM as callLLMType } from "./llm.ts";
+import type { CallLLMOptions } from "./llm.ts";
 import { createLogger, type Logger } from "./logger.ts";
 import type { IToolExecutor } from "./tool-executor.ts";
 import type {
@@ -12,9 +12,9 @@ import type {
   SttEvents,
   SttHandle,
 } from "./stt.ts";
-import type { TtsClient } from "./tts.ts";
+import type { ITtsClient } from "./tts.ts";
 import type { normalizeVoiceText as normalizeVoiceTextType } from "./voice-cleaner.ts";
-import { executeBuiltinTool } from "./builtin-tools.ts";
+import type { executeBuiltinTool as executeBuiltinToolType } from "./builtin-tools.ts";
 import {
   type AgentConfig,
   type ChatMessage,
@@ -38,10 +38,11 @@ export interface SessionTransport {
 export interface SessionDeps {
   config: PlatformConfig;
   connectStt: typeof connectSttType;
-  callLLM: typeof callLLMType;
-  ttsClient: TtsClient;
+  callLLM: (opts: CallLLMOptions) => Promise<LLMResponse>;
+  ttsClient: ITtsClient;
   toolExecutor: IToolExecutor;
   normalizeVoiceText: typeof normalizeVoiceTextType;
+  executeBuiltinTool: typeof executeBuiltinToolType;
 }
 
 /**
@@ -126,46 +127,8 @@ export class VoiceSession {
   /**
    * Start the voice session: connect STT, send ready + greeting.
    */
-  async start(): Promise<void> {
-    try {
-      const events: SttEvents = {
-        onTranscript: (text, isFinal) => {
-          this.logger.info({ text, isFinal }, "transcript");
-          this.trySendJson({
-            type: MSG.TRANSCRIPT,
-            text,
-            final: isFinal,
-          });
-        },
-        onTurn: (text) => {
-          this.logger.info({ text }, "turn");
-          this.turnPromise = this.handleTurn(text).finally(() => {
-            this.turnPromise = null;
-          });
-        },
-        onError: (err) => {
-          this.logger.warn({ err }, "STT error");
-        },
-        onClose: () => {
-          this.logger.info("STT closed");
-        },
-      };
-
-      this.stt = await this.deps.connectStt(
-        this.deps.config.apiKey,
-        this.deps.config.sttConfig,
-        events,
-      );
-    } catch (err) {
-      this.logger.error({ err }, "Failed to connect STT");
-      this.trySendJson({
-        type: MSG.ERROR,
-        message: ERR.STT_CONNECT_FAILED,
-      });
-      return;
-    }
-
-    // Send ready
+  start(): void {
+    // Send READY immediately — don't block on STT connection
     this.trySendJson({
       type: MSG.READY,
       version: 1,
@@ -178,10 +141,57 @@ export class VoiceSession {
     if (greeting) {
       this.pendingGreeting = greeting;
     }
+
+    // Connect STT in background — doesn't block session startup.
+    // The .catch() is a safety net: connectStt() has its own try/catch,
+    // but this guards against any unhandled rejection that escapes it.
+    this.connectStt().catch((err) => {
+      this.logger.error({ err }, "Unhandled error in connectStt");
+    });
   }
 
   private audioFrameCount = 0;
   private pendingGreeting: string | null = null;
+
+  private async connectStt(): Promise<void> {
+    const events: SttEvents = {
+      onTranscript: (text, isFinal) => {
+        this.logger.info({ text, isFinal }, "transcript");
+        this.trySendJson({
+          type: MSG.TRANSCRIPT,
+          text,
+          final: isFinal,
+        });
+      },
+      onTurn: (text) => {
+        this.logger.info({ text }, "turn");
+        this.turnPromise = this.handleTurn(text).finally(() => {
+          this.turnPromise = null;
+        });
+      },
+      onError: (err) => {
+        this.logger.warn({ err }, "STT error");
+      },
+      onClose: () => {
+        this.logger.info("STT closed");
+      },
+    };
+
+    try {
+      this.stt = await this.deps.connectStt(
+        this.deps.config.apiKey,
+        this.deps.config.sttConfig,
+        events,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error({ error: msg }, "Failed to connect STT");
+      this.trySendJson({
+        type: MSG.ERROR,
+        message: ERR.STT_CONNECT_FAILED,
+      });
+    }
+  }
 
   /**
    * Client's audio worklet is ready — safe to send greeting TTS.
@@ -304,14 +314,14 @@ export class VoiceSession {
         "LLM request",
       );
 
-      let response = await this.deps.callLLM(
-        this.messages,
-        this.toolSchemas,
-        this.deps.config.apiKey,
-        this.deps.config.model,
-        abort.signal,
-        this.deps.config.llmGatewayBase,
-      );
+      let response = await this.deps.callLLM({
+        messages: this.messages,
+        tools: this.toolSchemas,
+        apiKey: this.deps.config.apiKey,
+        model: this.deps.config.model,
+        signal: abort.signal,
+        gatewayBase: this.deps.config.llmGatewayBase,
+      });
       this.logLlmResponse(response);
 
       const steps: string[] = [];
@@ -357,17 +367,23 @@ export class VoiceSession {
                 );
                 return `Error: Invalid JSON arguments for tool "${tc.function.name}"`;
               }
-              this.logger.debug({ tool: tc.function.name, args }, "tool call");
+              this.logger.info({ tool: tc.function.name, args }, "tool call");
 
               // Try built-in tools first, then fall back to tool executor
-              const builtinResult = await executeBuiltinTool(
+              const builtinResult = await this.deps.executeBuiltinTool(
                 tc.function.name,
                 args,
               );
               const result = builtinResult ??
                 (await this.deps.toolExecutor.execute(tc.function.name, args));
-              this.logger.debug(
-                { tool: tc.function.name, resultLength: result.length },
+              this.logger.info(
+                {
+                  tool: tc.function.name,
+                  resultLength: result.length,
+                  result: result.length > 500
+                    ? result.slice(0, 500) + "..."
+                    : result,
+                },
                 "tool result",
               );
               return result;
@@ -395,14 +411,14 @@ export class VoiceSession {
             "re-calling LLM with tool results",
           );
 
-          response = await this.deps.callLLM(
-            this.messages,
-            this.toolSchemas,
-            this.deps.config.apiKey,
-            this.deps.config.model,
-            abort.signal,
-            this.deps.config.llmGatewayBase,
-          );
+          response = await this.deps.callLLM({
+            messages: this.messages,
+            tools: this.toolSchemas,
+            apiKey: this.deps.config.apiKey,
+            model: this.deps.config.model,
+            signal: abort.signal,
+            gatewayBase: this.deps.config.llmGatewayBase,
+          });
           this.logLlmResponse(response);
           iterations++;
         } else {
@@ -431,7 +447,8 @@ export class VoiceSession {
       }
     } catch (err) {
       if (abort.signal.aborted) return;
-      this.logger.error({ err }, "Chat failed");
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error({ error: msg }, "Chat failed");
       this.trySendJson({ type: MSG.ERROR, message: ERR.CHAT_FAILED });
     } finally {
       if (this.chatAbort === abort) {

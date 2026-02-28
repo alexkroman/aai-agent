@@ -43,8 +43,15 @@ export async function bundleAgent(slug: string): Promise<string> {
     platform: "neutral",
     outfile,
     target: "es2022",
-    // deno-dom loads .wasm dynamically at runtime — can't bundle that
-    external: ["*.wasm"],
+    // deno-dom loads .wasm dynamically at runtime — can't bundle that.
+    // Server-only modules are excluded — workers never call Agent.routes()/serve().
+    external: [
+      "*.wasm",
+      "*/server.ts",
+      "*/config.ts",
+      "@hono/*",
+      "@std/dotenv",
+    ],
   });
 
   // Clean up temp entry file

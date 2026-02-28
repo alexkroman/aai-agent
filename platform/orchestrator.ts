@@ -3,40 +3,36 @@
 // execution is sandboxed in Workers via postMessage.
 
 import { toFileUrl } from "@std/path";
+import { deadline } from "@std/async/deadline";
+import { parse as parseDotenv } from "@std/dotenv/parse";
 import { Hono } from "@hono/hono";
 import { cors } from "@hono/hono/cors";
 import { loadPlatformConfig } from "../sdk/config.ts";
 import type { PlatformConfig } from "../sdk/config.ts";
 import { createLogger } from "../sdk/logger.ts";
 import { configureLogger } from "../sdk/logger.ts";
-import { FAVICON_SVG, renderAgentPage } from "../sdk/server.ts";
+import { escapeHtml, FAVICON_SVG, renderAgentPage } from "../sdk/server.ts";
 import { bundleAgent } from "./bundler.ts";
 import { type SessionDeps, VoiceSession } from "../sdk/session.ts";
 import { connectStt } from "../sdk/stt.ts";
 import { callLLM } from "../sdk/llm.ts";
 import { TtsClient } from "../sdk/tts.ts";
 import { normalizeVoiceText } from "../sdk/voice-cleaner.ts";
-import { getBuiltinToolSchemas } from "../sdk/builtin-tools.ts";
-import { MSG } from "../sdk/shared-protocol.ts";
-import type { AgentOptions } from "../sdk/agent.ts";
+import {
+  executeBuiltinTool,
+  getBuiltinToolSchemas,
+} from "../sdk/builtin-tools.ts";
+import { handleSessionWebSocket } from "../sdk/ws-handler.ts";
+import { typeByExtension } from "@std/media-types";
+import { createDenoWorker } from "../sdk/deno-ext.ts";
 import {
   type AgentConfig,
-  ControlMessageSchema,
   type ToolSchema,
+  type WorkerInMessage,
+  type WorkerOutMessage,
 } from "../sdk/types.ts";
 
 const log = createLogger("orchestrator");
-
-const MIME_TYPES: Record<string, string> = {
-  ".js": "application/javascript",
-  ".mjs": "application/javascript",
-  ".html": "text/html",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".map": "application/json",
-};
 
 export interface AgentInfo {
   slug: string;
@@ -74,45 +70,61 @@ interface AgentSlot {
 class WorkerToolExecutor {
   private pending = new Map<
     string,
-    {
-      resolve: (v: string) => void;
-      reject: (e: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
+    { resolve: (v: string) => void; reject: (e: Error) => void }
   >();
-  private handler: (event: MessageEvent) => void;
+  private handler: (event: MessageEvent<WorkerOutMessage>) => void;
+  private errorHandler: (event: ErrorEvent) => void;
 
   constructor(private worker: Worker) {
-    this.handler = (event: MessageEvent) => {
+    this.handler = (event: MessageEvent<WorkerOutMessage>) => {
       const msg = event.data;
       if (msg.type === "tool.result") {
         const entry = this.pending.get(msg.callId);
         if (entry) {
-          clearTimeout(entry.timer);
           this.pending.delete(msg.callId);
           entry.resolve(msg.result);
         }
       }
     };
     worker.addEventListener("message", this.handler);
+
+    // If the worker crashes, reject all pending tool calls immediately
+    // instead of waiting for each one to hit the 30s timeout.
+    this.errorHandler = (event: ErrorEvent) => {
+      const err = new Error(`Worker crashed: ${event.message}`);
+      for (const [, entry] of this.pending) {
+        entry.reject(err);
+      }
+      this.pending.clear();
+    };
+    worker.addEventListener("error", this.errorHandler as EventListener);
   }
 
-  execute(name: string, args: Record<string, unknown>): Promise<string> {
+  async execute(name: string, args: Record<string, unknown>): Promise<string> {
     const callId = crypto.randomUUID();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(callId);
-        reject(new Error(`Tool "${name}" timed out after 30s`));
-      }, TOOL_TIMEOUT_MS);
-      this.pending.set(callId, { resolve, reject, timer });
-      this.worker.postMessage({ type: "tool.call", callId, name, args });
+    const resultPromise = new Promise<string>((resolve, reject) => {
+      this.pending.set(callId, { resolve, reject });
+      const msg: WorkerInMessage = { type: "tool.call", callId, name, args };
+      this.worker.postMessage(msg);
     });
+    try {
+      return await deadline(resultPromise, TOOL_TIMEOUT_MS);
+    } catch (err) {
+      this.pending.delete(callId);
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        throw new Error(`Tool "${name}" timed out after 30s`);
+      }
+      throw err;
+    }
   }
 
   dispose(): void {
     this.worker.removeEventListener("message", this.handler);
+    this.worker.removeEventListener(
+      "error",
+      this.errorHandler as EventListener,
+    );
     for (const [, entry] of this.pending) {
-      clearTimeout(entry.timer);
       entry.reject(new Error("ToolExecutor disposed"));
     }
     this.pending.clear();
@@ -123,24 +135,7 @@ class WorkerToolExecutor {
 async function readEnvFile(path: string): Promise<Record<string, string>> {
   try {
     const text = await Deno.readTextFile(path);
-    const env: Record<string, string> = {};
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq < 0) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let val = trimmed.slice(eq + 1).trim();
-      // Strip surrounding quotes
-      if (
-        (val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))
-      ) {
-        val = val.slice(1, -1);
-      }
-      env[key] = val;
-    }
-    return env;
+    return parseDotenv(text);
   } catch {
     return {};
   }
@@ -153,10 +148,9 @@ async function spawnAgent(slot: AgentSlot): Promise<AgentInfo> {
   log.info({ slug }, "Bundling agent on first access");
   const bundlePath = await bundleAgent(slug);
 
-  const worker = new Worker(toFileUrl(bundlePath).href, {
+  const worker = createDenoWorker(toFileUrl(bundlePath).href, {
     type: "module",
     name: slug,
-    // @ts-ignore: Deno Worker permissions
     deno: {
       permissions: {
         net: true,
@@ -173,32 +167,42 @@ async function spawnAgent(slot: AgentSlot): Promise<AgentInfo> {
     log.error({ slug, error: event.message }, "Worker error");
   };
 
-  const readyPromise = new Promise<{
-    slug: string;
-    config: AgentOptions;
-    toolSchemas: ToolSchema[];
-  }>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Worker ${slug} init timed out`)),
-      15_000,
-    );
-    const handler = (event: MessageEvent) => {
+  let readyHandler: ((event: MessageEvent<WorkerOutMessage>) => void) | null =
+    null;
+  const readyPromise = new Promise<
+    Extract<WorkerOutMessage, { type: "ready" }>
+  >((resolve) => {
+    readyHandler = (event: MessageEvent<WorkerOutMessage>) => {
       if (event.data.type === "ready") {
-        clearTimeout(timeout);
-        worker.removeEventListener("message", handler);
+        worker.removeEventListener("message", readyHandler!);
+        readyHandler = null;
         resolve(event.data);
       }
     };
-    worker.addEventListener("message", handler);
+    worker.addEventListener("message", readyHandler);
   });
 
-  worker.postMessage({
+  const initMsg: WorkerInMessage = {
     type: "init",
     slug,
     secrets: mergedEnv,
-  });
+  };
+  worker.postMessage(initMsg);
 
-  const info = await readyPromise;
+  let info;
+  try {
+    info = await deadline(readyPromise, 15_000);
+  } catch (err) {
+    // Clean up: remove the ready handler and terminate the orphaned worker
+    if (readyHandler) {
+      worker.removeEventListener("message", readyHandler);
+    }
+    worker.terminate();
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error(`Worker ${slug} init timed out`);
+    }
+    throw err;
+  }
 
   // Build AgentConfig (without name) for VoiceSession
   const agentConfig: AgentConfig = {
@@ -229,6 +233,10 @@ async function spawnAgent(slot: AgentSlot): Promise<AgentInfo> {
 /**
  * Get or lazily initialize the Worker for a slot.
  * Deduplicates concurrent calls so bundling only happens once.
+ *
+ * Safe from double-spawn: the synchronous check + assignment of
+ * `slot.initializing` happens before any `await`, so in single-threaded
+ * JS no other caller can slip past the guard.
  */
 function ensureAgent(slot: AgentSlot): Promise<AgentInfo> {
   if (slot.live) return Promise.resolve(slot.live);
@@ -270,153 +278,6 @@ function trackSessionClose(slot: AgentSlot, agents: AgentInfo[]): void {
       }
     }, IDLE_TIMEOUT_MS);
   }
-}
-
-/** Handle a WebSocket connection: create VoiceSession in main process. */
-function handleAgentWebSocket(
-  ws: WebSocket,
-  info: AgentInfo,
-  slot: AgentSlot,
-  agents: AgentInfo[],
-  sessions: Map<string, VoiceSession>,
-): void {
-  const sessionId = crypto.randomUUID();
-  const sid = sessionId.slice(0, 8);
-
-  let session: VoiceSession | null = null;
-  let ready = false;
-  const pendingMessages: { data: string | ArrayBuffer; isBinary: boolean }[] =
-    [];
-
-  function processMessage(
-    data: string | ArrayBuffer,
-    isBinary: boolean,
-  ): void {
-    if (isBinary) {
-      if (data instanceof ArrayBuffer) {
-        session?.onAudio(new Uint8Array(data));
-      }
-      return;
-    }
-
-    let json;
-    try {
-      json = JSON.parse(data as string);
-    } catch {
-      return;
-    }
-    const parsed = ControlMessageSchema.safeParse(json);
-    if (!parsed.success) return;
-
-    if (parsed.data.type === MSG.AUDIO_READY) {
-      session?.onAudioReady();
-    } else if (parsed.data.type === MSG.CANCEL) {
-      session?.onCancel();
-    } else if (parsed.data.type === MSG.RESET) {
-      session?.onReset();
-    }
-  }
-
-  ws.onopen = async () => {
-    trackSessionOpen(slot);
-    log.info({ slug: info.slug, sid }, "Session opened");
-
-    const toolExecutor = new WorkerToolExecutor(info.worker);
-
-    const deps: SessionDeps = {
-      config: {
-        ...slot.platformConfig,
-        ttsConfig: { ...slot.platformConfig.ttsConfig },
-      },
-      connectStt,
-      callLLM,
-      ttsClient: new TtsClient(slot.platformConfig.ttsConfig),
-      toolExecutor,
-      normalizeVoiceText,
-    };
-
-    session = new VoiceSession(
-      sessionId,
-      ws,
-      info.config,
-      info.toolSchemas,
-      deps,
-    );
-    sessions.set(sessionId, session);
-
-    log.info(
-      { slug: info.slug, sid, tools: info.toolSchemas.length },
-      "Session configured",
-    );
-
-    await session.start();
-    ready = true;
-
-    for (const msg of pendingMessages) {
-      processMessage(msg.data, msg.isBinary);
-    }
-    pendingMessages.length = 0;
-  };
-
-  ws.onmessage = async (event) => {
-    const isBinary = event.data instanceof ArrayBuffer ||
-      event.data instanceof Blob;
-
-    if (!ready) {
-      if (!isBinary) {
-        try {
-          const json = JSON.parse(event.data as string);
-          if (json.type === MSG.PING) {
-            ws.send(JSON.stringify({ type: MSG.PONG }));
-            return;
-          }
-        } catch {
-          // ignore parse errors
-        }
-        pendingMessages.push({ data: event.data as string, isBinary: false });
-      }
-      return;
-    }
-
-    if (isBinary) {
-      if (event.data instanceof ArrayBuffer) {
-        session?.onAudio(new Uint8Array(event.data));
-      } else if (event.data instanceof Blob) {
-        const buf = await event.data.arrayBuffer();
-        session?.onAudio(new Uint8Array(buf));
-      }
-      return;
-    }
-
-    let data: Record<string, unknown>;
-    try {
-      data = JSON.parse(event.data as string);
-    } catch {
-      log.warn({ sid }, "Unparseable JSON from client");
-      return;
-    }
-
-    if (data.type === MSG.PING) {
-      ws.send(JSON.stringify({ type: MSG.PONG }));
-      return;
-    }
-
-    processMessage(event.data as string, false);
-  };
-
-  ws.onclose = async () => {
-    log.info({ slug: info.slug, sid }, "Session closed");
-    if (session) {
-      await session.stop();
-      sessions.delete(sessionId);
-    }
-    trackSessionClose(slot, agents);
-  };
-
-  ws.onerror = (event) => {
-    const msg = event instanceof ErrorEvent ? event.message : "WebSocket error";
-    log.error({ slug: info.slug, sid, error: msg }, "WS error");
-  };
 }
 
 export async function createOrchestrator(opts: {
@@ -506,9 +367,13 @@ export async function createOrchestrator(opts: {
     const cards = [...slots.values()]
       .map(
         (s) =>
-          `<a href="/${s.slug}/" style="display:block;padding:1rem;margin:0.5rem 0;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;">
-        <strong>${s.live?.name ?? s.slug}</strong>
-        <span style="color:#888;margin-left:0.5rem">/${s.slug}/</span>
+          `<a href="/${
+            encodeURIComponent(s.slug)
+          }/" style="display:block;padding:1rem;margin:0.5rem 0;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;">
+        <strong>${escapeHtml(s.live?.name ?? s.slug)}</strong>
+        <span style="color:#888;margin-left:0.5rem">/${
+            escapeHtml(s.slug)
+          }/</span>
       </a>`,
       )
       .join("\n");
@@ -568,7 +433,36 @@ export async function createOrchestrator(opts: {
       }
 
       const { socket, response } = Deno.upgradeWebSocket(c.req.raw);
-      handleAgentWebSocket(socket, info, slot, agents, sessions);
+      handleSessionWebSocket(socket, sessions, {
+        createSession: (sessionId, ws) => {
+          const toolExecutor = new WorkerToolExecutor(info.worker);
+          const deps: SessionDeps = {
+            config: {
+              ...slot.platformConfig,
+              ttsConfig: { ...slot.platformConfig.ttsConfig },
+            },
+            connectStt,
+            callLLM,
+            ttsClient: new TtsClient(slot.platformConfig.ttsConfig),
+            toolExecutor,
+            normalizeVoiceText,
+            executeBuiltinTool,
+          };
+          return {
+            session: new VoiceSession(
+              sessionId,
+              ws,
+              info.config,
+              info.toolSchemas,
+              deps,
+            ),
+            agentConfig: info.config,
+          };
+        },
+        logContext: { slug: info.slug },
+        onOpen: () => trackSessionOpen(slot),
+        onClose: () => trackSessionClose(slot, agents),
+      });
       return response;
     });
 
@@ -578,8 +472,8 @@ export async function createOrchestrator(opts: {
       app.get(`/${slug}/*`, async (c) => {
         // Strip /:slug/ prefix to get the file path
         const pathname = c.req.path.slice(slug.length + 2);
-        const ext = "." + pathname.split(".").pop();
-        const mime = MIME_TYPES[ext];
+        const ext = pathname.split(".").pop() ?? "";
+        const mime = typeByExtension(ext);
         if (mime) {
           try {
             const filePath = `${clientDir}/${pathname}`;

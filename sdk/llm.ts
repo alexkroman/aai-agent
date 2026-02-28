@@ -20,26 +20,32 @@ function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   });
 }
 
+/** Options for callLLM. */
+export interface CallLLMOptions {
+  messages: ChatMessage[];
+  tools: ToolSchema[];
+  apiKey: string;
+  model: string;
+  signal?: AbortSignal;
+  gatewayBase?: string;
+  /** Injectable fetch — defaults to globalThis.fetch. */
+  fetch?: typeof globalThis.fetch;
+}
+
 /**
  * Call the AssemblyAI LLM Gateway (OpenAI-compatible).
  */
-export async function callLLM(
-  messages: ChatMessage[],
-  tools: ToolSchema[],
-  apiKey: string,
-  model: string,
-  signal?: AbortSignal,
-  gatewayBase?: string,
-): Promise<LLMResponse> {
-  const base = gatewayBase ?? "https://llm-gateway.assemblyai.com/v1";
+export async function callLLM(opts: CallLLMOptions): Promise<LLMResponse> {
+  const base = opts.gatewayBase ?? "https://llm-gateway.assemblyai.com/v1";
+  const fetchFn = opts.fetch ?? globalThis.fetch;
 
   const body: Record<string, unknown> = {
-    model,
-    messages: sanitizeMessages(messages),
+    model: opts.model,
+    messages: sanitizeMessages(opts.messages),
   };
 
-  if (tools.length > 0) {
-    body.tools = tools.map((t) => ({
+  if (opts.tools.length > 0) {
+    body.tools = opts.tools.map((t) => ({
       type: "function",
       function: {
         name: t.name,
@@ -49,14 +55,14 @@ export async function callLLM(
     }));
   }
 
-  const resp = await fetch(`${base}/chat/completions`, {
+  const resp = await fetchFn(`${base}/chat/completions`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${opts.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    signal,
+    signal: opts.signal,
   });
 
   if (!resp.ok) {
@@ -69,7 +75,8 @@ export async function callLLM(
   if (!parsed.success) {
     throw new Error(
       `Invalid LLM response: ${
-        parsed.error.issues.map((i) => i.message).join(", ")
+        parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join(", ")
       }`,
     );
   }

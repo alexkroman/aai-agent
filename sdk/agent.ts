@@ -26,6 +26,20 @@ export interface ToolDef<
 }
 
 /**
+ * Internal representation of a tool after registration.
+ * The handler accepts `Record<string, unknown>` because Zod validation
+ * guarantees correctness at runtime before the handler is called.
+ */
+export interface StoredToolDef {
+  description: string;
+  parameters: z.ZodObject<z.ZodRawShape>;
+  handler: (
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<unknown> | unknown;
+}
+
+/**
  * A voice agent definition with chainable .tool() builder,
  * .routes() for Hono composability, and .serve() for standalone mode.
  *
@@ -49,7 +63,7 @@ export interface ToolDef<
  */
 export class Agent {
   readonly config: AgentOptions;
-  readonly tools = new Map<string, ToolDef>();
+  readonly tools = new Map<string, StoredToolDef>();
 
   constructor(config: AgentOptions) {
     this.config = config;
@@ -60,7 +74,16 @@ export class Agent {
     name: string,
     def: ToolDef<T>,
   ): this {
-    this.tools.set(name, def as unknown as ToolDef);
+    if (this.tools.has(name)) {
+      throw new Error(`Tool "${name}" is already registered`);
+    }
+    // Safe: Zod validates args at runtime before handler is called.
+    // The handler accepts z.infer<T> which is a subtype of Record<string, unknown>.
+    this.tools.set(name, {
+      description: def.description,
+      parameters: def.parameters,
+      handler: def.handler as StoredToolDef["handler"],
+    });
     return this;
   }
 

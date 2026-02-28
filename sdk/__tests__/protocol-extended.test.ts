@@ -2,31 +2,39 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { z } from "zod";
 import { agentToolsToSchemas, zodToJsonSchema } from "../protocol.ts";
-import type { ToolDef } from "../../sdk/agent.ts";
+import type { StoredToolDef } from "../../sdk/agent.ts";
+
+const $schema = "https://json-schema.org/draft/2020-12/schema";
 
 describe("zodToJsonSchema — edge cases", () => {
   it("handles boolean type", () => {
     const schema = z.object({ active: z.boolean() });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: { active: { type: "boolean" } },
       required: ["active"],
+      additionalProperties: false,
     });
   });
 
   it("handles optional boolean", () => {
     const schema = z.object({ verbose: z.boolean().optional() });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: { verbose: { type: "boolean" } },
+      additionalProperties: false,
     });
   });
 
   it("handles empty parameters object", () => {
     const schema = z.object({});
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: {},
+      additionalProperties: false,
     });
   });
 
@@ -38,6 +46,7 @@ describe("zodToJsonSchema — edge cases", () => {
       active: z.boolean().optional(),
     });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: {
         name: { type: "string" },
@@ -46,6 +55,7 @@ describe("zodToJsonSchema — edge cases", () => {
         active: { type: "boolean" },
       },
       required: ["name", "email"],
+      additionalProperties: false,
     });
   });
 
@@ -54,11 +64,13 @@ describe("zodToJsonSchema — edge cases", () => {
       color: z.enum(["red", "green", "blue"]),
     });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: {
         color: { type: "string", enum: ["red", "green", "blue"] },
       },
       required: ["color"],
+      additionalProperties: false,
     });
   });
 
@@ -71,6 +83,7 @@ describe("zodToJsonSchema — edge cases", () => {
       }),
     });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: {
         address: {
@@ -81,9 +94,11 @@ describe("zodToJsonSchema — edge cases", () => {
             zip: { type: "string" },
           },
           required: ["street", "city"],
+          additionalProperties: false,
         },
       },
       required: ["address"],
+      additionalProperties: false,
     });
   });
 
@@ -92,22 +107,23 @@ describe("zodToJsonSchema — edge cases", () => {
       tags: z.array(z.string()),
     });
     expect(zodToJsonSchema(schema)).toEqual({
+      $schema,
       type: "object",
       properties: {
         tags: { type: "array", items: { type: "string" } },
       },
       required: ["tags"],
+      additionalProperties: false,
     });
   });
 
-  it("handles default values (unwraps to inner type)", () => {
+  it("handles default values", () => {
     const schema = z.object({
       count: z.number().default(10),
     });
-    // Default fields are not optional from Zod's perspective (they have a value)
     const result = zodToJsonSchema(schema);
     expect(result.properties).toEqual({
-      count: { type: "number" },
+      count: { default: 10, type: "number" },
     });
   });
 
@@ -123,7 +139,7 @@ describe("zodToJsonSchema — edge cases", () => {
 
 describe("agentToolsToSchemas — multiple tools", () => {
   it("converts multiple tool definitions", () => {
-    const tools = new Map<string, ToolDef>();
+    const tools = new Map<string, StoredToolDef>();
     tools.set("tool_a", {
       description: "Tool A",
       parameters: z.object({ x: z.string() }),
@@ -145,21 +161,25 @@ describe("agentToolsToSchemas — multiple tools", () => {
       name: "tool_a",
       description: "Tool A",
       parameters: {
+        $schema,
         type: "object",
         properties: { x: { type: "string" } },
         required: ["x"],
+        additionalProperties: false,
       },
     });
     expect(schemas[1]).toEqual({
       name: "tool_b",
       description: "Tool B",
       parameters: {
+        $schema,
         type: "object",
         properties: {
           y: { type: "number" },
           z: { type: "boolean", description: "Flag" },
         },
         required: ["z"],
+        additionalProperties: false,
       },
     });
   });

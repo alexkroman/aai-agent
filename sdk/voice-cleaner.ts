@@ -1,6 +1,10 @@
 // voice-cleaner.ts — Text normalization for TTS.
 
-// Inline number-to-words to avoid npm dependency.
+import { remark } from "remark";
+import stripMarkdown from "strip-markdown";
+import { escape as escapeRegExp } from "@std/regexp/escape";
+
+// Inline number-to-words (npm:number-to-words is CJS and can't be bundled by esbuild).
 const ONES = [
   "",
   "one",
@@ -124,19 +128,6 @@ function toWordsOrdinal(n: number): string {
   return words + "th";
 }
 
-// Pre-compiled regex patterns
-const RE_CODE_BLOCKS = /```[\s\S]*?```/g;
-const RE_INDENTED_CODE = /^(?: {4}|\t).+$/gm;
-const RE_INLINE_CODE = /`([^`]+)`/g;
-const RE_BOLD_ITALIC_STAR = /\*{1,3}([^*]+)\*{1,3}/g;
-const RE_BOLD_ITALIC_UNDER = /_{1,3}([^_]+)_{1,3}/g;
-const RE_HEADERS = /^#{1,6}\s+/gm;
-const RE_LINKS = /\[([^\]]+)\]\([^)]*\)/g;
-const RE_IMAGES = /!\[[^\]]*\]\([^)]*\)/g;
-const RE_BULLETS = /^\s*[-*+]\s+/gm;
-const RE_NUMBERED = /^\s*\d+\.\s+/gm;
-const RE_BLOCKQUOTES = /^\s*>\s?/gm;
-const RE_HORIZ_RULES = /^[-*_]{3,}\s*$/gm;
 const RE_URLS = /https?:\/\/\S+/g;
 const RE_CURRENCY = /([$£€¥])(\d+(?:,\d{3})*(?:\.\d{2})?)/g;
 const RE_PERCENTAGES = /(\d+(?:\.\d+)?)%/g;
@@ -181,24 +172,15 @@ function num2words(n: number): string {
   return `${intWords} point ${decWords}`;
 }
 
+const processor = remark().use(stripMarkdown);
+
 /**
  * Normalize text for TTS output.
  * Strips markdown, expands numbers/currency/units, collapses whitespace.
  */
 export function normalizeVoiceText(text: string): string {
   // Strip markdown
-  text = text.replace(RE_CODE_BLOCKS, "");
-  text = text.replace(RE_INDENTED_CODE, "");
-  text = text.replace(RE_INLINE_CODE, "$1");
-  text = text.replace(RE_BOLD_ITALIC_STAR, "$1");
-  text = text.replace(RE_BOLD_ITALIC_UNDER, "$1");
-  text = text.replace(RE_HEADERS, "");
-  text = text.replace(RE_IMAGES, ""); // Must run before LINKS
-  text = text.replace(RE_LINKS, "$1");
-  text = text.replace(RE_BULLETS, "");
-  text = text.replace(RE_NUMBERED, "");
-  text = text.replace(RE_BLOCKQUOTES, "");
-  text = text.replace(RE_HORIZ_RULES, "");
+  text = String(processor.processSync(text));
 
   // Remove URLs
   text = text.replace(RE_URLS, "");
@@ -240,13 +222,13 @@ export function normalizeVoiceText(text: string): string {
   // Units: Hz → hertz, kHz → kilohertz, etc.
   for (const [abbr, full] of Object.entries(UNIT_MAP)) {
     const re = new RegExp(
-      `(\\d)\\s*${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      `(\\d)\\s*${escapeRegExp(abbr)}\\b`,
       "g",
     );
     text = text.replace(re, `$1 ${full}`);
   }
 
-  // Numbers: 123 → one hundred and twenty-three
+  // Numbers: 123 → one hundred twenty-three
   text = text.replace(RE_NUMBERS, (match) => {
     try {
       const n = match.includes(".") ? parseFloat(match) : parseInt(match);
