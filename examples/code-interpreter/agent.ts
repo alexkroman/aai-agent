@@ -1,5 +1,7 @@
 import { defineAgent, tool, z } from "@aai/sdk";
 
+const TIMEOUT_MS = 5_000;
+
 export default defineAgent({
   name: "Coda",
   instructions:
@@ -8,7 +10,7 @@ export default defineAgent({
 CRITICAL RULES:
 - You MUST use the run_code tool for ANY question involving math, counting, string manipulation, data processing, logic, or anything that benefits from exact computation.
 - NEVER do mental math or estimate. Always write code and report the exact result.
-- When you run code, use print() to output intermediate steps and return the final answer.
+- Use console.log() to output intermediate steps. The last expression is captured automatically.
 - If the code throws an error, fix it and try again.
 - Explain what the code does briefly, then give the answer.
 - Keep your spoken responses short — just say what the code found.
@@ -29,42 +31,50 @@ Examples of questions you MUST use code for:
   tools: {
     run_code: tool({
       description:
-        "Execute JavaScript code and return the result. Use print() to log output. The return value of the last expression is captured as the result. Available globals: print() for logging, standard JavaScript built-ins (Math, Date, JSON, Array, Object, String, Number, RegExp, Map, Set, etc). No network access or filesystem access.",
+        "Execute JavaScript in a sandboxed Deno subprocess with no permissions. Use console.log() for output. No network or filesystem access.",
       parameters: z.object({
         code: z
           .string()
           .describe(
-            "JavaScript code to execute. Use print() for output. The value of the last expression is returned as the result.",
+            "JavaScript code to execute. Use console.log() for output.",
           ),
       }),
-      handler: ({ code }) => {
-        const logs: string[] = [];
-        const print = (...items: unknown[]) => {
-          logs.push(
-            items
-              .map((i) => typeof i === "object" ? JSON.stringify(i) : String(i))
-              .join(" "),
-          );
-        };
+      handler: async ({ code }) => {
+        const cmd = new Deno.Command("deno", {
+          args: [
+            "run",
+            "--deny-net",
+            "--deny-read",
+            "--deny-write",
+            "--deny-env",
+            "--deny-sys",
+            "--deny-run",
+            "--deny-ffi",
+            "-",
+          ],
+          stdin: "piped",
+          stdout: "piped",
+          stderr: "piped",
+        });
+
+        const proc = cmd.spawn();
+        const writer = proc.stdin.getWriter();
+        await writer.write(new TextEncoder().encode(code));
+        await writer.close();
+
+        const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
 
         try {
-          const fn = new Function("print", code);
-          const result = fn(print);
-          const output = logs.length ? logs.join("\n") : "";
-          const resultStr = result !== undefined
-            ? typeof result === "object"
-              ? JSON.stringify(result, null, 2)
-              : String(result)
-            : "";
-          if (output && resultStr) {
-            return { output, result: resultStr };
-          }
-          return output || resultStr || "Code ran successfully (no output)";
-        } catch (e) {
-          return {
-            error: (e as Error).message,
-            output: logs.length ? logs.join("\n") : undefined,
-          };
+          const { code: exit, stdout, stderr } = await proc.output();
+          clearTimeout(timer);
+
+          const out = new TextDecoder().decode(stdout).trim();
+          const err = new TextDecoder().decode(stderr).trim();
+
+          if (exit !== 0) return { error: err || "Execution failed" };
+          return out || "Code ran successfully (no output)";
+        } catch {
+          return { error: "Execution timed out" };
         }
       },
     }),
