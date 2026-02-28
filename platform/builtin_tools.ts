@@ -1,5 +1,6 @@
 import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
+import { DOMParser } from "@b-fuze/deno-dom";
 import { mapNotNullish } from "@std/collections/map-not-nullish";
 import { createLogger } from "../sdk/logger.ts";
 import { zodToJsonSchema } from "./protocol.ts";
@@ -8,23 +9,25 @@ import type { ToolSchema } from "./types.ts";
 const log = createLogger("builtin-tools");
 
 export function htmlToText(html: string): string {
-  let text = html;
-  text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
-  text = text.replace(/<head[\s\S]*?<\/head>/gi, "");
-  text = text.replace(/<\/(p|div|h[1-6]|li|tr|blockquote|br\s*\/?)>/gi, "\n");
-  text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<[^>]+>/g, "");
-  text = text.replace(/&amp;/g, "&");
-  text = text.replace(/&lt;/g, "<");
-  text = text.replace(/&gt;/g, ">");
-  text = text.replace(/&quot;/g, '"');
-  text = text.replace(/&#39;/g, "'");
-  text = text.replace(/&nbsp;/g, " ");
-  text = text.replace(/[ \t]+/g, " ");
-  text = text.replace(/\n[ \t]+/g, "\n");
-  text = text.replace(/\n{3,}/g, "\n\n");
-  return text.trim();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  if (!doc) return "";
+  for (const tag of ["script", "style", "head"]) {
+    for (const el of doc.querySelectorAll(tag)) el.remove();
+  }
+  for (
+    const el of doc.querySelectorAll(
+      "p,div,h1,h2,h3,h4,h5,h6,li,tr,blockquote",
+    )
+  ) {
+    el.append("\n");
+  }
+  for (const el of doc.querySelectorAll("br")) el.replaceWith("\n");
+  const text = doc.body?.textContent ?? doc.textContent ?? "";
+  return text
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 interface BuiltinTool {

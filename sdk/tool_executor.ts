@@ -1,4 +1,4 @@
-// tool-executor.ts — Tool execution types and timeout utility.
+// Tool execution types.
 
 import { z } from "zod";
 
@@ -19,19 +19,4 @@ export interface ToolContext {
   fetch: typeof globalThis.fetch;
   /** Abort signal for cancellation and timeouts. */
   signal?: AbortSignal;
-}
-
-/** Race a promise against AbortSignal.timeout(). */
-export function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  _message?: string,
-): Promise<T> {
-  const signal = AbortSignal.timeout(ms);
-  return new Promise<T>((resolve, reject) => {
-    signal.addEventListener("abort", () => reject(signal.reason), {
-      once: true,
-    });
-    promise.then(resolve, reject);
-  });
 }

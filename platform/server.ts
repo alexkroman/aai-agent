@@ -1,20 +1,17 @@
 import { Hono } from "@hono/hono";
+import { serveStatic } from "@hono/hono/deno";
 import type { PlatformConfig } from "./config.ts";
 import { applyMiddleware } from "./middleware.ts";
 import { renderAgentPage } from "./html.ts";
 import { favicon } from "./routes/favicon.ts";
 import { createHealthRoute } from "./routes/health.ts";
-import { createServerSession } from "./session-factory.ts";
+import { createServerSession } from "./session_factory.ts";
 import { agentToolsToSchemas } from "./protocol.ts";
-import { getBuiltinToolSchemas } from "./builtin-tools.ts";
-import { ToolExecutor } from "./tool-executor.ts";
-import { type SessionDeps, ServerSession } from "./session.ts";
-import { handleSessionWebSocket } from "./ws-handler.ts";
-import { typeByExtension } from "@std/media-types";
-import { createLogger } from "../sdk/logger.ts";
+import { getBuiltinToolSchemas } from "./builtin_tools.ts";
+import { ToolExecutor } from "./tool_executor.ts";
+import { ServerSession, type SessionDeps } from "./session.ts";
+import { handleSessionWebSocket } from "./ws_handler.ts";
 import type { Agent } from "../sdk/agent.ts";
-
-const log = createLogger("server");
 
 export interface ServerHandlerOptions {
   agent: Agent;
@@ -69,29 +66,7 @@ export function createAgentApp(options: ServerHandlerOptions): Hono {
   app.get("/", (c) => c.html(renderAgentPage(options.agent.config.name)));
 
   if (options.clientDir) {
-    const clientDir = options.clientDir;
-    app.get("/*", async (c) => {
-      const pathname = c.req.path.slice(1);
-      const ext = pathname.split(".").pop() ?? "";
-      const mime = typeByExtension(ext);
-      if (mime) {
-        try {
-          const filePath = `${clientDir}/${pathname}`;
-          const content = await Deno.readFile(filePath);
-          return c.body(content, {
-            headers: {
-              "Content-Type": mime,
-              "Cache-Control": "no-cache",
-            },
-          });
-        } catch (err) {
-          if (!(err instanceof Deno.errors.NotFound)) {
-            log.warn({ err, pathname }, "Unexpected error reading file");
-          }
-        }
-      }
-      return c.text("Not found", 404);
-    });
+    app.use("/*", serveStatic({ root: options.clientDir }));
   }
 
   return app;

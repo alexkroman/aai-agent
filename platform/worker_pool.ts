@@ -2,13 +2,13 @@ import { toFileUrl } from "@std/path";
 import * as Comlink from "comlink";
 import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
 import { createLogger } from "../sdk/logger.ts";
-import { getBuiltinToolSchemas } from "./builtin-tools.ts";
-import { withTimeout } from "../sdk/tool-executor.ts";
-import type { IToolExecutor } from "./tool-executor.ts";
+import { getBuiltinToolSchemas } from "./builtin_tools.ts";
+import { deadline } from "@std/async/deadline";
+import type { IToolExecutor } from "./tool_executor.ts";
 import type { AgentConfig } from "../sdk/types.ts";
 import type { ToolSchema } from "./types.ts";
-import type { WorkerApi } from "./worker-entry.ts";
-import type { AgentMetadata } from "./kv-store.ts";
+import type { WorkerApi } from "./worker_entry.ts";
+import type { AgentMetadata } from "./kv_store.ts";
 
 const log = createLogger("worker-pool");
 
@@ -39,10 +39,9 @@ export class ComlinkToolExecutor implements IToolExecutor {
 
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     try {
-      return await withTimeout(
+      return await deadline(
         this.workerApi.executeTool(name, args),
         TOOL_TIMEOUT_MS,
-        `Tool "${name}" timed out after 30s`,
       );
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -92,10 +91,9 @@ export async function spawnAgent(
 
   let info;
   try {
-    info = await withTimeout(
+    info = await deadline(
       workerApi.getConfig(),
       15_000,
-      `Worker ${slug} ready timed out`,
     );
   } catch (err) {
     worker.terminate();

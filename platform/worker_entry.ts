@@ -2,7 +2,7 @@ import * as Comlink from "comlink";
 import { agentToolsToSchemas } from "./protocol.ts";
 import type { Agent } from "../sdk/agent.ts";
 import type { ToolSchema, WorkerReadyConfig } from "./types.ts";
-import { TIMEOUTS } from "../sdk/shared-protocol.ts";
+import { TIMEOUTS } from "../sdk/shared_protocol.ts";
 
 export interface WorkerApi {
   getConfig(): { config: WorkerReadyConfig; toolSchemas: ToolSchema[] };
@@ -34,20 +34,14 @@ export function startWorker(
       if (!tool) return `Error: Unknown tool "${name}"`;
 
       try {
-        const signal = AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER);
         const ctx = {
           secrets: { ...secrets },
           fetch: globalThis.fetch,
-          signal,
+          signal: AbortSignal.timeout(TIMEOUTS.TOOL_HANDLER),
         };
-        const result = await Promise.race([
-          Promise.resolve(tool.handler(args as Record<string, unknown>, ctx)),
-          new Promise<never>((_resolve, reject) => {
-            signal.addEventListener("abort", () => reject(signal.reason), {
-              once: true,
-            });
-          }),
-        ]);
+        const result = await Promise.resolve(
+          tool.handler(args as Record<string, unknown>, ctx),
+        );
         if (result == null) return "null";
         return typeof result === "string" ? result : JSON.stringify(result);
       } catch (err) {

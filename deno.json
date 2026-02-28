@@ -1,11 +1,15 @@
 {
+  "exports": {
+    ".": "./mod.ts",
+    "./ui": "./ui/mod.ts"
+  },
   "tasks": {
-    "dev": "deno run --allow-all scripts/cli.ts dev",
-    "serve": "deno run --allow-all --unstable-worker-options --unstable-kv main.ts",
-    "build": "deno run --allow-all scripts/cli.ts build",
-    "deploy": "deno run --allow-all scripts/cli.ts deploy",
+    "dev": "deno run --allow-all cli/cli.ts dev",
+    "serve": "deno run --allow-net --allow-read --allow-env --allow-write=dist --unstable-worker-options --unstable-kv main.ts",
+    "build": "deno run --allow-all cli/cli.ts build",
+    "deploy": "deno run --allow-all cli/cli.ts deploy",
     "test": "deno test --allow-net --allow-read --allow-env --unstable-kv",
-    "check": "deno check platform/**/*.ts sdk/**/*.ts ui/**/*.ts ui/**/*.tsx scripts/**/*.ts examples/**/*.ts main.ts && deno lint && deno fmt --check && deno test --allow-net --allow-read --allow-env --unstable-kv"
+    "check": "deno check platform/**/*.ts sdk/**/*.ts ui/**/*.ts ui/**/*.tsx cli/**/*.ts examples/**/*.ts main.ts mod.ts && deno lint && deno fmt --check && deno test --allow-net --allow-read --allow-env --unstable-kv"
   },
   "imports": {
     "@b-fuze/deno-dom": "jsr:@b-fuze/deno-dom@^0.1.56",
@@ -20,15 +24,11 @@
     "@std/collections": "jsr:@std/collections@^1",
     "@std/dotenv": "jsr:@std/dotenv@*",
     "@std/fs": "jsr:@std/fs@^1",
-    "@std/media-types": "jsr:@std/media-types@^1",
-    "@std/regexp": "jsr:@std/regexp@^1",
-    "@aai/sdk": "./mod.ts",
+"@aai/sdk": "./mod.ts",
     "comlink": "npm:comlink@^4",
     "zod": "npm:zod@^4",
     "@hono/hono": "jsr:@hono/hono@^4",
     "@pikisoft/duckduckgo-search": "jsr:@pikisoft/duckduckgo-search@*",
-    "remark": "npm:remark@^15",
-    "strip-markdown": "npm:strip-markdown@^6",
 "esbuild": "npm:esbuild@^0.27",
     "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11",
     "preact": "npm:preact@^10",
@@ -44,21 +44,12 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact"
   },
-  "test": {
-    "include": [
-      "sdk/__tests__/",
-      "examples/",
-      "platform/__tests__/",
-      "ui/__tests__/",
-      "scripts/__tests__/"
-    ]
-  },
   "fmt": {
     "include": [
       "platform/",
       "sdk/",
       "ui/",
-      "scripts/",
+      "cli/",
       "examples/",
       "main.ts",
       "mod.ts"
@@ -69,7 +60,7 @@
       "platform/",
       "sdk/",
       "ui/",
-      "scripts/",
+      "cli/",
       "examples/",
       "main.ts",
       "mod.ts"

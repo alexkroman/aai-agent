@@ -1,10 +1,7 @@
-import { TIMEOUTS } from "../sdk/shared-protocol.ts";
+import { deadline } from "@std/async/deadline";
+import { TIMEOUTS } from "../sdk/shared_protocol.ts";
 import { createLogger } from "../sdk/logger.ts";
-import {
-  type ToolContext,
-  type ToolHandler,
-  withTimeout,
-} from "../sdk/tool-executor.ts";
+import type { ToolContext, ToolHandler } from "../sdk/tool_executor.ts";
 
 const log = createLogger("tool-executor");
 
@@ -35,12 +32,11 @@ export async function executeToolCall(
       fetch: globalThis.fetch,
       signal,
     };
-    const result = await withTimeout(
+    const result = await deadline(
       Promise.resolve(
         tool.handler(parsed.data as Record<string, unknown>, ctx),
       ),
       TIMEOUTS.TOOL_HANDLER,
-      `Tool "${name}" timed out after ${TIMEOUTS.TOOL_HANDLER}ms`,
     );
     if (result === null || result === undefined) return "null";
     return typeof result === "string" ? result : JSON.stringify(result);

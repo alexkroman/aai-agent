@@ -1,4 +1,4 @@
-import { MSG } from "../sdk/shared-protocol.ts";
+import { MSG } from "../sdk/shared_protocol.ts";
 import { createLogger } from "../sdk/logger.ts";
 import type { AgentConfig } from "../sdk/types.ts";
 import { ControlMessageSchema } from "./types.ts";
@@ -53,13 +53,14 @@ export function handleSessionWebSocket(
   }
 
   function enqueueControl(raw: string): void {
-    processingChain = processingChain.then(() => processControlMessage(raw));
-    processingChain.catch((err) => {
-      log.error(
-        { ...ctx, sid, error: err },
-        "Control message processing error",
-      );
-    });
+    processingChain = processingChain
+      .then(() => processControlMessage(raw))
+      .catch((err) => {
+        log.error(
+          { ...ctx, sid, error: err },
+          "Control message processing error",
+        );
+      });
   }
 
   ws.onopen = () => {
