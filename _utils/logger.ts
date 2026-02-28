@@ -1,16 +1,18 @@
-import {
-  ConsoleHandler,
-  getLogger as stdGetLogger,
-  type Logger,
-  setup,
-} from "@std/log";
+import { ConsoleHandler, getLogger, type Logger, setup } from "@std/log";
 
 export type { Logger };
 
-const VALID_LEVELS = new Set(["DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"]);
+type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR" | "CRITICAL";
+const VALID_LEVELS = new Set<LogLevel>([
+  "DEBUG",
+  "INFO",
+  "WARN",
+  "ERROR",
+  "CRITICAL",
+]);
 const raw = (Deno.env.get("LOG_LEVEL") ?? "INFO").toUpperCase();
-const level = VALID_LEVELS.has(raw)
-  ? (raw as "DEBUG" | "INFO" | "WARN" | "ERROR" | "CRITICAL")
+const level: LogLevel = VALID_LEVELS.has(raw as LogLevel)
+  ? raw as LogLevel
   : "INFO";
 
 setup({
@@ -18,6 +20,4 @@ setup({
   loggers: { default: { level, handlers: ["default"] } },
 });
 
-export function getLogger(name: string): Logger {
-  return stdGetLogger(name);
-}
+export { getLogger };

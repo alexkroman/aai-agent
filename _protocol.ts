@@ -1,7 +1,4 @@
-// WebSocket protocol types — the single source of truth for the wire format.
-// Types only, no runtime code. Imported by both server/ and ui/.
-
-// ── Server -> Browser messages ──────────────────────────────────
+// WebSocket wire-format types shared by server/ and ui/.
 
 export interface ReadyMessage {
   type: "ready";
@@ -70,8 +67,6 @@ export type ServerMessage =
   | ResetMessage
   | ErrorMessage
   | PongMessage;
-
-// ── Browser -> Server messages ──────────────────────────────────
 
 export interface AudioReadyMessage {
   type: "audio_ready";

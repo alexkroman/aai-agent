@@ -1,11 +1,11 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import {
+  type AgentState,
   INITIAL_BACKOFF_MS,
   MAX_BACKOFF_MS,
   VALID_TRANSITIONS,
 } from "./types.ts";
-import type { AgentState } from "./types.ts";
 
 const ALL_STATES: AgentState[] = [
   "connecting",

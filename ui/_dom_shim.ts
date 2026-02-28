@@ -1,5 +1,4 @@
-// Patches deno-dom's Element.prototype so Preact's style diffing works in tests.
-// Import for side effects only.
+// Side-effect import: patches deno-dom for Preact style diffing in tests.
 
 import { Element as DOMElement } from "@b-fuze/deno-dom";
 

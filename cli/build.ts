@@ -1,9 +1,6 @@
-// build command — Bundle agents for production into dist/bundle/.
-
 import { log } from "./_output.ts";
 import { discoverAgents } from "./_discover.ts";
 import { bundleAgent } from "./_bundler.ts";
-import type { BundleResult } from "./_bundler.ts";
 
 export interface BuildOpts {
   outDir: string;
@@ -26,7 +23,7 @@ export async function runBuild(
     const t0 = performance.now();
     log.agent(agent.slug);
     const outDir = `${opts.outDir}/${agent.slug}`;
-    const result: BundleResult = await bundle(agent, outDir);
+    const result = await bundle(agent, outDir);
     log.size("worker.js", result.workerBytes);
     log.size("client.js", result.clientBytes);
     log.timing("done", performance.now() - t0);

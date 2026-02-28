@@ -31,7 +31,6 @@ function createSession(
   return { session, transport, ...mocks };
 }
 
-/** Create session that captures STT event callbacks for triggering turns in tests. */
 function createSessionWithSttEvents(
   overrides?: Parameters<typeof createMockSessionDeps>[0],
   agentConfig?: Partial<AgentConfig>,
@@ -140,7 +139,8 @@ describe("ServerSession", () => {
 
       session.onCancel();
       expect(sttHandle.clearCalled).toBe(true);
-      expect(getSentJson(transport).find((m) => m.type === "cancelled")).toBeDefined();
+      expect(getSentJson(transport).find((m) => m.type === "cancelled"))
+        .toBeDefined();
     });
   });
 
@@ -154,7 +154,8 @@ describe("ServerSession", () => {
       expect(sttHandle.clearCalled).toBe(true);
       const messages = getSentJson(transport);
       expect(messages.find((m) => m.type === "reset")).toBeDefined();
-      expect(messages.filter((m) => m.type === "greeting").length).toBeGreaterThan(0);
+      expect(messages.filter((m) => m.type === "greeting").length)
+        .toBeGreaterThan(0);
     });
   });
 
@@ -168,9 +169,13 @@ describe("ServerSession", () => {
       await ctx.session.turnPromise;
 
       const messages = getSentJson(ctx.transport);
-      expect(messages.find((m) => m.type === "turn")!.text).toBe("What is the weather?");
+      expect(messages.find((m) => m.type === "turn")!.text).toBe(
+        "What is the weather?",
+      );
       expect(messages.find((m) => m.type === "thinking")).toBeDefined();
-      expect(messages.find((m) => m.type === "chat")!.text).toBe("Hello from LLM");
+      expect(messages.find((m) => m.type === "chat")!.text).toBe(
+        "Hello from LLM",
+      );
       expect(ctx.llmCalls.length).toBe(1);
       expect(ctx.ttsClient.synthesizeCalls.length).toBeGreaterThan(0);
     });
@@ -214,7 +219,8 @@ describe("ServerSession", () => {
       ctx.events.current!.onTurn("Hello");
       await ctx.session.turnPromise;
 
-      expect(getSentJson(ctx.transport).find((m) => m.type === "error")).toBeDefined();
+      expect(getSentJson(ctx.transport).find((m) => m.type === "error"))
+        .toBeDefined();
     });
 
     it("sends TTS_DONE for empty response", async () => {
@@ -228,7 +234,8 @@ describe("ServerSession", () => {
       ctx.events.current!.onTurn("Hello");
       await ctx.session.turnPromise;
 
-      expect(getSentJson(ctx.transport).find((m) => m.type === "tts_done")).toBeDefined();
+      expect(getSentJson(ctx.transport).find((m) => m.type === "tts_done"))
+        .toBeDefined();
     });
 
     it("relays STT transcript to browser", async () => {
@@ -237,7 +244,9 @@ describe("ServerSession", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       ctx.events.current!.onTranscript("partial text", false);
-      const transcript = getSentJson(ctx.transport).find((m) => m.type === "transcript");
+      const transcript = getSentJson(ctx.transport).find((m) =>
+        m.type === "transcript"
+      );
       expect(transcript).toBeDefined();
       expect(transcript!.text).toBe("partial text");
     });

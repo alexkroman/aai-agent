@@ -1,12 +1,9 @@
-// dev command — Start development server with watch mode and hot-reload.
-
 import { type BuildContext, context, type Plugin } from "esbuild";
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import { resolve } from "@std/path";
 import { log } from "./_output.ts";
 import { discoverAgents } from "./_discover.ts";
 import { bundleAgent, workletTextPlugin } from "./_bundler.ts";
-import type { AgentEntry } from "./_discover.ts";
 
 const configPath = resolve("deno.json");
 
@@ -30,7 +27,7 @@ const defaultDeps: DevDeps = {
   discover: discoverAgents,
   bundle: bundleAgent,
   esbuildContext: context,
-  spawn: (bundleDir: string, _port: number) => {
+  spawn: (bundleDir: string) => {
     const cmd = new Deno.Command("deno", {
       args: [
         "run",
@@ -64,7 +61,6 @@ export async function runDev(
     deps.exit(1);
   }
 
-  // 1. Bundle all agents
   log.header(`Bundling ${agents.length} agent(s)...`);
   for (const agent of agents) {
     log.agent(agent.slug);
@@ -74,7 +70,6 @@ export async function runDev(
     log.size("client.js", clientBytes);
   }
 
-  // 2. esbuild watch for each client
   const clientContexts: BuildContext[] = [];
   for (const agent of agents) {
     const slugDir = `${BUNDLE_DIR}/${agent.slug}`;
@@ -91,9 +86,7 @@ export async function runDev(
       treeShaking: true,
       minify: true,
       legalComments: "none",
-      define: {
-        "process.env.NODE_ENV": '"production"',
-      },
+      define: { "process.env.NODE_ENV": '"production"' },
       drop: ["debugger"],
       loader: { ".worklet.js": "text" },
       jsx: "automatic",
@@ -104,25 +97,20 @@ export async function runDev(
   }
   log.info("  esbuild watching clients");
 
-  // 3. Start orchestrator
   let orchestrator = deps.spawn(BUNDLE_DIR, opts.port);
 
-  // 4. Watch agent + server source -> re-bundle workers, restart
-  const watchDirs = [
-    ...agents.map((a: AgentEntry) => a.dir),
-    "server",
-  ];
+  const watchDirs = [...agents.map((a) => a.dir), "server"];
   const watcher = deps.watchFs(watchDirs, { recursive: true });
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   (async () => {
     for await (const event of watcher) {
-      const hasRelevantChange = event.paths.some((p: string) =>
+      const hasRelevantChange = event.paths.some((p) =>
         p.endsWith(".ts") || p.endsWith(".tsx")
       );
       if (!hasRelevantChange) continue;
       if (
-        event.paths.every((p: string) =>
+        event.paths.every((p) =>
           p.includes("_test.ts") || p.includes("_worker_entry")
         )
       ) continue;
@@ -152,7 +140,6 @@ export async function runDev(
   }
   log.info("  Watching for changes...\n");
 
-  // 5. Graceful shutdown
   const cleanup = () => {
     watcher.close();
     orchestrator.kill();

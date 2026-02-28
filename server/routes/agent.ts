@@ -91,45 +91,27 @@ export function createAgentRoutes(ctx: {
     return response;
   });
 
-  routes.get("/:slug/client.js", async (c) => {
-    const slug = c.req.param("slug");
-    if (!slots.has(slug)) {
-      throw new HTTPException(404, { message: "Agent not found" });
-    }
-
-    try {
-      const content = await Deno.readFile(`${bundleDir}/${slug}/client.js`);
-      return c.body(content, {
-        headers: {
-          "Content-Type": "application/javascript",
-          "Cache-Control": "no-cache",
-        },
-      });
-    } catch {
-      throw new HTTPException(404, { message: "Not found" });
-    }
-  });
-
-  routes.get("/:slug/client.js.map", async (c) => {
-    const slug = c.req.param("slug");
-    if (!slots.has(slug)) {
-      throw new HTTPException(404, { message: "Agent not found" });
-    }
-
-    try {
-      const content = await Deno.readFile(
-        `${bundleDir}/${slug}/client.js.map`,
-      );
-      return c.body(content, {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-        },
-      });
-    } catch {
-      throw new HTTPException(404, { message: "Not found" });
-    }
-  });
+  for (
+    const [file, contentType] of [
+      ["client.js", "application/javascript"],
+      ["client.js.map", "application/json"],
+    ] as const
+  ) {
+    routes.get(`/:slug/${file}`, async (c) => {
+      const slug = c.req.param("slug");
+      if (!slots.has(slug)) {
+        throw new HTTPException(404, { message: "Agent not found" });
+      }
+      try {
+        const content = await Deno.readFile(`${bundleDir}/${slug}/${file}`);
+        return c.body(content, {
+          headers: { "Content-Type": contentType, "Cache-Control": "no-cache" },
+        });
+      } catch {
+        throw new HTTPException(404, { message: "Not found" });
+      }
+    });
+  }
 
   routes.route("/:slug", favicon);
 

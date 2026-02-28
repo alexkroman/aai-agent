@@ -33,7 +33,6 @@ export interface AgentSlot {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-/** Create an ExecuteTool function that delegates to a worker via Comlink. */
 export function createComlinkExecutor(
   workerApi: Comlink.Remote<WorkerApi>,
 ): ExecuteTool {

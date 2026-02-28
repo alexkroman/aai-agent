@@ -1,5 +1,3 @@
-// Wires session + signals + context + theme + render.
-
 import { render } from "preact";
 import type { ComponentType } from "preact";
 import { VoiceSession } from "./session.ts";

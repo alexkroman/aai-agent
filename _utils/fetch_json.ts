@@ -5,15 +5,12 @@ export class HttpError extends Error {
   }
 }
 
-/** Fetch a URL and return the parsed JSON. Throws on non-OK status. */
 export async function fetchJSON(
   fetch: typeof globalThis.fetch,
   url: string,
   init?: RequestInit,
 ): Promise<unknown> {
   const resp = await fetch(url, init);
-  if (!resp.ok) {
-    throw new HttpError(resp.status, resp.statusText);
-  }
-  return await resp.json();
+  if (!resp.ok) throw new HttpError(resp.status, resp.statusText);
+  return resp.json();
 }

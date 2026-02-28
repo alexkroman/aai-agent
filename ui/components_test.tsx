@@ -1,5 +1,3 @@
-// Browser-level component tests using deno-dom + Preact.
-
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { render } from "preact";
@@ -15,8 +13,6 @@ import {
 } from "./components.tsx";
 import type { SessionSignals } from "./signals.tsx";
 import type { Message } from "./types.ts";
-
-// ── Helpers ──────────────────────────────────────────────────────
 
 let container: Element;
 
@@ -44,16 +40,12 @@ describe(
       render(null, container);
     });
 
-    // ── StateIndicator ──────────────────────────────────────────
-
     describe("StateIndicator", () => {
       it("renders the state label", () => {
         render(<StateIndicator state="listening" />, container);
         expect(container.textContent).toContain("listening");
       });
     });
-
-    // ── ErrorBanner ─────────────────────────────────────────────
 
     describe("ErrorBanner", () => {
       it("renders error message", () => {
@@ -66,8 +58,6 @@ describe(
         expect(container.innerHTML).toBe("");
       });
     });
-
-    // ── MessageBubble ───────────────────────────────────────────
 
     describe("MessageBubble", () => {
       it("renders message text", () => {
@@ -99,8 +89,6 @@ describe(
       });
     });
 
-    // ── Transcript ──────────────────────────────────────────────
-
     describe("Transcript", () => {
       it("renders transcript text", () => {
         render(<Transcript text="hello wor" />, container);
@@ -112,8 +100,6 @@ describe(
         expect(container.innerHTML).toBe("");
       });
     });
-
-    // ── App (needs provider) ────────────────────────────────────
 
     describe("App", () => {
       it("shows start button when not started", () => {
@@ -150,8 +136,6 @@ describe(
         expect(container.textContent).not.toContain("Start Conversation");
       });
     });
-
-    // ── ChatView (needs provider) ───────────────────────────────
 
     describe("ChatView", () => {
       it("renders state and messages", () => {

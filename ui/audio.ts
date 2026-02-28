@@ -1,8 +1,4 @@
-// Microphone capture and audio playback via AudioWorklet.
-// Thin wrapper that binds worklet sources to the core logic.
-
-// esbuild text loader inlines these as strings at build time.
-// Deno sees them as JS modules during type-checking, so we cast at usage.
+// esbuild inlines these as strings; Deno sees JS modules, so we cast.
 import pcm16CaptureWorklet from "./worklets/pcm16-capture.worklet.js";
 import pcm16PlaybackWorklet from "./worklets/pcm16-playback.worklet.js";
 

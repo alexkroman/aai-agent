@@ -1,5 +1,3 @@
-// Shared test helpers for SDK tests.
-
 import type { SessionDeps, SessionTransport } from "./session.ts";
 import type { SttHandle } from "./stt.ts";
 import type { ExecuteTool } from "./tool_executor.ts";
@@ -8,7 +6,6 @@ import type { CallLLMOptions } from "./llm.ts";
 import type { ChatMessage, LLMResponse, ToolSchema } from "./types.ts";
 import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "./types.ts";
 
-/** Create a mock SessionTransport (WebSocket-like). */
 export function createMockTransport(): SessionTransport & {
   sent: (string | ArrayBuffer | Uint8Array)[];
 } {
@@ -22,7 +19,6 @@ export function createMockTransport(): SessionTransport & {
   };
 }
 
-/** Get JSON messages sent through a mock transport. */
 export function getSentJson(
   transport: ReturnType<typeof createMockTransport>,
 ): Record<string, unknown>[] {
@@ -31,7 +27,6 @@ export function getSentJson(
     .map((s) => JSON.parse(s));
 }
 
-/** Create a mock SttHandle. */
 export function createMockSttHandle(): SttHandle & {
   sentData: Uint8Array[];
   clearCalled: boolean;
@@ -54,7 +49,6 @@ export function createMockSttHandle(): SttHandle & {
   };
 }
 
-/** Mock TtsClient interface (avoids class private field incompatibility). */
 export interface MockTtsClient {
   synthesizeCalls: { text: string }[];
   closeCalled: boolean;
@@ -66,7 +60,6 @@ export interface MockTtsClient {
   close(): void;
 }
 
-/** Create a mock TtsClient. */
 export function createMockTtsClient(): MockTtsClient {
   return {
     synthesizeCalls: [],
@@ -85,7 +78,6 @@ export function createMockTtsClient(): MockTtsClient {
   };
 }
 
-/** Create a mock ExecuteTool function. */
 export function createMockExecuteTool(): ExecuteTool & {
   calls: { name: string; args: Record<string, unknown> }[];
   mockResult: string;
@@ -107,7 +99,6 @@ export function createMockExecuteTool(): ExecuteTool & {
   return fn;
 }
 
-/** Create a minimal PlatformConfig for testing. */
 export function createMockPlatformConfig(): PlatformConfig {
   return {
     apiKey: "test-api-key",
@@ -119,7 +110,6 @@ export function createMockPlatformConfig(): PlatformConfig {
   };
 }
 
-/** Create a mock LLM response. */
 export function createMockLLMResponse(
   content: string | null,
   toolCalls?: {
@@ -149,7 +139,6 @@ export function createMockLLMResponse(
   };
 }
 
-/** Create full mock SessionDeps. */
 export function createMockSessionDeps(overrides?: Partial<SessionDeps>): {
   deps: SessionDeps;
   sttHandle: ReturnType<typeof createMockSttHandle>;
@@ -189,9 +178,6 @@ export function createMockSessionDeps(overrides?: Partial<SessionDeps>): {
   return { deps, sttHandle, ttsClient, executeTool, llmCalls, llmResponses };
 }
 
-// ── Shared MockWebSocket ─────────────────────────────────────────
-
-/** Reusable WebSocket mock for STT, TTS, and WS handler tests. */
 export class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -230,10 +216,6 @@ export class MockWebSocket {
   }
 }
 
-/**
- * Install MockWebSocket as globalThis.WebSocket.
- * Returns a restore function and a `created` array of all sockets created.
- */
 export function installMockWebSocket(): {
   restore: () => void;
   created: MockWebSocket[];
@@ -269,7 +251,6 @@ export function installMockWebSocket(): {
   };
 }
 
-/** Replace globalThis.fetch with a mock, returns a restore function. */
 export function stubFetch(
   handler: (
     input: string | URL | Request,

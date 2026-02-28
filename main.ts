@@ -1,15 +1,9 @@
-// Orchestrator entry point.
-// Loads root .env, starts the deploy-based orchestrator, scans bundleDir.
-
 import { createOrchestrator } from "./server/orchestrator.ts";
 
-// Best-effort .env loading
 try {
   const { load } = await import("@std/dotenv");
   await load({ export: true });
-} catch {
-  // .env not found or @std/dotenv not available — that's fine
-}
+} catch { /* .env not found — fine */ }
 
 const bundleDir = Deno.env.get("BUNDLE_DIR") ?? "dist/bundle";
 const { app, agents } = await createOrchestrator({ bundleDir });

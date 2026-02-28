@@ -20,7 +20,10 @@ Deno.test("executeToolCall - validates and runs handler", async () => {
     z.object({ name: z.string() }),
     ({ name }) => `Hi ${name}`,
   );
-  assertEquals(await executeToolCall("greet", { name: "Deno" }, t, {}), "Hi Deno");
+  assertEquals(
+    await executeToolCall("greet", { name: "Deno" }, t, {}),
+    "Hi Deno",
+  );
 });
 
 Deno.test("executeToolCall - returns validation error for bad args", async () => {

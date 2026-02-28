@@ -18,7 +18,6 @@ export type { AgentInfo };
 
 const log = getLogger("orchestrator");
 
-/** Reconcile KV and disk: load known agents, backfill orphaned deploys. */
 export async function loadSlots(
   kv: Deno.Kv,
   bundleDir: string,

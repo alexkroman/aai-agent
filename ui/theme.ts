@@ -61,7 +61,9 @@ export function applyTheme(el: HTMLElement, theme: Theme): void {
   const s = el.style;
   for (const [key, value] of Object.entries(theme)) {
     if (key === "stateColors") {
-      for (const [state, color] of Object.entries(value as Record<string, string>)) {
+      for (
+        const [state, color] of Object.entries(value as Record<string, string>)
+      ) {
         s.setProperty(`--aai-state-${state}`, color);
       }
     } else {

@@ -1,5 +1,3 @@
-// VoiceSession: WebSocket session management for voice agents.
-
 import type { ErrorMessage, ServerMessage } from "../_protocol.ts";
 
 import {
@@ -17,8 +15,6 @@ import type { AudioPlayer, MicCapture } from "./audio.ts";
 const DEFAULT_STT_SAMPLE_RATE = 16_000;
 const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
-// ── Session errors ──────────────────────────────────────────────
-
 export type SessionErrorCode =
   | "AUDIO_SETUP_FAILED"
   | "SERVER_ERROR"
@@ -29,8 +25,6 @@ export type SessionError = Error & { code: SessionErrorCode };
 function sessionError(code: SessionErrorCode, message: string): SessionError {
   return Object.assign(new Error(message), { code, name: "SessionError" });
 }
-
-// ── Reconnection strategy ───────────────────────────────────────
 
 export interface Reconnect {
   readonly canRetry: boolean;
@@ -73,8 +67,6 @@ export function createReconnect(
   };
 }
 
-// ── Typed event helpers ─────────────────────────────────────────
-
 export interface SessionEventMap {
   stateChange: AgentState;
   message: Message;
@@ -116,8 +108,6 @@ class TypedEmitter<E> {
   }
 }
 
-// ── Protocol parser ──────────────────────────────────────────────
-
 export function parseServerMessage(data: string): ServerMessage | null {
   try {
     const msg = JSON.parse(data);
@@ -130,33 +120,19 @@ export function parseServerMessage(data: string): ServerMessage | null {
   }
 }
 
-// ── VoiceSession ───────────────────────────────────────────────
-
 export class VoiceSession extends TypedEmitter<SessionEventMap> {
   private ws: WebSocket | null = null;
   private player: AudioPlayer | null = null;
   private mic: MicCapture | null = null;
-  private options: AgentOptions;
   private currentState: AgentState = "connecting";
-
-  // Reconnection
   private reconnector = createReconnect();
-
-  // Connection lifecycle — abort to tear down ws listeners + ping
   private connectionController: AbortController | null = null;
-
-  // Cancel/reset synchronization
   private cancelling = false;
-
-  // Guard against duplicate audio setup (e.g. two READY messages)
   private audioSetupInFlight = false;
-
-  // Heartbeat
   private pongReceived = true;
 
-  constructor(options: AgentOptions) {
+  constructor(private options: AgentOptions) {
     super();
-    this.options = options;
   }
 
   private changeState(newState: AgentState): void {
@@ -347,29 +323,26 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
     this.player = null;
   }
 
+  private trySend(msg: Record<string, unknown>): boolean {
+    try {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(msg));
+        return true;
+      }
+    } catch { /* ws may have closed between check and send */ }
+    return false;
+  }
+
   cancel(): void {
     this.cancelling = true;
     this.player?.flush();
     this.changeState("listening");
-    try {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "cancel" }));
-      }
-    } catch {
-      // Connection may have broken between readyState check and send
-    }
+    this.trySend({ type: "cancel" });
   }
 
   reset(): void {
     this.player?.flush();
-    try {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: "reset" }));
-        return;
-      }
-    } catch {
-      // Connection may have broken between readyState check and send
-    }
+    if (this.trySend({ type: "reset" })) return;
     this.emit("reset");
     this.disconnect();
     this.connect();

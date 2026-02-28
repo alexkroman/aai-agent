@@ -2,10 +2,8 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { z } from "zod";
 import * as Comlink from "comlink";
 import { tool } from "./tool.ts";
-import { startWorker } from "./worker_entry.ts";
-import type { WorkerApi } from "./worker_entry.ts";
+import { startWorker, type WorkerApi } from "./worker_entry.ts";
 
-/** MessageChannel-based harness — no real Workers needed. */
 function createHarness(
   agent: {
     name: string;

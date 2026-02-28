@@ -1,7 +1,3 @@
-// Shared agent discovery logic for scripts.
-// If INIT_CWD (set by `deno task`) is inside an agent directory,
-// returns only that agent. Otherwise returns all examples.
-
 import { parse as parseDotenv } from "@std/dotenv/parse";
 import { relative } from "@std/path";
 import { walk } from "@std/fs/walk";
@@ -14,7 +10,6 @@ export interface AgentEntry {
   clientEntry: string;
 }
 
-/** Try to load a single agent from a directory. */
 async function loadAgent(dir: string): Promise<AgentEntry | null> {
   try {
     await Deno.stat(`${dir}/agent.ts`);
@@ -30,9 +25,7 @@ async function loadAgent(dir: string): Promise<AgentEntry | null> {
   try {
     await Deno.stat(`${dir}/client.tsx`);
     clientEntry = `${dir}/client.tsx`;
-  } catch {
-    // default
-  }
+  } catch { /* use default */ }
 
   return {
     slug: env.SLUG,
@@ -43,22 +36,17 @@ async function loadAgent(dir: string): Promise<AgentEntry | null> {
   };
 }
 
-/**
- * Discover examples to operate on.
- * - If INIT_CWD is inside examples/<name>/, return just that agent.
- * - Otherwise, scan examples/ and return all.
- */
+// If INIT_CWD is inside examples/<name>/, returns just that agent.
+// Otherwise scans examples/ and returns all.
 export async function discoverAgents(): Promise<AgentEntry[]> {
   const initCwd = Deno.env.get("INIT_CWD");
 
-  // Check if the caller is inside an agent directory
   if (initCwd) {
     const examplesAbsolute = Deno.cwd() + "/examples";
     const rel = relative(examplesAbsolute, initCwd);
     // rel looks like "night-owl" or "night-owl/src" — not ".." or absolute
     if (rel && !rel.startsWith("..") && !rel.startsWith("/")) {
-      const agentName = rel.split("/")[0];
-      const dir = `examples/${agentName}`;
+      const dir = `examples/${rel.split("/")[0]}`;
       const agent = await loadAgent(dir);
       if (agent) return [agent];
       console.warn(
@@ -67,7 +55,6 @@ export async function discoverAgents(): Promise<AgentEntry[]> {
     }
   }
 
-  // Scan all agent directories
   const examples: AgentEntry[] = [];
   for await (
     const entry of walk("examples", {
@@ -78,11 +65,8 @@ export async function discoverAgents(): Promise<AgentEntry[]> {
   ) {
     const dir = entry.path.replace(/\/agent\.ts$/, "");
     const agent = await loadAgent(dir);
-    if (agent) {
-      examples.push(agent);
-    } else {
-      console.warn(`  Skipping ${dir} — no agent.ts or SLUG`);
-    }
+    if (agent) examples.push(agent);
+    else console.warn(`  Skipping ${dir} — no agent.ts or SLUG`);
   }
   examples.sort((a, b) => a.slug.localeCompare(b.slug));
   return examples;

@@ -1,5 +1,3 @@
-// Voice agent — Request → Response handler that plugs into Deno.serve.
-
 import { Hono } from "@hono/hono";
 import { serveStatic } from "@hono/hono/deno";
 import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
@@ -61,8 +59,9 @@ export class Agent {
   readonly onTurn?: AgentOptions["onTurn"];
 
   readonly #sessions = new Map<string, Session>();
-  #platform: { secrets: Record<string, string>; config: PlatformConfig } | null =
-    null;
+  #platform:
+    | { secrets: Record<string, string>; config: PlatformConfig }
+    | null = null;
   #app: Hono;
 
   constructor(options: AgentOptions) {
@@ -117,8 +116,6 @@ export class Agent {
     console.log(`${this.name} listening on http://localhost:${port}`);
     return server;
   }
-
-  // ── Internal ──────────────────────────────────────────────────
 
   #handleWs(socket: WebSocket): void {
     const toolSchemas = [

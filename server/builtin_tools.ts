@@ -49,7 +49,7 @@ const webSearch: BuiltinTool = {
     "Search the web using DuckDuckGo. Returns a list of results with title, URL, and description.",
   parameters: webSearchParams,
   execute: async (args) => {
-    const { query, max_results } = webSearchParams.parse(args);
+    const { query, max_results } = args as z.infer<typeof webSearchParams>;
     const maxResults = max_results ?? 5;
 
     log.info("web_search", { query, maxResults });
@@ -78,7 +78,7 @@ const visitWebpage: BuiltinTool = {
     "Fetch a webpage URL and return its content as clean Markdown. Useful for reading articles, documentation, or any web page found via search.",
   parameters: visitWebpageParams,
   execute: async (args) => {
-    const { url } = visitWebpageParams.parse(args);
+    const { url } = args as z.infer<typeof visitWebpageParams>;
 
     log.info("visit_webpage", { url });
 
@@ -128,7 +128,7 @@ const runCode: BuiltinTool = {
     "Execute JavaScript in a sandboxed Deno subprocess with no permissions. Use console.log() for output. No network or filesystem access.",
   parameters: runCodeParams,
   execute: async (args) => {
-    const { code } = runCodeParams.parse(args);
+    const { code } = args as z.infer<typeof runCodeParams>;
 
     log.info("run_code", { codeLength: code.length });
 
@@ -187,7 +187,7 @@ const fetchJson: BuiltinTool = {
     "Fetch a URL via HTTP GET and return the JSON response. Useful for calling REST APIs that return JSON data.",
   parameters: fetchJsonParams,
   execute: async (args) => {
-    const { url, headers } = fetchJsonParams.parse(args);
+    const { url, headers } = args as z.infer<typeof fetchJsonParams>;
 
     log.info("fetch_json", { url });
 

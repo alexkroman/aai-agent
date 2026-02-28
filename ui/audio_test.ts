@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { createAudioPlayer, startMicCapture } from "./_audio_core.ts";
 
-// ── Mock Web Audio API ──────────────────────────────────────────
-
 class MockMediaStreamTrack {
   stopped = false;
   stop() {
@@ -24,7 +22,6 @@ class MockMessagePort {
   postMessage(data: unknown, _transfer?: Transferable[]) {
     this.posted.push(data);
   }
-  /** Simulate the worklet sending a message back. */
   simulateMessage(data: unknown) {
     this.onmessage?.(new MessageEvent("message", { data }));
   }
@@ -84,8 +81,6 @@ class MockAudioContext {
   }
 }
 
-// ── Mock WebSocket ──────────────────────────────────────────────
-
 class MockWebSocket {
   static readonly OPEN = 1;
   static readonly CLOSED = 3;
@@ -99,8 +94,6 @@ class MockWebSocket {
     this.sent.push(data);
   }
 }
-
-// ── Test setup ──────────────────────────────────────────────────
 
 let origAudioContext: typeof globalThis.AudioContext;
 let origAudioWorkletNode: typeof globalThis.AudioWorkletNode;
@@ -166,8 +159,6 @@ afterEach(() => {
     nav.mediaDevices.getUserMedia = origGetUserMedia;
   }
 });
-
-// ── startMicCapture tests ───────────────────────────────────────
 
 describe("startMicCapture", () => {
   it("returns a MicCapture with close()", async () => {
@@ -243,12 +234,9 @@ describe("startMicCapture", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     await startMicCapture(ws, 16000, "mock-worklet-source");
 
-    // Worklet should be connected to destination
     expect(lastWorkletNode.connected).toContain(lastContext.destination);
   });
 });
-
-// ── createAudioPlayer tests ─────────────────────────────────────
 
 describe("createAudioPlayer", () => {
   it("returns an AudioPlayer with enqueue, flush, close", async () => {

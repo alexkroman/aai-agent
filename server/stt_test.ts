@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { connectStt } from "./stt.ts";
-import type { SttEvents } from "./stt.ts";
+import { connectStt, type SttEvents } from "./stt.ts";
 import { DEFAULT_STT_CONFIG } from "./types.ts";
 import { installMockWebSocket, MockWebSocket } from "./_test_utils.ts";
 

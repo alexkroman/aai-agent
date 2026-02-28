@@ -1,7 +1,4 @@
-// PCM16 playback processor — receives raw PCM16 ArrayBuffers, converts to
-// float32 on the worklet thread, and outputs via a pre-allocated ring buffer
-// with pre-buffering and fade-in/fade-out to eliminate clicking artifacts.
-
+// PCM16 playback via ring buffer with pre-buffering and fade in/out.
 const CAPACITY = 1440000; // ~60s at 24 kHz
 const PRE_BUFFER = 4800; // 200ms at 24 kHz — absorb network jitter
 const FADE_SAMPLES = 64; // ~2.7ms at 24 kHz — smooth transitions

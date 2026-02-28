@@ -3,7 +3,6 @@ import { ControlMessageSchema } from "./types.ts";
 
 const log = getLogger("ws");
 
-/** The methods handleSessionWebSocket actually calls on a session. */
 export interface Session {
   start(): void;
   stop(): Promise<void>;

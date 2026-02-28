@@ -2,11 +2,8 @@ import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { FakeTime } from "@std/testing/time";
 import { parseServerMessage, VoiceSession } from "./session.ts";
-import type { AgentOptions } from "./types.ts";
-import { PING_INTERVAL_MS } from "./types.ts";
+import { type AgentOptions, PING_INTERVAL_MS } from "./types.ts";
 import { installMockWebSocket } from "./_test_utils.ts";
-
-// ── parseServerMessage tests ─────────────────────────────────────
 
 describe("parseServerMessage", () => {
   const valid: [string, Record<string, unknown>][] = [
@@ -48,8 +45,6 @@ describe("parseServerMessage", () => {
   }
 });
 
-// ── VoiceSession tests ───────────────────────────────────────────
-
 describe("VoiceSession", () => {
   let mock: ReturnType<typeof installMockWebSocket>;
   let locationInstalled = false;
@@ -76,7 +71,6 @@ describe("VoiceSession", () => {
     platformUrl: "http://localhost:3000",
   };
 
-  /** Connect a session and wait for WS open. */
   async function connectSession(
     opts: AgentOptions = defaultOptions,
   ): Promise<{ session: VoiceSession; ws: NonNullable<typeof mock.lastWs> }> {

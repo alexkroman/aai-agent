@@ -1,5 +1,4 @@
-// PCM16 capture processor — buffers mic audio and sends as Int16Array.
-// minSamples is passed via processorOptions at construction time.
+// minSamples passed via processorOptions at construction.
 class PCM16Processor extends AudioWorkletProcessor {
   constructor(options) {
     super();

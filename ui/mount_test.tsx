@@ -1,5 +1,3 @@
-// Tests for mount() using deno-dom.
-
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { installMockWebSocket, setupDOM } from "./_test_utils.ts";

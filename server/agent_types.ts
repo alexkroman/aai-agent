@@ -1,15 +1,11 @@
-// Pure types and defaults for agent definitions.
-
 import { z } from "zod";
 
-/** Context provided to tool handlers at execution time. */
 export interface ToolContext {
   secrets: Record<string, string>;
   fetch: typeof globalThis.fetch;
   signal?: AbortSignal;
 }
 
-/** A registered tool handler with its Zod schema. */
 export interface ToolHandler {
   schema: z.ZodObject<z.ZodRawShape>;
   handler: (

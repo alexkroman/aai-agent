@@ -1,104 +1,59 @@
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { main } from "./cli.ts";
 
 describe("cli main", () => {
-  it("prints version with --version", async () => {
-    const original = console.log;
-    const logged: string[] = [];
+  const logged: string[] = [];
+  let origLog: typeof console.log;
+  let origError: typeof console.error;
+
+  beforeEach(() => {
+    logged.length = 0;
+    origLog = console.log;
+    origError = console.error;
     console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main(["--version"]);
-      expect(code).toBe(0);
-      expect(logged).toEqual(["0.1.0"]);
-    } finally {
-      console.log = original;
-    }
+    console.error = () => {};
+  });
+
+  afterEach(() => {
+    console.log = origLog;
+    console.error = origError;
+  });
+
+  it("prints version with --version", async () => {
+    expect(await main(["--version"])).toBe(0);
+    expect(logged).toEqual(["0.1.0"]);
   });
 
   it("prints usage with --help", async () => {
-    const original = console.log;
-    const logged: string[] = [];
-    console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main(["--help"]);
-      expect(code).toBe(0);
-      expect(logged.length).toBe(1);
-      expect(logged[0]).toContain("dev");
-      expect(logged[0]).toContain("build");
-      expect(logged[0]).toContain("deploy");
-    } finally {
-      console.log = original;
-    }
+    expect(await main(["--help"])).toBe(0);
+    expect(logged[0]).toContain("dev");
+    expect(logged[0]).toContain("build");
+    expect(logged[0]).toContain("deploy");
   });
 
   it("prints usage with no args", async () => {
-    const original = console.log;
-    const logged: string[] = [];
-    console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main([]);
-      expect(code).toBe(0);
-      expect(logged[0]).toContain("aai");
-    } finally {
-      console.log = original;
-    }
+    expect(await main([])).toBe(0);
+    expect(logged[0]).toContain("aai");
   });
 
   it("prints command help with dev --help", async () => {
-    const original = console.log;
-    const logged: string[] = [];
-    console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main(["dev", "--help"]);
-      expect(code).toBe(0);
-      expect(logged.length).toBe(1);
-      expect(logged[0]).toContain("--port");
-    } finally {
-      console.log = original;
-    }
+    expect(await main(["dev", "--help"])).toBe(0);
+    expect(logged[0]).toContain("--port");
   });
 
   it("prints command help with build --help", async () => {
-    const original = console.log;
-    const logged: string[] = [];
-    console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main(["build", "--help"]);
-      expect(code).toBe(0);
-      expect(logged.length).toBe(1);
-      expect(logged[0]).toContain("--out-dir");
-    } finally {
-      console.log = original;
-    }
+    expect(await main(["build", "--help"])).toBe(0);
+    expect(logged[0]).toContain("--out-dir");
   });
 
   it("prints command help with deploy --help", async () => {
-    const original = console.log;
-    const logged: string[] = [];
-    console.log = (...args: string[]) => logged.push(args.join(" "));
-    try {
-      const code = await main(["deploy", "--help"]);
-      expect(code).toBe(0);
-      expect(logged.length).toBe(1);
-      expect(logged[0]).toContain("--url");
-      expect(logged[0]).toContain("--dry-run");
-    } finally {
-      console.log = original;
-    }
+    expect(await main(["deploy", "--help"])).toBe(0);
+    expect(logged[0]).toContain("--url");
+    expect(logged[0]).toContain("--dry-run");
   });
 
   it("returns 1 for unknown command", async () => {
-    const originalLog = console.log;
-    const originalError = console.error;
-    console.log = () => {};
-    console.error = () => {};
-    try {
-      const code = await main(["unknown-command"]);
-      expect(code).toBe(1);
-    } finally {
-      console.log = originalLog;
-      console.error = originalError;
-    }
+    expect(await main(["unknown-command"])).toBe(1);
   });
 });

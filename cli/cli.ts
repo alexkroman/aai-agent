@@ -1,5 +1,3 @@
-// Root CLI entry point for the aai agent development toolkit.
-
 import { parseArgs } from "@std/cli/parse-args";
 import { red } from "@std/fmt/colors";
 
@@ -20,12 +18,10 @@ Options:
 Run 'aai <command> --help' for command-specific options.`);
 }
 
-/** Returns exit code (0 = success). */
 export async function main(args: string[]): Promise<number> {
   const command = args[0];
   const rest = args.slice(1);
 
-  // Global flags
   if (!command || command === "--help" || command === "-h") {
     printUsage();
     return 0;
@@ -35,7 +31,6 @@ export async function main(args: string[]): Promise<number> {
     return 0;
   }
 
-  // Per-command help
   if (rest.includes("--help") || rest.includes("-h")) {
     switch (command) {
       case "dev":

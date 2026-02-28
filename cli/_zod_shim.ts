@@ -1,8 +1,5 @@
-// Tiny zod stub for worker bundles.
-// Agents call z.object(), z.string(), etc. at import time to define tool
-// parameters. In the worker, we don't need real schemas (those are
-// pre-computed at bundle time), so this shim just returns chainable stubs
-// that won't crash. No validation, no JSON Schema conversion.
+// Zod stub for worker bundles. Real schemas are pre-computed at bundle time,
+// so this just returns chainable no-ops that won't crash at import time.
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

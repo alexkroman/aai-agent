@@ -1,8 +1,4 @@
-// Core audio logic — worklet sources injected as parameters for testability.
-
 import { MIC_BUFFER_SECONDS } from "./types.ts";
-
-// ── Shared worklet loader ───────────────────────────────────────
 
 export async function loadWorklet(
   ctx: AudioContext,
@@ -17,8 +13,6 @@ export async function loadWorklet(
     URL.revokeObjectURL(url);
   }
 }
-
-// ── Audio capture (PCM16 via AudioWorklet) ──────────────────────
 
 export interface MicCapture {
   close(): void;
@@ -61,8 +55,6 @@ export async function startMicCapture(
     },
   };
 }
-
-// ── Audio playback (PCM16 via AudioWorklet) ─────────────────────
 
 export interface AudioPlayer {
   enqueue(pcm16Buffer: ArrayBuffer): void;

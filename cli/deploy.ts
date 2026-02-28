@@ -1,9 +1,6 @@
-// deploy command — Deploy bundled agents to a running orchestrator.
-
 import { walk } from "@std/fs/walk";
 import { log } from "./_output.ts";
-import { discoverAgents } from "./_discover.ts";
-import type { AgentEntry } from "./_discover.ts";
+import { type AgentEntry, discoverAgents } from "./_discover.ts";
 
 export interface DeployOpts {
   url: string;
@@ -41,7 +38,6 @@ export async function runDeploy(
   const agents = await deps.discover();
   const slugs = new Set(agents.map((a: AgentEntry) => a.slug));
 
-  // Read bundles
   const bundles: BundleEntry[] = [];
 
   try {
@@ -95,7 +91,6 @@ export async function runDeploy(
     return;
   }
 
-  // Deploy each bundle
   const url = `${opts.url}/deploy`;
   log.header(`Deploying ${bundles.length} bundle(s) to ${opts.url}...\n`);
 

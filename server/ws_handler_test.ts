@@ -2,7 +2,6 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { handleSessionWebSocket, type Session } from "./ws_handler.ts";
 
-/** Mock server-side WebSocket. */
 class MockWs {
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -38,7 +37,6 @@ class MockWs {
   }
 }
 
-/** Spy session that records all method calls. */
 function createSpySession(): Session & { calls: string[] } {
   const calls: string[] = [];
   return {

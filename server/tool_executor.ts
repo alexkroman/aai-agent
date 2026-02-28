@@ -4,7 +4,6 @@ import type { ToolContext, ToolDef, ToolHandler } from "./agent_types.ts";
 const log = getLogger("tool-executor");
 export const TOOL_HANDLER_TIMEOUT = 30_000;
 
-/** A function that executes a named tool. */
 export type ExecuteTool = (
   name: string,
   args: Record<string, unknown>,
@@ -46,7 +45,6 @@ export async function executeToolCall(
   }
 }
 
-/** Create an ExecuteTool function from a tool map and secrets. */
 export function createToolExecutor(
   tools: Map<string, ToolHandler>,
   secrets: Record<string, string>,
@@ -58,7 +56,6 @@ export function createToolExecutor(
   };
 }
 
-/** Convert an agent's tools record to a Map<string, ToolHandler> for ToolExecutor. */
 export function toToolHandlers(
   tools: Readonly<Record<string, ToolDef>>,
 ): Map<string, ToolHandler> {

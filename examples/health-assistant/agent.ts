@@ -1,9 +1,6 @@
 import { Agent, fetchJSON, tool, z } from "@aai/sdk";
 import type { ToolContext } from "@aai/sdk";
 
-// ── FDA / NIH helpers ───────────────────────────────────────────
-
-/** Pick the first string from an FDA array-of-strings field. */
 function first(field: unknown): string | undefined {
   return Array.isArray(field) ? field[0] : undefined;
 }
@@ -68,7 +65,6 @@ async function checkInteractions(
 ): Promise<Record<string, unknown>> {
   const names = drugs.split(",").map((d) => d.trim().toLowerCase());
 
-  // Resolve all drug names in parallel
   const resolved = (await Promise.all(names.map((n) => resolveRxCui(n, ctx))))
     .filter((r): r is RxCui => r !== null);
 
@@ -109,8 +105,6 @@ async function checkInteractions(
     interactions: interactions.slice(0, 5),
   };
 }
-
-// ── Agent definition ────────────────────────────────────────────
 
 export default new Agent({
   name: "Dr. Sage",

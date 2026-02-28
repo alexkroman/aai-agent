@@ -1,11 +1,7 @@
-// Default UI components for voice agents.
-
 import { css } from "goober";
 import { useEffect, useRef } from "preact/hooks";
 import type { AgentState, Message } from "./types.ts";
 import { useSession } from "./signals.tsx";
-
-// ── Styles ──────────────────────────────────────────────────────
 
 const layout = css`
   font-family: var(--aai-font);
@@ -127,8 +123,6 @@ const bubble = css`
     opacity: 0.6;
   }
 `;
-
-// ── Components ──────────────────────────────────────────────────
 
 export function StateIndicator({ state }: { state: AgentState }) {
   return (

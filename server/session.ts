@@ -3,7 +3,11 @@ import { ERR } from "./errors.ts";
 import { callLLM as defaultCallLLM, type CallLLMOptions } from "./llm.ts";
 import { getLogger, type Logger } from "../_utils/logger.ts";
 import type { ExecuteTool } from "./tool_executor.ts";
-import { connectStt as defaultConnectStt, type SttEvents, type SttHandle } from "./stt.ts";
+import {
+  connectStt as defaultConnectStt,
+  type SttEvents,
+  type SttHandle,
+} from "./stt.ts";
 import { type ITtsClient, TtsClient } from "./tts.ts";
 import { executeBuiltinTool as defaultExecuteBuiltinTool } from "./builtin_tools.ts";
 import { executeTurn, type TurnContext } from "./turn_handler.ts";
@@ -302,7 +306,6 @@ export class ServerSession {
     this.ttsPromise = promise;
   }
 
-  /** Wire real implementations into a ServerSession. */
   static create(
     sessionId: string,
     ws: SessionTransport,

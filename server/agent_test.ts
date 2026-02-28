@@ -21,8 +21,6 @@ function makeTestAgent() {
   });
 }
 
-// ── Constructor defaults ────────────────────────────────────────
-
 Deno.test("Agent - fills defaults", () => {
   const agent = new Agent({ name: "Minimal" });
   assertEquals(agent.name, "Minimal");
@@ -71,8 +69,6 @@ Deno.test("Agent - preserves tools and hooks", () => {
   assert("greet" in agent.tools);
   assertEquals(agent.onConnect, handler);
 });
-
-// ── fetch() routes ──────────────────────────────────────────────
 
 Deno.test("Agent.fetch - GET /health returns ok", async () => {
   const agent = makeTestAgent();
@@ -142,8 +138,6 @@ Deno.test("Agent.fetch - concurrent requests succeed", async () => {
   assertEquals(await r3.text(), FAVICON_SVG);
 });
 
-// ── upgrade() ───────────────────────────────────────────────────
-
 Deno.test("Agent.upgrade - returns 400 without upgrade header", async () => {
   const agent = makeTestAgent();
   const res = agent.upgrade(new Request("http://localhost/session"));
@@ -163,8 +157,6 @@ Deno.test("Agent.upgrade - returns 400 with wrong upgrade header", async () => {
   const text = await res.text();
   assert(text.includes("WebSocket"));
 });
-
-// ── Properties are accessible ───────────────────────────────────
 
 Deno.test("Agent - tools are accessible for testing", async () => {
   const agent = makeTestAgent();

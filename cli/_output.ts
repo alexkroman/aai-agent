@@ -1,5 +1,3 @@
-// Shared colored output helpers for CLI commands.
-
 import { bold, cyan, dim, green, red, yellow } from "@std/fmt/colors";
 
 export const log = {

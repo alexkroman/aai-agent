@@ -9,21 +9,16 @@ const VALID_ENV = {
   ASSEMBLYAI_TTS_API_KEY: "test-tts-key",
 };
 
-function writeManifest(
+async function writeManifest(
   bundleDir: string,
   slug: string,
   env: Record<string, string> = VALID_ENV,
-): Promise<void[]> {
+): Promise<void> {
   const dir = `${bundleDir}/${slug}`;
-  return Promise.all([
-    Deno.mkdir(dir, { recursive: true }),
-  ]).then(() =>
-    Promise.all([
-      Deno.writeTextFile(
-        `${dir}/manifest.json`,
-        JSON.stringify({ slug, env }),
-      ),
-    ])
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(
+    `${dir}/manifest.json`,
+    JSON.stringify({ slug, env }),
   );
 }
 

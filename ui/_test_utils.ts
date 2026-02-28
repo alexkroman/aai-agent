@@ -7,7 +7,6 @@ import type { AgentState, Message } from "./types.ts";
 const HTML =
   `<!DOCTYPE html><html><head></head><body><div id="app"></div></body></html>`;
 
-/** Create a fresh deno-dom document and patch globalThis.document. */
 export function setupDOM() {
   const doc = new DOMParser().parseFromString(HTML, "text/html")!;
   // deno-lint-ignore no-explicit-any
@@ -15,7 +14,6 @@ export function setupDOM() {
   return doc;
 }
 
-/** Get the #app container from the current document. */
 export function getContainer(): Element {
   return globalThis.document.querySelector("#app")!;
 }
@@ -23,7 +21,6 @@ export function getContainer(): Element {
 // Ensure document exists at import time for modules using goober css``.
 setupDOM();
 
-/** Minimal WebSocket mock for tests that create VoiceSession. */
 export class MockWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -54,13 +51,11 @@ export class MockWebSocket extends EventTarget {
     this.dispatchEvent(new CloseEvent("close", { code: code ?? 1000 }));
   }
 
-  /** Simulate receiving a message from the server. */
   simulateMessage(data: string | ArrayBuffer) {
     this.dispatchEvent(new MessageEvent("message", { data }));
   }
 }
 
-/** Install MockWebSocket as globalThis.WebSocket; returns `{ restore, lastWs }`. */
 export function installMockWebSocket(): {
   restore(): void;
   get lastWs(): MockWebSocket | null;
@@ -84,10 +79,8 @@ export function installMockWebSocket(): {
   };
 }
 
-/** Drain the microtask queue (one tick). */
 export const flush = () => new Promise<void>((r) => queueMicrotask(r));
 
-/** Polyfill globalThis.location for tests; returns `{ restore }`. */
 export function installMockLocation(origin = "http://localhost:3000") {
   const had = "location" in globalThis;
   // deno-lint-ignore no-explicit-any
@@ -100,7 +93,6 @@ export function installMockLocation(origin = "http://localhost:3000") {
   };
 }
 
-/** Create mock SessionSignals with controllable values. */
 export function createMockSignals(
   overrides?: Partial<{
     state: AgentState;

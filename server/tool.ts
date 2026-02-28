@@ -1,5 +1,4 @@
-// Identity function that preserves the generic type for tool parameter inference.
-
+// Identity helper for ToolDef generic inference.
 import type { ToolDef } from "./agent_types.ts";
 import { z } from "zod";
 
