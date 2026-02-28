@@ -169,26 +169,6 @@ describe("executeTurn", () => {
       expect(ctx.messages[3].content).toBe("builtin result");
     });
 
-    it("falls back to user tool when builtin returns null", async () => {
-      const toolResp = createMockLLMResponse(null, [
-        { id: "c1", name: "custom", arguments: "{}" },
-      ]);
-      const finalResp = createMockLLMResponse("OK.");
-
-      let idx = 0;
-      const ctx = createCtx({
-        callLLM: () => {
-          const r = [toolResp, finalResp][idx++] ?? finalResp;
-          return Promise.resolve(r);
-        },
-      });
-
-      await executeTurn("Go", ctx, new AbortController().signal);
-
-      expect(ctx.builtinCalls.length).toBe(1);
-      expect(ctx.userToolCalls.length).toBe(1);
-    });
-
     it("handles invalid JSON tool arguments gracefully", async () => {
       const toolResp = createMockLLMResponse(null, [
         { id: "c1", name: "bad_tool", arguments: "not json" },

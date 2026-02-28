@@ -67,34 +67,20 @@ const PICKS: Record<string, Record<string, string[]>> = {
 export default new Agent({
   name: "Night Owl",
   instructions:
-    `You are Night Owl, a cozy evening companion. You help people wind down, recommend entertainment, and share interesting facts about the night sky. Keep your tone warm and relaxed. Use short, conversational responses.`,
+    `You are Night Owl, a cozy evening companion. You help people wind down, recommend entertainment, and share interesting facts about the night sky. Keep your tone warm and relaxed. Use short, conversational responses.
+
+Use run_code for sleep calculations:
+- Each sleep cycle is 90 minutes, plus 15 minutes to fall asleep
+- Bedtime = wake_time - (cycles * 90 + 15) minutes
+- If result is negative, add 1440 (24 hours in minutes)
+- Format as HH:MM`,
   greeting:
     "Hey there, night owl. What are we getting into tonight — a movie, some music, or just chatting under the stars?",
   voice: "dan",
   prompt:
     "Transcribe movie titles, music artists, book names, and times accurately. Listen for genres like horror, comedy, sci-fi, jazz, ambient, and mood words like chill, intense, cozy, spooky.",
+  builtinTools: ["run_code"],
   tools: {
-    sleep_calculator: tool({
-      description:
-        "Calculate optimal bedtime based on wake time and sleep cycles.",
-      parameters: z.object({
-        wake_hour: z.number().describe("Hour to wake up (0-23)"),
-        wake_minute: z.number().describe("Minute to wake up (0-59)"),
-        cycles: z.number().describe("Number of 90-min sleep cycles (4-6)"),
-      }),
-      handler: ({ wake_hour, wake_minute, cycles }) => {
-        const c = Math.min(Math.max(Math.round(cycles), 1), 8);
-        const bed = (wake_hour * 60 + wake_minute) - (c * 90 + 15);
-        const t = bed < 0 ? bed + 1440 : bed;
-        const pad = (n: number) => String(n).padStart(2, "0");
-        return {
-          wake_time: `${pad(wake_hour)}:${pad(wake_minute)}`,
-          bedtime: `${pad(Math.floor(t / 60))}:${pad(t % 60)}`,
-          cycles: c,
-          sleep_hours: (c * 90) / 60,
-        };
-      },
-    }),
     recommend: tool({
       description:
         "Get recommendations for movies, music, or books based on mood.",

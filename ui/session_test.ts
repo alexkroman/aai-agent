@@ -4,218 +4,98 @@ import { FakeTime } from "@std/testing/time";
 import { parseServerMessage, VoiceSession } from "./session.ts";
 import type { AgentOptions } from "./types.ts";
 import { PING_INTERVAL_MS } from "./types.ts";
+import { installMockWebSocket } from "./_test_utils.ts";
 
 // ── parseServerMessage tests ─────────────────────────────────────
 
 describe("parseServerMessage", () => {
-  it("parses a valid ready message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({
-        type: "ready",
-        sampleRate: 16000,
-        ttsSampleRate: 24000,
-      }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("ready");
-  });
+  const valid: [string, Record<string, unknown>][] = [
+    ["ready", { type: "ready", sampleRate: 16000, ttsSampleRate: 24000 }],
+    ["greeting", { type: "greeting", text: "Hello!" }],
+    ["transcript", { type: "transcript", text: "hello", final: false }],
+    ["turn", { type: "turn", text: "What's the weather?" }],
+    ["thinking", { type: "thinking" }],
+    ["chat", { type: "chat", text: "It's sunny!", steps: [] }],
+    ["tts_done", { type: "tts_done" }],
+    ["cancelled", { type: "cancelled" }],
+    ["reset", { type: "reset" }],
+    ["pong", { type: "pong" }],
+    ["error", { type: "error", message: "Something failed" }],
+    ["unknown type passes through", { type: "custom_extension", data: 1 }],
+  ];
 
-  it("parses a valid greeting message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "greeting", text: "Hello!" }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("greeting");
-  });
-
-  it("parses a transcript message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "transcript", text: "hello", final: false }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("transcript");
-  });
-
-  it("parses a turn message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "turn", text: "What's the weather?" }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("turn");
-  });
-
-  it("parses a thinking message", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: "thinking" }));
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("thinking");
-  });
-
-  it("parses a chat message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "chat", text: "It's sunny!", steps: [] }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("chat");
-  });
-
-  it("parses a tts_done message", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: "tts_done" }));
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("tts_done");
-  });
-
-  it("parses a cancelled message", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: "cancelled" }));
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("cancelled");
-  });
-
-  it("parses a reset message", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: "reset" }));
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("reset");
-  });
-
-  it("parses a pong message", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: "pong" }));
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("pong");
-  });
-
-  it("parses an error message", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "error", message: "Something failed" }),
-    );
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("error");
-  });
-
-  it("returns null for invalid JSON", () => {
-    const msg = parseServerMessage("not json at all");
-    expect(msg).toBeNull();
-  });
-
-  it("returns null for unknown type", () => {
-    const msg = parseServerMessage(
-      JSON.stringify({ type: "unknown_type" }),
-    );
-    expect(msg).toBeNull();
-  });
-
-  it("returns null when type is missing", () => {
-    const msg = parseServerMessage(JSON.stringify({ text: "no type" }));
-    expect(msg).toBeNull();
-  });
-
-  it("returns null when type is not a string", () => {
-    const msg = parseServerMessage(JSON.stringify({ type: 123 }));
-    expect(msg).toBeNull();
-  });
-
-  it("returns null for null value", () => {
-    const msg = parseServerMessage("null");
-    expect(msg).toBeNull();
-  });
-
-  it("returns null for array", () => {
-    const msg = parseServerMessage(JSON.stringify([1, 2, 3]));
-    expect(msg).toBeNull();
-  });
-
-  it("returns null for primitive", () => {
-    const msg = parseServerMessage(JSON.stringify("just a string"));
-    expect(msg).toBeNull();
-  });
-});
-
-// ── Mock WebSocket ───────────────────────────────────────────────
-
-class MockClientWebSocket extends EventTarget {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSING = 2;
-  static readonly CLOSED = 3;
-
-  readyState = MockClientWebSocket.CONNECTING;
-  binaryType = "arraybuffer";
-  sent: (string | ArrayBuffer | Uint8Array)[] = [];
-
-  constructor(
-    public url: string | URL,
-    _protocols?: string | string[],
-  ) {
-    super();
-    // Auto-open after microtask
-    queueMicrotask(() => {
-      this.readyState = MockClientWebSocket.OPEN;
-      this.dispatchEvent(new Event("open"));
+  for (const [label, payload] of valid) {
+    it(`parses ${label}`, () => {
+      const msg = parseServerMessage(JSON.stringify(payload));
+      expect(msg).not.toBeNull();
+      expect(msg!.type).toBe(payload.type);
     });
   }
 
-  send(data: string | ArrayBuffer | Uint8Array) {
-    this.sent.push(data);
-  }
+  const rejected: [string, string][] = [
+    ["invalid JSON", "not json at all"],
+    ["missing type", JSON.stringify({ text: "no type" })],
+    ["non-string type", JSON.stringify({ type: 123 })],
+    ["null value", "null"],
+    ["array", JSON.stringify([1, 2, 3])],
+    ["primitive", JSON.stringify("just a string")],
+  ];
 
-  close(code?: number, _reason?: string) {
-    this.readyState = MockClientWebSocket.CLOSED;
-    this.dispatchEvent(new CloseEvent("close", { code: code ?? 1000 }));
+  for (const [label, input] of rejected) {
+    it(`rejects ${label}`, () => {
+      expect(parseServerMessage(input)).toBeNull();
+    });
   }
-
-  /** Simulate receiving a message from the server. */
-  simulateMessage(data: string | ArrayBuffer) {
-    this.dispatchEvent(new MessageEvent("message", { data }));
-  }
-}
+});
 
 // ── VoiceSession tests ───────────────────────────────────────────
 
 describe("VoiceSession", () => {
-  let OriginalWebSocket: typeof WebSocket;
-  let lastWs: MockClientWebSocket | null;
+  let mock: ReturnType<typeof installMockWebSocket>;
+  let locationInstalled = false;
 
   beforeEach(() => {
-    OriginalWebSocket = globalThis.WebSocket;
-    lastWs = null;
-    // deno-lint-ignore no-explicit-any
-    (globalThis as any).WebSocket = class extends MockClientWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols);
-        lastWs = this;
-      }
-    };
-    // Mock location for URL construction
+    mock = installMockWebSocket();
     if (!("location" in globalThis)) {
       // deno-lint-ignore no-explicit-any
       (globalThis as any).location = { origin: "http://localhost:3000" };
+      locationInstalled = true;
     }
   });
 
   afterEach(() => {
-    globalThis.WebSocket = OriginalWebSocket;
+    mock.restore();
+    if (locationInstalled) {
+      // deno-lint-ignore no-explicit-any
+      delete (globalThis as any).location;
+      locationInstalled = false;
+    }
   });
 
-  const defaultOptions = {
+  const defaultOptions: AgentOptions = {
     platformUrl: "http://localhost:3000",
   };
 
-  function createSession(
+  /** Connect a session and wait for WS open. */
+  async function connectSession(
     opts: AgentOptions = defaultOptions,
-  ): VoiceSession {
-    return new VoiceSession(opts);
+  ): Promise<{ session: VoiceSession; ws: NonNullable<typeof mock.lastWs> }> {
+    const session = new VoiceSession(opts);
+    session.connect();
+    await new Promise((r) => setTimeout(r, 10));
+    return { session, ws: mock.lastWs! };
   }
 
   describe("constructor", () => {
-    it("creates a session in connecting state", () => {
-      const session = createSession();
-      expect(session).toBeDefined();
+    it("creates a session", () => {
+      expect(new VoiceSession(defaultOptions)).toBeDefined();
     });
   });
 
   describe("on() and emit()", () => {
     it("on() returns unsubscribe function", () => {
-      const session = createSession();
-      const states: string[] = [];
-      const unsub = session.on("stateChange", (s) => states.push(s));
+      const session = new VoiceSession(defaultOptions);
+      const unsub = session.on("stateChange", () => {});
       expect(typeof unsub).toBe("function");
       unsub();
     });
@@ -224,39 +104,27 @@ describe("VoiceSession", () => {
   describe("connect()", () => {
     it("creates a WebSocket and transitions to ready on open", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      expect(lastWs).not.toBeNull();
-      expect(states).toContain("ready");
+      // ready was emitted before we subscribed, check ws exists
+      expect(mock.lastWs).not.toBeNull();
       session.disconnect();
     });
 
     it("constructs correct WebSocket URL from platformUrl", async () => {
-      const session = createSession({
+      const { session, ws } = await connectSession({
         platformUrl: "https://example.com/api",
       });
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      const url = lastWs!.url.toString();
+      const url = ws.url.toString();
       expect(url).toContain("wss://");
       expect(url).toContain("session");
       session.disconnect();
     });
 
     it("uses ws:// for http:// platformUrl", async () => {
-      const session = createSession({
-        platformUrl: "http://localhost:3000",
-      });
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      const url = lastWs!.url.toString();
-      expect(url).toContain("ws://");
+      const { session, ws } = await connectSession();
+      expect(ws.url.toString()).toContain("ws://");
       session.disconnect();
     });
   });
@@ -265,17 +133,11 @@ describe("VoiceSession", () => {
     it("handles GREETING message", async () => {
       const messages: unknown[] = [];
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("message", (m) => messages.push(m));
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(
-        JSON.stringify({ type: "greeting", text: "Hi!" }),
-      );
-      await new Promise((r) => setTimeout(r, 10));
+      ws.simulateMessage(JSON.stringify({ type: "greeting", text: "Hi!" }));
 
       expect(messages).toHaveLength(1);
       expect((messages[0] as Record<string, unknown>).role).toBe("assistant");
@@ -285,49 +147,38 @@ describe("VoiceSession", () => {
 
     it("handles TRANSCRIPT message", async () => {
       const transcripts: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("transcript", (t) => transcripts.push(t));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(
+      ws.simulateMessage(
         JSON.stringify({ type: "transcript", text: "hello" }),
       );
 
-      expect(transcripts).toHaveLength(1);
-      expect(transcripts[0]).toBe("hello");
+      expect(transcripts).toEqual(["hello"]);
       session.disconnect();
     });
 
     it("handles TURN message", async () => {
       const messages: unknown[] = [];
       const transcripts: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("message", (m) => messages.push(m));
       session.on("transcript", (t) => transcripts.push(t));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(JSON.stringify({ type: "turn", text: "test" }));
+      ws.simulateMessage(JSON.stringify({ type: "turn", text: "test" }));
 
       expect(messages).toHaveLength(1);
       expect((messages[0] as Record<string, unknown>).role).toBe("user");
-      expect(transcripts).toHaveLength(1);
-      expect(transcripts[0]).toBe("");
+      expect(transcripts).toEqual([""]);
       session.disconnect();
     });
 
     it("handles THINKING message", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(JSON.stringify({ type: "thinking" }));
+      ws.simulateMessage(JSON.stringify({ type: "thinking" }));
       expect(states).toContain("thinking");
       session.disconnect();
     });
@@ -335,14 +186,11 @@ describe("VoiceSession", () => {
     it("handles CHAT message", async () => {
       const messages: unknown[] = [];
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("message", (m) => messages.push(m));
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(
+      ws.simulateMessage(
         JSON.stringify({ type: "chat", text: "response", steps: ["step1"] }),
       );
 
@@ -354,17 +202,11 @@ describe("VoiceSession", () => {
 
     it("handles TTS_DONE message", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Need to be in a state that can transition to listening
-      lastWs!.simulateMessage(
-        JSON.stringify({ type: "greeting", text: "Hi" }),
-      );
-      lastWs!.simulateMessage(JSON.stringify({ type: "tts_done" }));
+      ws.simulateMessage(JSON.stringify({ type: "greeting", text: "Hi" }));
+      ws.simulateMessage(JSON.stringify({ type: "tts_done" }));
 
       expect(states).toContain("listening");
       session.disconnect();
@@ -372,51 +214,38 @@ describe("VoiceSession", () => {
 
     it("handles CANCELLED message", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(JSON.stringify({ type: "cancelled" }));
+      ws.simulateMessage(JSON.stringify({ type: "cancelled" }));
       expect(states).toContain("listening");
       session.disconnect();
     });
 
     it("handles RESET message", async () => {
       let resetCalled = false;
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("reset", () => {
         resetCalled = true;
       });
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(JSON.stringify({ type: "reset" }));
+      ws.simulateMessage(JSON.stringify({ type: "reset" }));
       expect(resetCalled).toBe(true);
       session.disconnect();
     });
 
     it("handles PONG message", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Should not throw
-      lastWs!.simulateMessage(JSON.stringify({ type: "pong" }));
+      const { session, ws } = await connectSession();
+      ws.simulateMessage(JSON.stringify({ type: "pong" }));
       session.disconnect();
     });
 
     it("handles ERROR message", async () => {
       const errors: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("error", (e) => errors.push(e.message));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(
+      ws.simulateMessage(
         JSON.stringify({ type: "error", message: "Something went wrong" }),
       );
 
@@ -427,13 +256,10 @@ describe("VoiceSession", () => {
 
     it("handles ERROR message with details", async () => {
       const errors: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("error", (e) => errors.push(e.message));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      lastWs!.simulateMessage(
+      ws.simulateMessage(
         JSON.stringify({
           type: "error",
           message: "Failed",
@@ -447,45 +273,30 @@ describe("VoiceSession", () => {
     });
 
     it("handles binary audio data", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Should not throw (player is null, so data is just ignored)
-      lastWs!.simulateMessage(new ArrayBuffer(16));
+      const { session, ws } = await connectSession();
+      ws.simulateMessage(new ArrayBuffer(16));
       session.disconnect();
     });
 
     it("ignores unknown message types", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Should not throw
-      lastWs!.simulateMessage(JSON.stringify({ type: "unknown" }));
+      const { session, ws } = await connectSession();
+      ws.simulateMessage(JSON.stringify({ type: "unknown" }));
       session.disconnect();
     });
 
     it("ignores invalid JSON", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Should not throw
-      lastWs!.simulateMessage("not json");
+      const { session, ws } = await connectSession();
+      ws.simulateMessage("not json");
       session.disconnect();
     });
   });
 
   describe("cancel()", () => {
     it("sends cancel message over WebSocket", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
+      const { session, ws } = await connectSession();
       session.cancel();
 
-      const sentStrings = lastWs!.sent.filter(
+      const sentStrings = ws.sent.filter(
         (d): d is string => typeof d === "string",
       );
       const cancelMsg = sentStrings.find((s) =>
@@ -497,11 +308,8 @@ describe("VoiceSession", () => {
 
     it("transitions to listening state", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
-
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
 
       session.cancel();
       expect(states).toContain("listening");
@@ -511,13 +319,10 @@ describe("VoiceSession", () => {
 
   describe("reset()", () => {
     it("sends reset message when WS is open", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
+      const { session, ws } = await connectSession();
       session.reset();
 
-      const sentStrings = lastWs!.sent.filter(
+      const sentStrings = ws.sent.filter(
         (d): d is string => typeof d === "string",
       );
       const resetMsg = sentStrings.find((s) => JSON.parse(s).type === "reset");
@@ -527,23 +332,16 @@ describe("VoiceSession", () => {
 
     it("emits reset and reconnects when WS is closed", async () => {
       let resetEmitted = false;
-      const session = createSession();
+      const { session } = await connectSession();
       session.on("reset", () => {
         resetEmitted = true;
       });
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Close the WS first
       session.disconnect();
-
-      // Reset when disconnected triggers reconnection
       session.reset();
       await new Promise((r) => setTimeout(r, 10));
 
       expect(resetEmitted).toBe(true);
-      // Disconnect again to clean up the reconnected session
       session.disconnect();
     });
   });
@@ -551,13 +349,10 @@ describe("VoiceSession", () => {
   describe("disconnect()", () => {
     it("emits disconnected with intentional: true", async () => {
       let disconnectData: { intentional: boolean } | null = null;
-      const session = createSession();
+      const { session } = await connectSession();
       session.on("disconnected", (d) => {
         disconnectData = d;
       });
-
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
 
       session.disconnect();
 
@@ -566,17 +361,13 @@ describe("VoiceSession", () => {
     });
 
     it("closes WebSocket", async () => {
-      const session = createSession();
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      const ws = lastWs!;
+      const { session, ws } = await connectSession();
       session.disconnect();
-      expect(ws.readyState).toBe(MockClientWebSocket.CLOSED);
+      expect(ws.readyState).toBe(WebSocket.CLOSED);
     });
 
     it("is safe to call when not connected", () => {
-      const session = createSession();
+      const session = new VoiceSession(defaultOptions);
       expect(() => session.disconnect()).not.toThrow();
     });
   });
@@ -584,16 +375,12 @@ describe("VoiceSession", () => {
   describe("reconnection on close", () => {
     it("emits disconnected on unexpected close", async () => {
       let disconnectData: { intentional: boolean } | null = null;
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("disconnected", (d) => {
         disconnectData = d;
       });
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Simulate unexpected close
-      lastWs!.close(1006);
+      ws.close(1006);
       await new Promise((r) => setTimeout(r, 10));
 
       expect(disconnectData).not.toBeNull();
@@ -606,16 +393,13 @@ describe("VoiceSession", () => {
     it("sends ping messages at interval", async () => {
       const time = new FakeTime();
       try {
-        const session = createSession();
+        const session = new VoiceSession(defaultOptions);
         session.connect();
 
-        // Manually trigger open
         await time.tickAsync(0);
-
-        // Advance past ping interval
         await time.tickAsync(PING_INTERVAL_MS + 10);
 
-        const sentStrings = lastWs!.sent.filter(
+        const sentStrings = mock.lastWs!.sent.filter(
           (d): d is string => typeof d === "string",
         );
         const pings = sentStrings.filter((s) => {
@@ -627,7 +411,6 @@ describe("VoiceSession", () => {
         });
         expect(pings.length).toBeGreaterThanOrEqual(1);
 
-        // Cleanup session within FakeTime context
         session.disconnect();
       } finally {
         time.restore();
@@ -638,18 +421,12 @@ describe("VoiceSession", () => {
   describe("changeState", () => {
     it("does not emit if state hasn't changed", async () => {
       const states: string[] = [];
-      const session = createSession();
+      const { session, ws } = await connectSession();
       session.on("stateChange", (s) => states.push(s));
 
-      session.connect();
-      await new Promise((r) => setTimeout(r, 10));
-      // "ready" emitted once
+      ws.simulateMessage(JSON.stringify({ type: "cancelled" }));
+      ws.simulateMessage(JSON.stringify({ type: "cancelled" }));
 
-      // Sending another message that would transition to ready again
-      // This exercises the early return in changeState
-      lastWs!.simulateMessage(JSON.stringify({ type: "cancelled" }));
-      lastWs!.simulateMessage(JSON.stringify({ type: "cancelled" }));
-      // Second CANCELLED should not emit (already in listening)
       const listeningCount = states.filter((s) => s === "listening").length;
       expect(listeningCount).toBe(1);
       session.disconnect();

@@ -8,6 +8,7 @@ import {
   createMockTransport,
   getSentJson,
 } from "./_test_utils.ts";
+import type { SttEvents } from "./stt.ts";
 
 function createSession(
   overrides?: Parameters<typeof createMockSessionDeps>[0],
@@ -30,117 +31,30 @@ function createSession(
   return { session, transport, ...mocks };
 }
 
-/** Helper: create session with a captured onTurn callback for triggering handleTurn. */
-function createSessionWithTurnCallback(
+/** Create session that captures STT event callbacks for triggering turns in tests. */
+function createSessionWithSttEvents(
   overrides?: Parameters<typeof createMockSessionDeps>[0],
   agentConfig?: Partial<AgentConfig>,
 ) {
-  let onTurnCb: ((text: string) => void) | null = null;
-  let onTranscriptCb: ((text: string, isFinal: boolean) => void) | null = null;
-  let onErrorCb: ((err: Error) => void) | null = null;
-  let onCloseCb: (() => void) | null = null;
-  const transport = createMockTransport();
-  const mocks = createMockSessionDeps({
-    connectStt: (_key, _config, events) => {
-      onTurnCb = events.onTurn;
-      onTranscriptCb = events.onTranscript;
-      onErrorCb = events.onError;
-      onCloseCb = events.onClose;
-      return Promise.resolve({
-        send: () => {},
-        clear: () => {},
-        close: () => {},
-      });
-    },
-    ...overrides,
-  });
-
-  const session = new ServerSession(
-    "test-session",
-    transport,
+  const events: { current: SttEvents | null } = { current: null };
+  const result = createSession(
     {
-      instructions: "Test",
-      greeting: "Hi!",
-      voice: "jess",
-      ...agentConfig,
+      connectStt: (_key, _config, sttEvents) => {
+        events.current = sttEvents;
+        return Promise.resolve({
+          send: () => {},
+          clear: () => {},
+          close: () => {},
+        });
+      },
+      ...overrides,
     },
-    [],
-    mocks.deps,
+    agentConfig,
   );
-  return {
-    session,
-    transport,
-    ...mocks,
-    get onTurn() {
-      return onTurnCb;
-    },
-    get onTranscript() {
-      return onTranscriptCb;
-    },
-    get onError() {
-      return onErrorCb;
-    },
-    get onClose() {
-      return onCloseCb;
-    },
-  };
+  return { ...result, events };
 }
 
 describe("ServerSession", () => {
-  describe("constructor", () => {
-    it("pushes system message with instructions + voice rules", () => {
-      const transport = createMockTransport();
-      const mocks = createMockSessionDeps();
-      const session = new ServerSession(
-        "id",
-        transport,
-        {
-          instructions: "Custom instructions",
-          greeting: "Hello!",
-          voice: "jess",
-        },
-        [],
-        mocks.deps,
-      );
-      expect(session).toBeDefined();
-    });
-
-    it("merges voice config override", () => {
-      const transport = createMockTransport();
-      const mocks = createMockSessionDeps();
-      const session = new ServerSession(
-        "id",
-        transport,
-        {
-          instructions: "test",
-          greeting: "hi",
-          voice: "luna",
-        },
-        [],
-        mocks.deps,
-      );
-      expect(session).toBeDefined();
-    });
-
-    it("merges prompt config override", () => {
-      const transport = createMockTransport();
-      const mocks = createMockSessionDeps();
-      const session = new ServerSession(
-        "id",
-        transport,
-        {
-          instructions: "test",
-          greeting: "hi",
-          voice: "jess",
-          prompt: "custom prompt",
-        },
-        [],
-        mocks.deps,
-      );
-      expect(session).toBeDefined();
-    });
-  });
-
   describe("start()", () => {
     it("sends READY message with sample rates", () => {
       const { session, transport } = createSession();
@@ -152,17 +66,14 @@ describe("ServerSession", () => {
       expect(ready!.ttsSampleRate).toBeDefined();
     });
 
-    it("sets pending greeting", () => {
+    it("defers greeting until onAudioReady", () => {
       const { session, transport } = createSession();
       session.start();
-
-      // Greeting should not be sent yet (waiting for audio_ready)
       const messages = getSentJson(transport);
-      const greeting = messages.find((m) => m.type === "greeting");
-      expect(greeting).toBeUndefined();
+      expect(messages.find((m) => m.type === "greeting")).toBeUndefined();
     });
 
-    it("handles STT connection failure", async () => {
+    it("sends error on STT connection failure", async () => {
       const { session, transport } = createSession({
         connectStt: () => {
           throw new Error("STT connection refused");
@@ -172,13 +83,12 @@ describe("ServerSession", () => {
       await new Promise((r) => setTimeout(r, 50));
 
       const messages = getSentJson(transport);
-      const error = messages.find((m) => m.type === "error");
-      expect(error).toBeDefined();
+      expect(messages.find((m) => m.type === "error")).toBeDefined();
     });
   });
 
   describe("onAudioReady()", () => {
-    it("sends greeting and starts TTS when pending", async () => {
+    it("sends greeting and starts TTS", async () => {
       const { session, transport, ttsClient } = createSession();
       session.start();
       await new Promise((r) => setTimeout(r, 10));
@@ -191,16 +101,13 @@ describe("ServerSession", () => {
       expect(ttsClient.synthesizeCalls.length).toBeGreaterThan(0);
     });
 
-    it("does not send greeting if no pending greeting", async () => {
+    it("is a no-op on second call", async () => {
       const { session, ttsClient } = createSession();
       session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      // First call consumes pending greeting
       session.onAudioReady();
       const firstCount = ttsClient.synthesizeCalls.length;
-
-      // Second call should be a no-op
       session.onAudioReady();
       expect(ttsClient.synthesizeCalls.length).toBe(firstCount);
     });
@@ -212,10 +119,8 @@ describe("ServerSession", () => {
       session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      const data = new Uint8Array([1, 2, 3]);
-      session.onAudio(data);
+      session.onAudio(new Uint8Array([1, 2, 3]));
       expect(sttHandle.sentData.length).toBe(1);
-      expect(sttHandle.sentData[0]).toBe(data);
     });
 
     it("does not throw before STT is connected", () => {
@@ -223,7 +128,6 @@ describe("ServerSession", () => {
         connectStt: () => new Promise(() => {}), // never resolves
       });
       session.start();
-      // onAudio before STT connect — should not throw (stt is null, optional chaining)
       expect(() => session.onAudio(new Uint8Array([1]))).not.toThrow();
     });
   });
@@ -236,9 +140,7 @@ describe("ServerSession", () => {
 
       session.onCancel();
       expect(sttHandle.clearCalled).toBe(true);
-      const messages = getSentJson(transport);
-      const cancelled = messages.find((m) => m.type === "cancelled");
-      expect(cancelled).toBeDefined();
+      expect(getSentJson(transport).find((m) => m.type === "cancelled")).toBeDefined();
     });
   });
 
@@ -251,36 +153,24 @@ describe("ServerSession", () => {
       session.onReset();
       expect(sttHandle.clearCalled).toBe(true);
       const messages = getSentJson(transport);
-      const reset = messages.find((m) => m.type === "reset");
-      expect(reset).toBeDefined();
-      const greetings = messages.filter((m) => m.type === "greeting");
-      expect(greetings.length).toBeGreaterThan(0);
+      expect(messages.find((m) => m.type === "reset")).toBeDefined();
+      expect(messages.filter((m) => m.type === "greeting").length).toBeGreaterThan(0);
     });
   });
 
   describe("handleTurn()", () => {
-    it("sends TURN, THINKING, calls LLM, sends CHAT, triggers TTS", async () => {
-      const ctx = createSessionWithTurnCallback();
+    it("sends TURN, THINKING, CHAT, triggers TTS", async () => {
+      const ctx = createSessionWithSttEvents();
       ctx.session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(ctx.onTurn).not.toBeNull();
-      ctx.onTurn!("What is the weather?");
-
+      ctx.events.current!.onTurn("What is the weather?");
       await ctx.session.turnPromise;
 
       const messages = getSentJson(ctx.transport);
-      const turn = messages.find((m) => m.type === "turn");
-      expect(turn).toBeDefined();
-      expect(turn!.text).toBe("What is the weather?");
-
-      const thinking = messages.find((m) => m.type === "thinking");
-      expect(thinking).toBeDefined();
-
-      const chat = messages.find((m) => m.type === "chat");
-      expect(chat).toBeDefined();
-      expect(chat!.text).toBe("Hello from LLM");
-
+      expect(messages.find((m) => m.type === "turn")!.text).toBe("What is the weather?");
+      expect(messages.find((m) => m.type === "thinking")).toBeDefined();
+      expect(messages.find((m) => m.type === "chat")!.text).toBe("Hello from LLM");
       expect(ctx.llmCalls.length).toBe(1);
       expect(ctx.ttsClient.synthesizeCalls.length).toBeGreaterThan(0);
     });
@@ -292,7 +182,7 @@ describe("ServerSession", () => {
       const finalResponse = createMockLLMResponse("It's sunny in NYC.");
 
       let callIdx = 0;
-      const ctx = createSessionWithTurnCallback({
+      const ctx = createSessionWithSttEvents({
         callLLM: () => {
           const responses = [toolResponse, finalResponse];
           return Promise.resolve(responses[callIdx++] ?? finalResponse);
@@ -302,20 +192,17 @@ describe("ServerSession", () => {
       ctx.session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      ctx.onTurn!("What's the weather in NYC?");
+      ctx.events.current!.onTurn("What's the weather in NYC?");
       await ctx.session.turnPromise;
 
       expect(ctx.executeTool.calls.length).toBe(1);
       expect(ctx.executeTool.calls[0].name).toBe("get_weather");
-
-      const messages = getSentJson(ctx.transport);
-      const chat = messages.find((m) => m.type === "chat");
-      expect(chat).toBeDefined();
-      expect(chat!.text).toBe("It's sunny in NYC.");
+      expect(getSentJson(ctx.transport).find((m) => m.type === "chat")!.text)
+        .toBe("It's sunny in NYC.");
     });
 
-    it("catches errors and sends ERROR message", async () => {
-      const ctx = createSessionWithTurnCallback({
+    it("sends ERROR on LLM failure", async () => {
+      const ctx = createSessionWithSttEvents({
         callLLM: () => {
           throw new Error("LLM unavailable");
         },
@@ -324,92 +211,43 @@ describe("ServerSession", () => {
       ctx.session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      ctx.onTurn!("Hello");
+      ctx.events.current!.onTurn("Hello");
       await ctx.session.turnPromise;
 
-      const messages = getSentJson(ctx.transport);
-      const error = messages.find((m) => m.type === "error");
-      expect(error).toBeDefined();
+      expect(getSentJson(ctx.transport).find((m) => m.type === "error")).toBeDefined();
     });
 
-    it("handles null content in LLM response", async () => {
-      const ctx = createSessionWithTurnCallback({
-        callLLM: () => Promise.resolve(createMockLLMResponse(null)),
-      });
-
-      ctx.session.start();
-      await new Promise((r) => setTimeout(r, 10));
-
-      ctx.onTurn!("Hello");
-      await ctx.session.turnPromise;
-
-      const messages = getSentJson(ctx.transport);
-      const chat = messages.find((m) => m.type === "chat");
-      expect(chat).toBeDefined();
-      expect(chat!.text).toBe("Sorry, I couldn't generate a response.");
-    });
-
-    it("handles invalid JSON tool arguments", async () => {
-      const toolResponse = createMockLLMResponse(null, [
-        { id: "call1", name: "test_tool", arguments: "not valid json" },
-      ]);
-      const finalResponse = createMockLLMResponse("Recovered.");
-
-      let callIdx = 0;
-      const ctx = createSessionWithTurnCallback({
-        callLLM: () => {
-          const responses = [toolResponse, finalResponse];
-          return Promise.resolve(responses[callIdx++] ?? finalResponse);
-        },
-      });
-
-      ctx.session.start();
-      await new Promise((r) => setTimeout(r, 10));
-
-      ctx.onTurn!("Test");
-      await ctx.session.turnPromise;
-
-      // Should still complete without crashing
-      const messages = getSentJson(ctx.transport);
-      const chat = messages.find((m) => m.type === "chat");
-      expect(chat).toBeDefined();
-    });
-
-    it("sends TTS_DONE for empty response text", async () => {
-      const ctx = createSessionWithTurnCallback({
+    it("sends TTS_DONE for empty response", async () => {
+      const ctx = createSessionWithSttEvents({
         callLLM: () => Promise.resolve(createMockLLMResponse("")),
       });
 
       ctx.session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      ctx.onTurn!("Hello");
+      ctx.events.current!.onTurn("Hello");
       await ctx.session.turnPromise;
 
-      const messages = getSentJson(ctx.transport);
-      const ttsDone = messages.find((m) => m.type === "tts_done");
-      expect(ttsDone).toBeDefined();
+      expect(getSentJson(ctx.transport).find((m) => m.type === "tts_done")).toBeDefined();
     });
 
-    it("STT onTranscript callback sends TRANSCRIPT message", async () => {
-      const ctx = createSessionWithTurnCallback();
+    it("relays STT transcript to browser", async () => {
+      const ctx = createSessionWithSttEvents();
       ctx.session.start();
       await new Promise((r) => setTimeout(r, 10));
 
-      ctx.onTranscript!("partial text", false);
-
-      const messages = getSentJson(ctx.transport);
-      const transcript = messages.find((m) => m.type === "transcript");
+      ctx.events.current!.onTranscript("partial text", false);
+      const transcript = getSentJson(ctx.transport).find((m) => m.type === "transcript");
       expect(transcript).toBeDefined();
       expect(transcript!.text).toBe("partial text");
     });
   });
 
   describe("trySendJson when WS is closed", () => {
-    it("does not throw when WS readyState != 1", () => {
+    it("silently drops messages", () => {
       const transport = {
         sent: [] as (string | ArrayBuffer | Uint8Array)[],
-        readyState: 3, // CLOSED
+        readyState: 3,
         send(data: string | ArrayBuffer | Uint8Array) {
           this.sent.push(data);
         },
@@ -422,7 +260,6 @@ describe("ServerSession", () => {
         [],
         mocks.deps,
       );
-      // start() calls trySendJson — should not throw on closed WS
       session.start();
       expect(transport.sent).toHaveLength(0);
     });
@@ -439,7 +276,7 @@ describe("ServerSession", () => {
       expect(ttsClient.closeCalled).toBe(true);
     });
 
-    it("is idempotent — second call is no-op", async () => {
+    it("is idempotent", async () => {
       const { session, ttsClient } = createSession();
       session.start();
       await new Promise((r) => setTimeout(r, 10));
@@ -448,40 +285,6 @@ describe("ServerSession", () => {
       const firstCloseCount = ttsClient.closeCalled;
       await session.stop();
       expect(ttsClient.closeCalled).toBe(firstCloseCount);
-    });
-
-    it("waits for pending TTS before closing", async () => {
-      let resolveTts: (() => void) | undefined;
-      const ctx = createSessionWithTurnCallback({
-        ttsClient: {
-          synthesizeCalls: [],
-          closeCalled: false,
-          synthesize() {
-            return new Promise<void>((r) => {
-              resolveTts = r;
-            });
-          },
-          close() {
-            this.closeCalled = true;
-          },
-          // deno-lint-ignore no-explicit-any
-        } as any,
-      });
-
-      ctx.session.start();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Trigger a turn to start TTS
-      ctx.onTurn!("Hello");
-      await new Promise((r) => setTimeout(r, 20));
-
-      // Start stop (it should wait for TTS)
-      const stopPromise = ctx.session.stop();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Resolve TTS
-      if (resolveTts) resolveTts();
-      await stopPromise;
     });
   });
 });

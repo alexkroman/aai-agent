@@ -1,10 +1,9 @@
 import { Hono } from "@hono/hono";
 import { HTTPException } from "@hono/hono/http-exception";
 import { getLogger } from "../../_utils/logger.ts";
-import { renderAgentPage } from "../html.ts";
+import { renderAgentPage } from "../../ui/html.ts";
 import { favicon } from "./favicon.ts";
-import { handleSessionWebSocket } from "../ws_handler.ts";
-import { createServerSession } from "../session_factory.ts";
+import { handleSessionWebSocket, type Session } from "../ws_handler.ts";
 import { ServerSession } from "../session.ts";
 import {
   type AgentInfo,
@@ -20,7 +19,7 @@ const log = getLogger("agent-routes");
 export function createAgentRoutes(ctx: {
   slots: Map<string, AgentSlot>;
   agents: AgentInfo[];
-  sessions: Map<string, ServerSession>;
+  sessions: Map<string, Session>;
   bundleDir: string;
 }): Hono {
   const { slots, agents, sessions, bundleDir } = ctx;
@@ -77,7 +76,7 @@ export function createAgentRoutes(ctx: {
     handleSessionWebSocket(socket, sessions, {
       createSession: (sessionId, ws) => {
         const executeTool = createComlinkExecutor(info.workerApi);
-        return createServerSession(
+        return ServerSession.create(
           sessionId,
           ws,
           info.config,

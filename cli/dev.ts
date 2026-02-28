@@ -1,13 +1,12 @@
 // dev command — Start development server with watch mode and hot-reload.
 
-import { Command } from "@cliffy/command";
 import { type BuildContext, context, type Plugin } from "esbuild";
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import { resolve } from "@std/path";
-import { log } from "../_output.ts";
-import { discoverAgents } from "../_discover.ts";
-import { bundleAgent, workletTextPlugin } from "../_bundler.ts";
-import type { AgentEntry } from "../_discover.ts";
+import { log } from "./_output.ts";
+import { discoverAgents } from "./_discover.ts";
+import { bundleAgent, workletTextPlugin } from "./_bundler.ts";
+import type { AgentEntry } from "./_discover.ts";
 
 const configPath = resolve("deno.json");
 
@@ -108,11 +107,10 @@ export async function runDev(
   // 3. Start orchestrator
   let orchestrator = deps.spawn(BUNDLE_DIR, opts.port);
 
-  // 4. Watch agent + sdk source -> re-bundle workers, restart
+  // 4. Watch agent + server source -> re-bundle workers, restart
   const watchDirs = [
     ...agents.map((a: AgentEntry) => a.dir),
-    "sdk",
-    "platform",
+    "server",
   ];
   const watcher = deps.watchFs(watchDirs, { recursive: true });
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -168,7 +166,3 @@ export async function runDev(
 
   await orchestrator.status;
 }
-
-export const devCommand = new Command()
-  .description("Start development server with watch mode and hot-reload.")
-  .option("-p, --port <port:number>", "Server port.", { default: 3000 });

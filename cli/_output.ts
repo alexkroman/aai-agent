@@ -1,31 +1,31 @@
 // Shared colored output helpers for CLI commands.
 
-import { colors } from "@cliffy/ansi/colors";
+import { bold, cyan, dim, green, red, yellow } from "@std/fmt/colors";
 
 export const log = {
   header(msg: string): void {
-    console.log(colors.bold(msg));
+    console.log(bold(msg));
   },
 
   success(msg: string): void {
-    console.log(colors.green(`✓ ${msg}`));
+    console.log(green(`✓ ${msg}`));
   },
 
   info(msg: string): void {
-    console.log(colors.dim(msg));
+    console.log(dim(msg));
   },
 
   warn(msg: string): void {
-    console.error(colors.yellow(msg));
+    console.error(yellow(msg));
   },
 
   error(msg: string): void {
-    console.error(colors.red(msg));
+    console.error(red(msg));
   },
 
   agent(slug: string, detail?: string): void {
     console.log(
-      detail ? `  ${colors.cyan(slug)} ${detail}` : `  ${colors.cyan(slug)}`,
+      detail ? `  ${cyan(slug)} ${detail}` : `  ${cyan(slug)}`,
     );
   },
 
@@ -34,6 +34,6 @@ export const log = {
   },
 
   timing(label: string, ms: number): void {
-    console.log(colors.dim(`    ${label} (${Math.round(ms)}ms)`));
+    console.log(dim(`    ${label} (${Math.round(ms)}ms)`));
   },
 };

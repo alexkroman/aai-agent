@@ -1,16 +1,10 @@
 import { deadline } from "@std/async/deadline";
 import { ERR_INTERNAL } from "./errors.ts";
-
-const STT_CONNECTION_TIMEOUT = 10_000;
 import { getLogger } from "../_utils/logger.ts";
 import { type STTConfig, SttMessageSchema } from "./types.ts";
 
+const STT_CONNECTION_TIMEOUT = 10_000;
 const log = getLogger("stt");
-
-export type SttWebSocketFactory = (
-  url: string,
-  options: { headers: Record<string, string> },
-) => WebSocket;
 
 export interface SttEvents {
   onTranscript: (text: string, isFinal: boolean) => void;
@@ -25,12 +19,11 @@ export interface SttHandle {
   close: () => void;
 }
 
-async function connectSttWs(
+export async function connectStt(
   apiKey: string,
   config: STTConfig,
   events: SttEvents,
-  createWebSocket?: SttWebSocketFactory,
-): Promise<{ ws: WebSocket; handle: SttHandle }> {
+): Promise<SttHandle> {
   const params = new URLSearchParams({
     sample_rate: String(config.sampleRate),
     speech_model: config.speechModel,
@@ -47,15 +40,14 @@ async function connectSttWs(
   const url = `${config.wssBase}?${params}`;
   const wsOpts = { headers: { Authorization: apiKey } };
 
-  const ws = createWebSocket?.(url, wsOpts) ??
-    // deno-lint-ignore no-explicit-any
-    new (WebSocket as any)(url, wsOpts);
+  // deno-lint-ignore no-explicit-any
+  const ws: WebSocket = new (WebSocket as any)(url, wsOpts);
 
   try {
-    return await deadline(
-      new Promise<{ ws: WebSocket; handle: SttHandle }>((resolve, reject) => {
+    const handle = await deadline(
+      new Promise<SttHandle>((resolve, reject) => {
         ws.onopen = () => {
-          const handle: SttHandle = {
+          resolve({
             send(audio: Uint8Array) {
               if (ws.readyState === WebSocket.OPEN) ws.send(audio);
             },
@@ -67,8 +59,7 @@ async function connectSttWs(
             close() {
               ws.close();
             },
-          };
-          resolve({ ws, handle });
+          });
         };
 
         let msgCount = 0;
@@ -133,6 +124,7 @@ async function connectSttWs(
       }),
       STT_CONNECTION_TIMEOUT,
     );
+    return handle;
   } catch (err) {
     ws.close();
     if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -140,19 +132,4 @@ async function connectSttWs(
     }
     throw err;
   }
-}
-
-export interface ConnectSttOptions {
-  createWebSocket?: SttWebSocketFactory;
-}
-
-export function connectStt(
-  apiKey: string,
-  config: STTConfig,
-  events: SttEvents,
-  options?: ConnectSttOptions,
-): Promise<SttHandle> {
-  return connectSttWs(apiKey, config, events, options?.createWebSocket).then((
-    { handle },
-  ) => handle);
 }

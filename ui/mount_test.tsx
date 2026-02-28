@@ -8,15 +8,15 @@ import { defaultTheme } from "./theme.ts";
 
 // Preact schedules effects via setTimeout; disable Deno's timer leak detection.
 describe("mount()", { sanitizeOps: false, sanitizeResources: false }, () => {
-  let restoreWebSocket: () => void;
+  let mock: ReturnType<typeof installMockWebSocket>;
 
   beforeEach(() => {
     setupDOM();
-    restoreWebSocket = installMockWebSocket();
+    mock = installMockWebSocket();
   });
 
   afterEach(() => {
-    restoreWebSocket();
+    mock.restore();
   });
 
   it("throws when target selector does not match", () => {

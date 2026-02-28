@@ -10,7 +10,6 @@ import {
   MAX_RECONNECT_ATTEMPTS,
   type Message,
   PING_INTERVAL_MS,
-  VALID_TRANSITIONS,
 } from "./types.ts";
 
 import type { AudioPlayer, MicCapture } from "./audio.ts";
@@ -20,69 +19,58 @@ const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
 // ── Session errors ──────────────────────────────────────────────
 
-export enum SessionErrorCode {
-  AUDIO_SETUP_FAILED = "AUDIO_SETUP_FAILED",
-  SERVER_ERROR = "SERVER_ERROR",
-  MAX_RECONNECTS = "MAX_RECONNECTS",
-}
+export type SessionErrorCode =
+  | "AUDIO_SETUP_FAILED"
+  | "SERVER_ERROR"
+  | "MAX_RECONNECTS";
 
-export class SessionError extends Error {
-  readonly code: SessionErrorCode;
+export type SessionError = Error & { code: SessionErrorCode };
 
-  constructor(code: SessionErrorCode, message: string) {
-    super(message);
-    this.name = "SessionError";
-    this.code = code;
-  }
+function sessionError(code: SessionErrorCode, message: string): SessionError {
+  return Object.assign(new Error(message), { code, name: "SessionError" });
 }
 
 // ── Reconnection strategy ───────────────────────────────────────
 
-export class ReconnectStrategy {
-  private attempts = 0;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private readonly maxAttempts: number;
-  private readonly maxBackoff: number;
-  private readonly initialBackoff: number;
+export interface Reconnect {
+  readonly canRetry: boolean;
+  schedule(cb: () => void): boolean;
+  cancel(): void;
+  reset(): void;
+}
 
-  constructor(
-    maxAttempts = MAX_RECONNECT_ATTEMPTS,
-    maxBackoff = MAX_BACKOFF_MS,
-    initialBackoff = INITIAL_BACKOFF_MS,
-  ) {
-    this.maxAttempts = maxAttempts;
-    this.maxBackoff = maxBackoff;
-    this.initialBackoff = initialBackoff;
-  }
+export function createReconnect(
+  maxAttempts = MAX_RECONNECT_ATTEMPTS,
+  maxBackoff = MAX_BACKOFF_MS,
+  initialBackoff = INITIAL_BACKOFF_MS,
+): Reconnect {
+  let attempts = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
-  get canRetry(): boolean {
-    return this.attempts < this.maxAttempts;
-  }
-
-  schedule(cb: () => void): boolean {
-    if (!this.canRetry) return false;
-    const delay = Math.min(
-      this.initialBackoff * 2 ** this.attempts,
-      this.maxBackoff,
-    );
-    this.attempts++;
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      cb();
-    }, delay);
-    return true;
-  }
-
-  cancel(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-  }
-
-  reset(): void {
-    this.attempts = 0;
-  }
+  return {
+    get canRetry() {
+      return attempts < maxAttempts;
+    },
+    schedule(cb) {
+      if (attempts >= maxAttempts) return false;
+      const delay = Math.min(initialBackoff * 2 ** attempts, maxBackoff);
+      attempts++;
+      timer = setTimeout(() => {
+        timer = null;
+        cb();
+      }, delay);
+      return true;
+    },
+    cancel() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+    reset() {
+      attempts = 0;
+    },
+  };
 }
 
 // ── Typed event helpers ─────────────────────────────────────────
@@ -98,21 +86,37 @@ export interface SessionEventMap {
   reset: void;
 }
 
-// ── Protocol parser ──────────────────────────────────────────────
+// deno-lint-ignore no-explicit-any
+type Fn = (...args: any[]) => void;
 
-const KNOWN_SERVER_TYPES: ReadonlySet<string> = new Set([
-  "ready",
-  "greeting",
-  "transcript",
-  "turn",
-  "thinking",
-  "chat",
-  "tts_done",
-  "cancelled",
-  "reset",
-  "error",
-  "pong",
-]);
+class TypedEmitter<E> {
+  private listeners = new Map<keyof E, Set<Fn>>();
+
+  on<K extends keyof E>(event: K, handler: (data: E[K]) => void): () => void {
+    let set = this.listeners.get(event);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(event, set);
+    }
+    set.add(handler as Fn);
+    return () => {
+      set!.delete(handler as Fn);
+    };
+  }
+
+  protected emit<K extends keyof E>(
+    event: K,
+    ...args: E[K] extends void ? [] : [E[K]]
+  ): void {
+    const set = this.listeners.get(event);
+    if (!set) return;
+    for (const handler of set) {
+      (handler as Fn)(...args);
+    }
+  }
+}
+
+// ── Protocol parser ──────────────────────────────────────────────
 
 export function parseServerMessage(data: string): ServerMessage | null {
   try {
@@ -120,7 +124,6 @@ export function parseServerMessage(data: string): ServerMessage | null {
     if (
       typeof msg !== "object" || msg === null || typeof msg.type !== "string"
     ) return null;
-    if (!KNOWN_SERVER_TYPES.has(msg.type)) return null;
     return msg as ServerMessage;
   } catch {
     return null;
@@ -129,7 +132,7 @@ export function parseServerMessage(data: string): ServerMessage | null {
 
 // ── VoiceSession ───────────────────────────────────────────────
 
-export class VoiceSession extends EventTarget {
+export class VoiceSession extends TypedEmitter<SessionEventMap> {
   private ws: WebSocket | null = null;
   private player: AudioPlayer | null = null;
   private mic: MicCapture | null = null;
@@ -137,7 +140,7 @@ export class VoiceSession extends EventTarget {
   private currentState: AgentState = "connecting";
 
   // Reconnection
-  private reconnector = new ReconnectStrategy();
+  private reconnector = createReconnect();
 
   // Connection lifecycle — abort to tear down ws listeners + ping
   private connectionController: AbortController | null = null;
@@ -156,43 +159,8 @@ export class VoiceSession extends EventTarget {
     this.options = options;
   }
 
-  // ── Typed event helpers ───────────────────────────────────────
-
-  on<K extends keyof SessionEventMap>(
-    event: K,
-    handler: SessionEventMap[K] extends void ? () => void
-      : (data: SessionEventMap[K]) => void,
-  ): () => void {
-    const wrapper = ((e: Event) => {
-      (handler as (data?: SessionEventMap[K]) => void)(
-        (e as CustomEvent).detail,
-      );
-    }) as EventListener;
-    this.addEventListener(event, wrapper);
-    return () => this.removeEventListener(event, wrapper);
-  }
-
-  protected emit<K extends keyof SessionEventMap>(
-    event: K,
-    ...args: SessionEventMap[K] extends void ? [] : [SessionEventMap[K]]
-  ): void {
-    this.dispatchEvent(new CustomEvent(event, { detail: args[0] }));
-  }
-
   private changeState(newState: AgentState): void {
     if (newState === this.currentState) return;
-    const g = globalThis as Record<string, unknown>;
-    if (
-      typeof g.process !== "undefined" &&
-      (g.process as Record<string, unknown>).env &&
-      (g.process as Record<string, Record<string, string>>).env
-          ?.NODE_ENV !== "production" &&
-      !VALID_TRANSITIONS[this.currentState].has(newState)
-    ) {
-      console.warn(
-        `[VoiceSession] Invalid state transition: ${this.currentState} -> ${newState}`,
-      );
-    }
     this.currentState = newState;
     this.emit("stateChange", newState);
   }
@@ -244,48 +212,10 @@ export class VoiceSession extends EventTarget {
     if (!msg) return;
 
     switch (msg.type) {
-      case "ready": {
+      case "ready":
         this.reconnector.reset();
-        if (this.audioSetupInFlight) break;
-        this.audioSetupInFlight = true;
-        import("./audio.ts").then(({ createAudioPlayer, startMicCapture }) =>
-          Promise.all([
-            createAudioPlayer(msg.ttsSampleRate ?? DEFAULT_TTS_SAMPLE_RATE),
-            startMicCapture(
-              this.ws!,
-              msg.sampleRate ?? DEFAULT_STT_SAMPLE_RATE,
-            ),
-          ])
-        )
-          .then(([player, mic]) => {
-            this.audioSetupInFlight = false;
-            if (this.ws?.readyState !== WebSocket.OPEN) {
-              player.close();
-              mic.close();
-              return;
-            }
-            this.player = player;
-            this.mic = mic;
-            this.ws.send(JSON.stringify({ type: "audio_ready" }));
-            this.emit("audioReady");
-            this.changeState("listening");
-            this.emit("connected");
-          })
-          .catch((err) => {
-            this.audioSetupInFlight = false;
-            if (this.ws?.readyState !== WebSocket.OPEN) return;
-            console.error("Audio setup failed:", err);
-            this.emit(
-              "error",
-              new SessionError(
-                SessionErrorCode.AUDIO_SETUP_FAILED,
-                `Microphone access failed: ${err.message}`,
-              ),
-            );
-            this.changeState("error");
-          });
+        void this.handleReady(msg);
         break;
-      }
       case "greeting":
         this.emit("message", { role: "assistant", text: msg.text });
         this.changeState("speaking");
@@ -330,13 +260,52 @@ export class VoiceSession extends EventTarget {
           ? `${msg.message}: ${details.join(", ")}`
           : msg.message;
         console.error("Agent error:", fullMessage);
-        this.emit(
-          "error",
-          new SessionError(SessionErrorCode.SERVER_ERROR, fullMessage),
-        );
+        this.emit("error", sessionError("SERVER_ERROR", fullMessage));
         this.changeState("error");
         break;
       }
+    }
+  }
+
+  private async handleReady(
+    msg: Extract<ServerMessage, { type: "ready" }>,
+  ): Promise<void> {
+    if (this.audioSetupInFlight) return;
+    this.audioSetupInFlight = true;
+    try {
+      const { createAudioPlayer, startMicCapture } = await import(
+        "./audio.ts"
+      );
+      const [player, mic] = await Promise.all([
+        createAudioPlayer(msg.ttsSampleRate ?? DEFAULT_TTS_SAMPLE_RATE),
+        startMicCapture(
+          this.ws!,
+          msg.sampleRate ?? DEFAULT_STT_SAMPLE_RATE,
+        ),
+      ]);
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        player.close();
+        mic.close();
+        return;
+      }
+      this.player = player;
+      this.mic = mic;
+      this.ws.send(JSON.stringify({ type: "audio_ready" }));
+      this.emit("audioReady");
+      this.changeState("listening");
+      this.emit("connected");
+    } catch (err) {
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      this.emit(
+        "error",
+        sessionError(
+          "AUDIO_SETUP_FAILED",
+          `Microphone access failed: ${(err as Error).message}`,
+        ),
+      );
+      this.changeState("error");
+    } finally {
+      this.audioSetupInFlight = false;
     }
   }
 
@@ -362,10 +331,7 @@ export class VoiceSession extends EventTarget {
     if (!scheduled) {
       this.emit(
         "error",
-        new SessionError(
-          SessionErrorCode.MAX_RECONNECTS,
-          "Connection lost. Please refresh.",
-        ),
+        sessionError("MAX_RECONNECTS", "Connection lost. Please refresh."),
       );
       this.changeState("error");
       return;

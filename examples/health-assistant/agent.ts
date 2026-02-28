@@ -1,27 +1,6 @@
 import { Agent, fetchJSON, tool, z } from "@aai/sdk";
 import type { ToolContext } from "@aai/sdk";
 
-// ── Unit conversions ────────────────────────────────────────────
-
-const Weight = z.object({
-  weight: z.number(),
-  weight_unit: z.enum(["kg", "lb"]),
-});
-
-function toKg(weight: number, unit: "kg" | "lb"): number {
-  return unit === "lb" ? weight * 0.453592 : weight;
-}
-
-function toMeters(height: number, unit: "cm" | "m" | "in" | "ft"): number {
-  const factors: Record<string, number> = {
-    cm: 0.01,
-    m: 1,
-    in: 0.0254,
-    ft: 0.3048,
-  };
-  return height * factors[unit];
-}
-
 // ── FDA / NIH helpers ───────────────────────────────────────────
 
 /** Pick the first string from an FDA array-of-strings field. */
@@ -131,52 +110,6 @@ async function checkInteractions(
   };
 }
 
-function calculateBmi(
-  { weight, weight_unit, height, height_unit }: {
-    weight: number;
-    weight_unit: "kg" | "lb";
-    height: number;
-    height_unit: "cm" | "m" | "in" | "ft";
-  },
-): Record<string, unknown> {
-  const kg = toKg(weight, weight_unit);
-  const m = toMeters(height, height_unit);
-  const bmi = kg / (m * m);
-  const category = bmi < 18.5
-    ? "underweight"
-    : bmi < 25
-    ? "normal"
-    : bmi < 30
-    ? "overweight"
-    : "obese";
-  return {
-    bmi: Math.round(bmi * 10) / 10,
-    category,
-    weight_kg: Math.round(kg * 10) / 10,
-    height_m: Math.round(m * 100) / 100,
-  };
-}
-
-function dosageByWeight(
-  { medication, weight, weight_unit, dose_per_kg, frequency }: {
-    medication: string;
-    weight: number;
-    weight_unit: "kg" | "lb";
-    dose_per_kg: number;
-    frequency?: string;
-  },
-): Record<string, unknown> {
-  const kg = toKg(weight, weight_unit);
-  return {
-    medication,
-    patient_weight_kg: Math.round(kg * 10) / 10,
-    dose_per_kg_mg: dose_per_kg,
-    calculated_dose_mg: Math.round(kg * dose_per_kg * 10) / 10,
-    frequency: frequency ?? "as directed",
-    note: "This is an estimate. Always verify with a pharmacist or prescriber.",
-  };
-}
-
 // ── Agent definition ────────────────────────────────────────────
 
 export default new Agent({
@@ -195,13 +128,18 @@ a healthcare provider for medical decisions.
 - Keep responses concise — this is a voice conversation
 - If symptoms sound urgent (chest pain, difficulty breathing, sudden numbness), \
 advise calling emergency services immediately
-- Use web_search to look up current symptom information when needed`,
+- Use web_search to look up current symptom information when needed
+
+Use run_code for health calculations:
+- BMI: weight_kg / (height_m * height_m). Categories: <18.5 underweight, 18.5-25 normal, 25-30 overweight, >30 obese
+  Unit conversions: 1 lb = 0.453592 kg, 1 in = 0.0254 m, 1 ft = 0.3048 m, 1 cm = 0.01 m
+- Weight-based dosage: dose_mg = weight_kg * dose_per_kg. Always note this is an estimate.`,
   greeting:
     "Hi, I'm Dr. Sage! I can help you look up symptoms, medication info, drug interactions, and health metrics. Just remember — I'm not a real doctor, so always check with your healthcare provider. What can I help with?",
   voice: "tara",
   prompt:
     "Transcribe medical and health terms accurately including drug names like acetaminophen, ibuprofen, amoxicillin, metformin, lisinopril, atorvastatin, omeprazole, and levothyroxine. Listen for dosages like 500 milligrams, 10 milliliters, and 200 micrograms. Recognize symptoms, body parts, and medical terms like hypertension, tachycardia, dyspnea, edema, cholesterol, and gastrointestinal.",
-  builtinTools: ["web_search"],
+  builtinTools: ["web_search", "run_code"],
   tools: {
     drug_info: tool({
       description:
@@ -222,30 +160,6 @@ advise calling emergency services immediately
         ),
       }),
       handler: ({ drugs }, ctx) => checkInteractions(drugs, ctx),
-    }),
-    calculate_bmi: tool({
-      description: "Calculate Body Mass Index from height and weight.",
-      parameters: z.object({
-        ...Weight.shape,
-        height: z.number().describe("Height value"),
-        height_unit: z.enum(["cm", "m", "in", "ft"]).describe("Height unit"),
-      }),
-      handler: calculateBmi,
-    }),
-    dosage_by_weight: tool({
-      description:
-        "Calculate a weight-based medication dosage. Common for pediatric dosing and certain medications.",
-      parameters: z.object({
-        medication: z.string().describe("Medication name"),
-        ...Weight.shape,
-        dose_per_kg: z.number().describe(
-          "Recommended dose in mg per kg of body weight",
-        ),
-        frequency: z.string().optional().describe(
-          "Dosing frequency (e.g. 'every 6 hours', 'twice daily')",
-        ),
-      }),
-      handler: dosageByWeight,
     }),
   },
 });

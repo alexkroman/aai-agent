@@ -1,5 +1,3 @@
-// CSS custom property theme system. Zero runtime overhead.
-
 import type { AgentState } from "./types.ts";
 
 export interface Theme {
@@ -55,18 +53,19 @@ export const darkTheme: Theme = {
   },
 };
 
+function camelToKebab(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+}
+
 export function applyTheme(el: HTMLElement, theme: Theme): void {
   const s = el.style;
-  s.setProperty("--aai-bg", theme.bg);
-  s.setProperty("--aai-surface", theme.surface);
-  s.setProperty("--aai-surface-light", theme.surfaceLight);
-  s.setProperty("--aai-primary", theme.primary);
-  s.setProperty("--aai-text", theme.text);
-  s.setProperty("--aai-text-muted", theme.textMuted);
-  s.setProperty("--aai-error", theme.error);
-  s.setProperty("--aai-font", theme.font);
-  s.setProperty("--aai-radius", theme.radius);
-  for (const [state, color] of Object.entries(theme.stateColors)) {
-    s.setProperty(`--aai-state-${state}`, color);
+  for (const [key, value] of Object.entries(theme)) {
+    if (key === "stateColors") {
+      for (const [state, color] of Object.entries(value as Record<string, string>)) {
+        s.setProperty(`--aai-state-${state}`, color);
+      }
+    } else {
+      s.setProperty(`--aai-${camelToKebab(key)}`, value as string);
+    }
   }
 }

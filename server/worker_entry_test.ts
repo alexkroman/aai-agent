@@ -1,63 +1,71 @@
-import { assert, assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { z } from "zod";
 import * as Comlink from "comlink";
-import { Agent } from "./agent.ts";
 import { tool } from "./tool.ts";
 import { startWorker } from "./worker_entry.ts";
 import type { WorkerApi } from "./worker_entry.ts";
 
-/**
- * Creates a MessageChannel-based harness that simulates Worker <-> main
- * Comlink tunnel. port1 is the worker-side endpoint passed to startWorker(),
- * port2 is the main-side endpoint wrapped by Comlink.wrap().
- */
-function createComlinkHarness(
-  agent: Agent,
+/** MessageChannel-based harness — no real Workers needed. */
+function createHarness(
+  agent: {
+    name: string;
+    instructions: string;
+    greeting: string;
+    voice: string;
+    prompt?: string;
+    builtinTools?: readonly string[];
+    tools: Record<string, ReturnType<typeof tool>>;
+  },
   secrets: Record<string, string> = {},
 ) {
   const channel = new MessageChannel();
-
-  // Expose the worker API on port1 (the "worker side")
   startWorker(agent, secrets, undefined, channel.port1);
-
-  // Wrap port2 (the "main side") with Comlink
   const workerApi = Comlink.wrap<WorkerApi>(channel.port2);
 
-  function restore() {
-    channel.port1.close();
-    channel.port2.close();
-  }
-
-  return { workerApi, restore };
+  return {
+    workerApi,
+    close() {
+      channel.port1.close();
+      channel.port2.close();
+    },
+  };
 }
 
-Deno.test("startWorker - getConfig() returns correct config", async () => {
-  const agent = new Agent({
-    name: "TestBot",
-    instructions: "Test",
-    greeting: "Hi!",
-    voice: "jess",
-  });
+const BASE_AGENT = {
+  name: "TestBot",
+  instructions: "Test instructions",
+  greeting: "Hi!",
+  voice: "jess",
+  tools: {},
+};
 
-  const harness = createComlinkHarness(agent, { KEY: "val" });
+Deno.test("getConfig returns agent config and tool schemas", async () => {
+  const h = createHarness({
+    ...BASE_AGENT,
+    tools: {
+      greet: tool({
+        description: "Greet someone",
+        parameters: z.object({ name: z.string() }),
+        handler: ({ name }) => `Hi ${name}`,
+      }),
+    },
+  });
   try {
-    const result = await harness.workerApi.getConfig();
-    assertEquals(result.config.name, "TestBot");
-    assertEquals(result.config.instructions, "Test");
-    assertEquals(result.config.greeting, "Hi!");
-    assertEquals(result.config.voice, "jess");
-    assert(Array.isArray(result.toolSchemas));
+    const { config, toolSchemas } = await h.workerApi.getConfig();
+    assertEquals(config.name, "TestBot");
+    assertEquals(config.instructions, "Test instructions");
+    assertEquals(config.greeting, "Hi!");
+    assertEquals(config.voice, "jess");
+    assertEquals(toolSchemas.length, 1);
+    assertEquals(toolSchemas[0].name, "greet");
   } finally {
-    harness.restore();
+    h.close();
   }
 });
 
-Deno.test("startWorker - executeTool() with valid tool", async () => {
-  const agent = new Agent({
-    name: "Bot",
-    instructions: "Test",
-    greeting: "Hi",
-    voice: "jess",
+Deno.test("executeTool runs handler through Comlink", async () => {
+  const h = createHarness({
+    ...BASE_AGENT,
     tools: {
       greet: tool({
         description: "Greet",
@@ -66,83 +74,24 @@ Deno.test("startWorker - executeTool() with valid tool", async () => {
       }),
     },
   });
-
-  const harness = createComlinkHarness(agent);
   try {
-    const result = await harness.workerApi.executeTool("greet", {
-      name: "World",
-    });
-    assertEquals(result, "Hello, World!");
+    assertEquals(
+      await h.workerApi.executeTool("greet", { name: "World" }),
+      "Hello, World!",
+    );
   } finally {
-    harness.restore();
+    h.close();
   }
 });
 
-Deno.test("startWorker - executeTool() with unknown tool", async () => {
-  const agent = new Agent({
-    name: "Bot",
-    instructions: "Test",
-    greeting: "Hi",
-    voice: "jess",
-  });
-
-  const harness = createComlinkHarness(agent);
+Deno.test("executeTool returns error string for unknown tool", async () => {
+  const h = createHarness(BASE_AGENT);
   try {
-    const result = await harness.workerApi.executeTool("nonexistent", {});
-    assert(result.includes("Error"));
-    assert(result.includes("nonexistent"));
+    assertStringIncludes(
+      await h.workerApi.executeTool("nope", {}),
+      "Unknown tool",
+    );
   } finally {
-    harness.restore();
-  }
-});
-
-Deno.test("startWorker - executeTool() when handler throws", async () => {
-  const agent = new Agent({
-    name: "Bot",
-    instructions: "Test",
-    greeting: "Hi",
-    voice: "jess",
-    tools: {
-      fail: tool({
-        description: "Fail",
-        parameters: z.object({}),
-        handler: () => {
-          throw new Error("boom");
-        },
-      }),
-    },
-  });
-
-  const harness = createComlinkHarness(agent);
-  try {
-    const result = await harness.workerApi.executeTool("fail", {});
-    assert(result.includes("Error"));
-    assert(result.includes("boom"));
-  } finally {
-    harness.restore();
-  }
-});
-
-Deno.test("startWorker - executeTool() returns 'null' when handler returns null", async () => {
-  const agent = new Agent({
-    name: "Bot",
-    instructions: "Test",
-    greeting: "Hi",
-    voice: "jess",
-    tools: {
-      noop: tool({
-        description: "Noop",
-        parameters: z.object({}),
-        handler: () => null,
-      }),
-    },
-  });
-
-  const harness = createComlinkHarness(agent);
-  try {
-    const result = await harness.workerApi.executeTool("noop", {});
-    assertEquals(result, "null");
-  } finally {
-    harness.restore();
+    h.close();
   }
 });

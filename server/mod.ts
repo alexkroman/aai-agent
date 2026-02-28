@@ -5,17 +5,18 @@ export type { AgentOptions } from "./agent_types.ts";
 export { createOrchestrator } from "./orchestrator.ts";
 export { loadPlatformConfig, type PlatformConfig } from "./config.ts";
 export {
+  type CreateSessionOptions,
   ServerSession,
   type SessionDeps,
   type SessionTransport,
 } from "./session.ts";
 export {
-  createServerSession,
-  type SessionFactoryOptions,
-} from "./session_factory.ts";
-export { handleSessionWebSocket, type WsSessionOptions } from "./ws_handler.ts";
+  handleSessionWebSocket,
+  type Session,
+  type WsSessionOptions,
+} from "./ws_handler.ts";
 export { applyMiddleware } from "./middleware.ts";
-export { FAVICON_SVG, renderAgentPage } from "./html.ts";
+export { FAVICON_SVG, renderAgentPage } from "../ui/html.ts";
 export { agentToolsToSchemas } from "./protocol.ts";
 export { ERR, ERR_INTERNAL } from "./errors.ts";
 export {

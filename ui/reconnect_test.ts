@@ -1,11 +1,11 @@
 import { assertEquals } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
-import { ReconnectStrategy } from "./session.ts";
+import { createReconnect } from "./session.ts";
 
 Deno.test("canRetry true initially, false after max attempts", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(2);
+    const s = createReconnect(2);
     assertEquals(s.canRetry, true);
     s.schedule(() => {});
     s.schedule(() => {});
@@ -18,7 +18,7 @@ Deno.test("canRetry true initially, false after max attempts", () => {
 Deno.test("schedule returns true until exhausted", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(1);
+    const s = createReconnect(1);
     assertEquals(s.schedule(() => {}), true);
     assertEquals(s.schedule(() => {}), false);
   } finally {
@@ -29,7 +29,7 @@ Deno.test("schedule returns true until exhausted", () => {
 Deno.test("schedule fires callback after delay", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(5, 16_000, 1_000);
+    const s = createReconnect(5, 16_000, 1_000);
     let called = false;
     s.schedule(() => {
       called = true;
@@ -45,7 +45,7 @@ Deno.test("schedule fires callback after delay", () => {
 Deno.test("exponential backoff capped at maxBackoff", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(5, 4_000, 1_000);
+    const s = createReconnect(5, 4_000, 1_000);
     const calls: number[] = [];
 
     // 1st: 1000 * 2^0 = 1000ms
@@ -85,7 +85,7 @@ Deno.test("exponential backoff capped at maxBackoff", () => {
 Deno.test("cancel clears pending timer", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(5, 16_000, 1_000);
+    const s = createReconnect(5, 16_000, 1_000);
     let called = false;
     s.schedule(() => {
       called = true;
@@ -101,7 +101,7 @@ Deno.test("cancel clears pending timer", () => {
 Deno.test("reset restores retry capacity", () => {
   const time = new FakeTime();
   try {
-    const s = new ReconnectStrategy(1);
+    const s = createReconnect(1);
     s.schedule(() => {});
     assertEquals(s.canRetry, false);
     s.reset();

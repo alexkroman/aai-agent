@@ -1,10 +1,9 @@
 // deploy command — Deploy bundled agents to a running orchestrator.
 
-import { Command } from "@cliffy/command";
 import { walk } from "@std/fs/walk";
-import { log } from "../_output.ts";
-import { discoverAgents } from "../_discover.ts";
-import type { AgentEntry } from "../_discover.ts";
+import { log } from "./_output.ts";
+import { discoverAgents } from "./_discover.ts";
+import type { AgentEntry } from "./_discover.ts";
 
 export interface DeployOpts {
   url: string;
@@ -132,13 +131,3 @@ export async function runDeploy(
 
   log.success("All deployed successfully.");
 }
-
-export const deployCommand = new Command()
-  .description("Deploy bundled agents to a running orchestrator.")
-  .option("-u, --url <url:string>", "Orchestrator URL.", {
-    default: "http://localhost:3000",
-  })
-  .option("--bundle-dir <dir:string>", "Bundle directory.", {
-    default: "dist/bundle",
-  })
-  .option("--dry-run", "Show what would be deployed without sending.");

@@ -1,8 +1,8 @@
 import type { Logger } from "../_utils/logger.ts";
-
-const MAX_TOOL_ITERATIONS = 3;
 import type { CallLLMOptions } from "./llm.ts";
 import type { ChatMessage, LLMResponse, ToolSchema } from "./types.ts";
+
+const MAX_TOOL_ITERATIONS = 3;
 
 export interface TurnContext {
   messages: ChatMessage[];

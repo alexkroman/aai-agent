@@ -1,48 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { deployCommand, runDeploy } from "./deploy.ts";
+import { runDeploy } from "./deploy.ts";
 import type { DeployDeps } from "./deploy.ts";
-
-describe("deployCommand parsing", () => {
-  function parse(args: string[]) {
-    return deployCommand.reset().throwErrors().noExit().parse(args);
-  }
-
-  it("defaults --url to http://localhost:3000", async () => {
-    const { options } = await parse([]);
-    expect(options.url).toBe("http://localhost:3000");
-  });
-
-  it("accepts custom --url", async () => {
-    const { options } = await parse(["--url", "http://prod:8080"]);
-    expect(options.url).toBe("http://prod:8080");
-  });
-
-  it("accepts -u shorthand", async () => {
-    const { options } = await parse(["-u", "http://prod:8080"]);
-    expect(options.url).toBe("http://prod:8080");
-  });
-
-  it("defaults --bundle-dir to dist/bundle", async () => {
-    const { options } = await parse([]);
-    expect(options.bundleDir).toBe("dist/bundle");
-  });
-
-  it("accepts custom --bundle-dir", async () => {
-    const { options } = await parse(["--bundle-dir", "/tmp/bundles"]);
-    expect(options.bundleDir).toBe("/tmp/bundles");
-  });
-
-  it("defaults --dry-run to false", async () => {
-    const { options } = await parse([]);
-    expect(options.dryRun).toBeFalsy();
-  });
-
-  it("accepts --dry-run flag", async () => {
-    const { options } = await parse(["--dry-run"]);
-    expect(options.dryRun).toBe(true);
-  });
-});
 
 describe("runDeploy", () => {
   function makeDeps(overrides: Partial<DeployDeps> = {}): DeployDeps {

@@ -29,6 +29,9 @@ export type { Theme } from "./theme.ts";
 export { mount } from "./mount.tsx";
 export type { MountHandle, MountOptions } from "./mount.tsx";
 
+// HTML shell + favicon
+export { FAVICON_SVG, renderAgentPage } from "./html.ts";
+
 // Components
 export {
   App,

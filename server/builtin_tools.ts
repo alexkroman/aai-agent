@@ -114,9 +114,112 @@ const visitWebpage: BuiltinTool = {
   },
 };
 
+const runCodeParams = z.object({
+  code: z
+    .string()
+    .describe("JavaScript code to execute. Use console.log() for output."),
+});
+
+const TIMEOUT_MS = 5_000;
+
+const runCode: BuiltinTool = {
+  name: "run_code",
+  description:
+    "Execute JavaScript in a sandboxed Deno subprocess with no permissions. Use console.log() for output. No network or filesystem access.",
+  parameters: runCodeParams,
+  execute: async (args) => {
+    const { code } = runCodeParams.parse(args);
+
+    log.info("run_code", { codeLength: code.length });
+
+    const cmd = new Deno.Command("deno", {
+      args: [
+        "run",
+        "--deny-net",
+        "--deny-read",
+        "--deny-write",
+        "--deny-env",
+        "--deny-sys",
+        "--deny-run",
+        "--deny-ffi",
+        "-",
+      ],
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    });
+
+    const proc = cmd.spawn();
+    const writer = proc.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(code));
+    await writer.close();
+
+    const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
+
+    try {
+      const { code: exit, stdout, stderr } = await proc.output();
+      clearTimeout(timer);
+
+      const out = new TextDecoder().decode(stdout).trim();
+      const err = new TextDecoder().decode(stderr).trim();
+
+      if (exit !== 0) {
+        return JSON.stringify({ error: err || "Execution failed" });
+      }
+      return out || "Code ran successfully (no output)";
+    } catch {
+      clearTimeout(timer);
+      return JSON.stringify({ error: "Execution timed out" });
+    }
+  },
+};
+
+const fetchJsonParams = z.object({
+  url: z.string().describe("The URL to fetch JSON from"),
+  headers: z.record(z.string(), z.string()).optional().describe(
+    "Optional HTTP headers to include in the request",
+  ),
+});
+
+const fetchJson: BuiltinTool = {
+  name: "fetch_json",
+  description:
+    "Fetch a URL via HTTP GET and return the JSON response. Useful for calling REST APIs that return JSON data.",
+  parameters: fetchJsonParams,
+  execute: async (args) => {
+    const { url, headers } = fetchJsonParams.parse(args);
+
+    log.info("fetch_json", { url });
+
+    const resp = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!resp.ok) {
+      return JSON.stringify({
+        error: `HTTP ${resp.status} ${resp.statusText}`,
+        url,
+      });
+    }
+
+    try {
+      const data = await resp.json();
+      return JSON.stringify(data);
+    } catch {
+      return JSON.stringify({
+        error: "Response was not valid JSON",
+        url,
+      });
+    }
+  },
+};
+
 const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   web_search: webSearch,
   visit_webpage: visitWebpage,
+  run_code: runCode,
+  fetch_json: fetchJson,
 };
 
 export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {

@@ -1,18 +1,14 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { handleSessionWebSocket } from "./ws_handler.ts";
-import { ServerSession } from "./session.ts";
-import type { AgentConfig } from "./types.ts";
-import { createMockSessionDeps } from "./_test_utils.ts";
+import { handleSessionWebSocket, type Session } from "./ws_handler.ts";
 
-/** Minimal mock WebSocket that simulates the server-side WS API. */
-class MockServerWs {
+/** Mock server-side WebSocket. */
+class MockWs {
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
-
-  readyState = 1; // OPEN
+  readyState = 1;
   sent: (string | ArrayBuffer | Uint8Array)[] = [];
 
   send(data: string | ArrayBuffer | Uint8Array) {
@@ -22,71 +18,80 @@ class MockServerWs {
     this.readyState = 3;
   }
 
-  // Helpers to simulate events
-  simulateOpen() {
+  open() {
     this.onopen?.(new Event("open"));
   }
-  simulateMessage(data: string | ArrayBuffer, _isBinary = false) {
-    // Real WebSocket MessageEvent has data property
-    const event = new MessageEvent("message", { data });
-    this.onmessage?.(event);
+  msg(data: string | ArrayBuffer) {
+    this.onmessage?.(new MessageEvent("message", { data }));
   }
-  simulateClose(code = 1000) {
+  disconnect(code = 1000) {
     this.onclose?.(new CloseEvent("close", { code }));
   }
-  simulateError() {
+  error() {
     this.onerror?.(new Event("error"));
+  }
+
+  sentJson(): Record<string, unknown>[] {
+    return this.sent
+      .filter((d): d is string => typeof d === "string")
+      .map((s) => JSON.parse(s));
   }
 }
 
-function createTestSession(
-  _sessionId: string,
-  ws: WebSocket,
-): ServerSession {
-  const mocks = createMockSessionDeps();
-  const agentConfig: AgentConfig = {
-    instructions: "Test",
-    greeting: "Hello!",
-    voice: "jess",
+/** Spy session that records all method calls. */
+function createSpySession(): Session & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    start() {
+      calls.push("start");
+    },
+    stop() {
+      calls.push("stop");
+      return Promise.resolve();
+    },
+    onAudioReady() {
+      calls.push("onAudioReady");
+    },
+    onAudio(_data: Uint8Array) {
+      calls.push("onAudio");
+    },
+    onCancel() {
+      calls.push("onCancel");
+    },
+    onReset() {
+      calls.push("onReset");
+    },
   };
-  return new ServerSession(
-    _sessionId,
-    ws,
-    agentConfig,
-    [],
-    mocks.deps,
-  );
+}
+
+function setup(overrides?: { onOpen?: () => void; onClose?: () => void }) {
+  const ws = new MockWs();
+  const sessions = new Map<string, Session>();
+  const spy = createSpySession();
+
+  handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
+    createSession: () => spy,
+    ...overrides,
+  });
+
+  return { ws, sessions, spy };
 }
 
 describe("handleSessionWebSocket", () => {
-  it("creates session and starts it on ws.onopen", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-    let createCalled = false;
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (sessionId, wsArg) => {
-        createCalled = true;
-        return createTestSession(sessionId, wsArg);
-      },
-    });
-
-    await ws.simulateOpen();
-    // Wait for async onopen to complete
+  it("creates and starts session on open", async () => {
+    const { ws, sessions, spy } = setup();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(createCalled).toBe(true);
     expect(sessions.size).toBe(1);
+    expect(spy.calls).toContain("start");
   });
 
   it("calls onOpen/onClose callbacks", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
     let openCalled = false;
     let closeCalled = false;
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
+    const { ws } = setup({
       onOpen: () => {
         openCalled = true;
       },
@@ -95,191 +100,95 @@ describe("handleSessionWebSocket", () => {
       },
     });
 
-    await ws.simulateOpen();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
     expect(openCalled).toBe(true);
 
-    await ws.simulateClose();
+    ws.disconnect();
     await new Promise((r) => setTimeout(r, 10));
     expect(closeCalled).toBe(true);
   });
 
-  it("responds to ping with pong before session is ready", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    // Send ping before onopen (session not ready yet)
-    ws.simulateMessage(JSON.stringify({ type: "ping" }));
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Should have responded with pong
-    const pongs = ws.sent
-      .filter((d): d is string => typeof d === "string")
-      .map((s) => JSON.parse(s))
-      .filter((m) => m.type === "pong");
-    expect(pongs.length).toBe(1);
+  it("responds to ping with pong before session is ready", () => {
+    const { ws } = setup();
+    // Send before open — session not ready
+    ws.msg(JSON.stringify({ type: "ping" }));
+    expect(ws.sentJson().some((m) => m.type === "pong")).toBe(true);
   });
 
-  it("queues non-ping messages before session is ready", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-    let sessionRef: ServerSession | null = null;
+  it("responds to ping with pong after session is ready", async () => {
+    const { ws } = setup();
+    ws.open();
+    await new Promise((r) => setTimeout(r, 10));
 
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => {
-        sessionRef = createTestSession(id, wsArg);
-        return sessionRef;
-      },
-    });
+    ws.sent.length = 0;
+    ws.msg(JSON.stringify({ type: "ping" }));
+    expect(ws.sentJson().some((m) => m.type === "pong")).toBe(true);
+  });
 
-    // Send control message before onopen
-    ws.simulateMessage(JSON.stringify({ type: "audio_ready" }));
-
-    // Now open — queued messages should be replayed
-    await ws.simulateOpen();
+  it("queues control messages sent before open and replays them", async () => {
+    const { ws, spy } = setup();
+    ws.msg(JSON.stringify({ type: "audio_ready" }));
+    ws.open();
     await new Promise((r) => setTimeout(r, 50));
 
-    // Session was created and started
-    expect(sessionRef).not.toBeNull();
+    expect(spy.calls).toContain("start");
+    expect(spy.calls).toContain("onAudioReady");
   });
 
-  it("handles ping/pong after session is ready", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
+  it("dispatches audio_ready, cancel, reset to session", async () => {
+    const { ws, spy } = setup();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
 
-    ws.sent.length = 0; // clear sent messages from session.start()
-    ws.simulateMessage(JSON.stringify({ type: "ping" }));
+    ws.msg(JSON.stringify({ type: "audio_ready" }));
+    ws.msg(JSON.stringify({ type: "cancel" }));
+    ws.msg(JSON.stringify({ type: "reset" }));
     await new Promise((r) => setTimeout(r, 10));
 
-    const pongs = ws.sent
-      .filter((d): d is string => typeof d === "string")
-      .map((s) => JSON.parse(s))
-      .filter((m) => m.type === "pong");
-    expect(pongs.length).toBe(1);
+    expect(spy.calls).toContain("onAudioReady");
+    expect(spy.calls).toContain("onCancel");
+    expect(spy.calls).toContain("onReset");
   });
 
-  it("handles binary audio after session is ready", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
+  it("dispatches binary audio to session.onAudio", async () => {
+    const { ws, spy } = setup();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
 
-    // Send binary audio — should not throw
-    const audioData = new ArrayBuffer(16);
-    ws.simulateMessage(audioData);
-    await new Promise((r) => setTimeout(r, 10));
-    // No error means it was handled
+    ws.msg(new ArrayBuffer(16));
+    expect(spy.calls).toContain("onAudio");
   });
 
-  it("handles control messages (cancel, reset) after session is ready", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
+  it("ignores invalid JSON and unknown control types", async () => {
+    const { ws, spy } = setup();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
 
-    // Send cancel
-    ws.simulateMessage(JSON.stringify({ type: "cancel" }));
+    const callsBefore = spy.calls.length;
+    ws.msg("not json");
+    ws.msg(JSON.stringify({ type: "bogus" }));
     await new Promise((r) => setTimeout(r, 10));
 
-    // Send reset
-    ws.simulateMessage(JSON.stringify({ type: "reset" }));
-    await new Promise((r) => setTimeout(r, 10));
+    // No new session method calls
+    expect(spy.calls.length).toBe(callsBefore);
   });
 
-  it("ignores invalid JSON messages", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Send unparseable JSON — should not throw
-    ws.simulateMessage("not json");
-    await new Promise((r) => setTimeout(r, 10));
-  });
-
-  it("ignores unknown control message types", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
-    await new Promise((r) => setTimeout(r, 10));
-
-    ws.simulateMessage(JSON.stringify({ type: "unknown_type" }));
-    await new Promise((r) => setTimeout(r, 10));
-  });
-
-  it("cleans up session on ws.onclose", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    await ws.simulateOpen();
+  it("stops session and removes from map on close", async () => {
+    const { ws, sessions, spy } = setup();
+    ws.open();
     await new Promise((r) => setTimeout(r, 10));
     expect(sessions.size).toBe(1);
 
-    await ws.simulateClose();
+    ws.disconnect();
     await new Promise((r) => setTimeout(r, 10));
+    expect(spy.calls).toContain("stop");
     expect(sessions.size).toBe(0);
   });
 
-  it("handles ws.onerror without crashing", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-    });
-
-    // Error before open — should not throw
-    ws.simulateError();
-    await new Promise((r) => setTimeout(r, 10));
-  });
-
-  it("includes logContext in logs", async () => {
-    const ws = new MockServerWs();
-    const sessions = new Map<string, ServerSession>();
-
-    handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
-      createSession: (id, wsArg) => createTestSession(id, wsArg),
-      logContext: { slug: "test-agent" },
-    });
-
-    await ws.simulateOpen();
-    await new Promise((r) => setTimeout(r, 10));
-    // Just verify it doesn't crash with logContext
-    expect(sessions.size).toBe(1);
+  it("handles ws error without crashing", () => {
+    const { ws } = setup();
+    ws.error();
+    // No throw
   });
 });

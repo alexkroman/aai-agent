@@ -1,5 +1,5 @@
 import { Hono } from "@hono/hono";
-import { FAVICON_SVG } from "../html.ts";
+import { FAVICON_SVG } from "../../ui/html.ts";
 
 const favicon = new Hono();
 

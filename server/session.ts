@@ -1,10 +1,11 @@
 import type { PlatformConfig } from "./config.ts";
 import { ERR } from "./errors.ts";
-import type { CallLLMOptions } from "./llm.ts";
+import { callLLM as defaultCallLLM, type CallLLMOptions } from "./llm.ts";
 import { getLogger, type Logger } from "../_utils/logger.ts";
 import type { ExecuteTool } from "./tool_executor.ts";
-import type { SttEvents, SttHandle } from "./stt.ts";
-import type { ITtsClient } from "./tts.ts";
+import { connectStt as defaultConnectStt, type SttEvents, type SttHandle } from "./stt.ts";
+import { type ITtsClient, TtsClient } from "./tts.ts";
+import { executeBuiltinTool as defaultExecuteBuiltinTool } from "./builtin_tools.ts";
 import { executeTurn, type TurnContext } from "./turn_handler.ts";
 import type {
   AgentConfig,
@@ -300,4 +301,34 @@ export class ServerSession {
       });
     this.ttsPromise = promise;
   }
+
+  /** Wire real implementations into a ServerSession. */
+  static create(
+    sessionId: string,
+    ws: SessionTransport,
+    agentConfig: AgentConfig,
+    toolSchemas: ToolSchema[],
+    opts: CreateSessionOptions,
+  ): ServerSession {
+    const deps: SessionDeps = {
+      config: {
+        ...opts.platformConfig,
+        ttsConfig: { ...opts.platformConfig.ttsConfig },
+      },
+      connectStt: opts.depsOverride?.connectStt ?? defaultConnectStt,
+      callLLM: opts.depsOverride?.callLLM ?? defaultCallLLM,
+      ttsClient: opts.depsOverride?.ttsClient ??
+        new TtsClient(opts.platformConfig.ttsConfig),
+      executeTool: opts.depsOverride?.executeTool ?? opts.executeTool,
+      executeBuiltinTool: opts.depsOverride?.executeBuiltinTool ??
+        defaultExecuteBuiltinTool,
+    };
+    return new ServerSession(sessionId, ws, agentConfig, toolSchemas, deps);
+  }
+}
+
+export interface CreateSessionOptions {
+  platformConfig: PlatformConfig;
+  executeTool: ExecuteTool;
+  depsOverride?: Partial<SessionDeps>;
 }

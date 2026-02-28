@@ -6,7 +6,7 @@ import { createHealthRoute } from "./routes/health.ts";
 import { createDeployRoute } from "./routes/deploy.ts";
 import { createAgentRoutes } from "./routes/agent.ts";
 import { type AgentInfo, type AgentSlot, registerSlot } from "./worker_pool.ts";
-import { ServerSession } from "./session.ts";
+import type { Session } from "./ws_handler.ts";
 import {
   type AgentMetadata,
   listAgents as kvListAgents,
@@ -18,18 +18,12 @@ export type { AgentInfo };
 
 const log = getLogger("orchestrator");
 
-export async function createOrchestrator(opts: {
-  bundleDir?: string;
-}): Promise<{ app: Hono; agents: AgentInfo[] }> {
-  const bundleDir = opts.bundleDir ?? "bundles";
-  await Deno.mkdir(bundleDir, { recursive: true });
-
+/** Reconcile KV and disk: load known agents, backfill orphaned deploys. */
+export async function loadSlots(
+  kv: Deno.Kv,
+  bundleDir: string,
+): Promise<Map<string, AgentSlot>> {
   const slots = new Map<string, AgentSlot>();
-  const agents: AgentInfo[] = [];
-  const sessions = new Map<string, ServerSession>();
-
-  // ── Load agents from KV + disk ──────────────────────────────────
-  const kv = await openKv();
   const kvAgents = await kvListAgents(kv);
   const kvSlugs = new Set<string>();
 
@@ -73,7 +67,21 @@ export async function createOrchestrator(opts: {
     }
   }
 
-  // ── Compose Hono app ────────────────────────────────────────────
+  return slots;
+}
+
+export async function createOrchestrator(opts: {
+  bundleDir?: string;
+  kv?: Deno.Kv;
+}): Promise<{ app: Hono; agents: AgentInfo[] }> {
+  const bundleDir = opts.bundleDir ?? "bundles";
+  await Deno.mkdir(bundleDir, { recursive: true });
+
+  const kv = opts.kv ?? await openKv();
+  const slots = await loadSlots(kv, bundleDir);
+  const agents: AgentInfo[] = [];
+  const sessions = new Map<string, Session>();
+
   const app = new Hono();
   applyMiddleware(app);
   app.route("/", favicon);

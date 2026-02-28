@@ -1,4 +1,4 @@
-import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   stubFetchError,
   stubFetchJson,
@@ -6,107 +6,11 @@ import {
 } from "../../server/_tool_test_utils.ts";
 import agent from "./agent.ts";
 
-const ctx = testCtx();
-
 Deno.test("health-assistant - has correct config", () => {
   assertEquals(agent.name, "Dr. Sage");
   assertEquals(agent.voice, "tara");
-  assertEquals(Object.keys(agent.tools).length, 4);
-  assertEquals(agent.builtinTools, ["web_search"]);
-});
-
-Deno.test("health-assistant - calculate_bmi normal in kg/cm", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 70, weight_unit: "kg", height: 175, height_unit: "cm" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.category, "normal");
-  assertAlmostEquals(result.bmi as number, 22.9, 0.5);
-  assertEquals(result.weight_kg, 70);
-  assertEquals(result.height_m, 1.75);
-});
-
-Deno.test("health-assistant - calculate_bmi converts pounds and feet", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 150, weight_unit: "lb", height: 5.5, height_unit: "ft" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertAlmostEquals(result.weight_kg as number, 68, 1);
-  assertEquals(typeof result.bmi, "number");
-});
-
-Deno.test("health-assistant - calculate_bmi converts inches", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 70, weight_unit: "kg", height: 69, height_unit: "in" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertAlmostEquals(result.height_m as number, 1.75, 0.02);
-  assertEquals(result.category, "normal");
-});
-
-Deno.test("health-assistant - calculate_bmi meters directly", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 70, weight_unit: "kg", height: 1.75, height_unit: "m" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.height_m, 1.75);
-  assertEquals(result.category, "normal");
-});
-
-Deno.test("health-assistant - calculate_bmi detects underweight", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 45, weight_unit: "kg", height: 175, height_unit: "cm" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.category, "underweight");
-});
-
-Deno.test("health-assistant - calculate_bmi detects overweight", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 85, weight_unit: "kg", height: 175, height_unit: "cm" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.category, "overweight");
-});
-
-Deno.test("health-assistant - calculate_bmi detects obese", async () => {
-  const result = (await agent.tools.calculate_bmi.handler(
-    { weight: 110, weight_unit: "kg", height: 175, height_unit: "cm" },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.category, "obese");
-});
-
-Deno.test("health-assistant - dosage_by_weight in kg", async () => {
-  const result = (await agent.tools.dosage_by_weight.handler(
-    {
-      medication: "ibuprofen",
-      weight: 30,
-      weight_unit: "kg",
-      dose_per_kg: 10,
-    },
-    ctx,
-  )) as Record<string, unknown>;
-  assertEquals(result.calculated_dose_mg, 300);
-  assertEquals(result.patient_weight_kg, 30);
-  assertEquals(result.medication, "ibuprofen");
-  assertEquals(result.frequency, "as directed");
-  assert((result.note as string).includes("estimate"));
-});
-
-Deno.test("health-assistant - dosage_by_weight converts pounds", async () => {
-  const result = (await agent.tools.dosage_by_weight.handler(
-    {
-      medication: "amoxicillin",
-      weight: 66,
-      weight_unit: "lb",
-      dose_per_kg: 25,
-      frequency: "every 8 hours",
-    },
-    ctx,
-  )) as Record<string, unknown>;
-  assertAlmostEquals(result.patient_weight_kg as number, 30, 1);
-  assertEquals(result.frequency, "every 8 hours");
+  assertEquals(Object.keys(agent.tools).length, 2);
+  assertEquals(agent.builtinTools, ["web_search", "run_code"]);
 });
 
 Deno.test("health-assistant - drug_info returns information", async () => {

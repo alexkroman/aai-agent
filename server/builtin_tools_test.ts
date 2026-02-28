@@ -75,10 +75,17 @@ describe("htmlToText", () => {
 
 describe("getBuiltinToolSchemas", () => {
   it("returns schemas for known tools", () => {
-    const schemas = getBuiltinToolSchemas(["web_search", "visit_webpage"]);
-    expect(schemas).toHaveLength(2);
+    const schemas = getBuiltinToolSchemas([
+      "web_search",
+      "visit_webpage",
+      "run_code",
+      "fetch_json",
+    ]);
+    expect(schemas).toHaveLength(4);
     expect(schemas[0].name).toBe("web_search");
     expect(schemas[1].name).toBe("visit_webpage");
+    expect(schemas[2].name).toBe("run_code");
+    expect(schemas[3].name).toBe("fetch_json");
   });
 
   it("ignores unknown tool names", () => {
@@ -179,6 +186,94 @@ describe("executeBuiltinTool", () => {
       expect(result).not.toBeNull();
       const parsed = JSON.parse(result!);
       expect(parsed.error).toContain("404");
+    });
+  });
+
+  describe("run_code", () => {
+    it("executes code and returns stdout", async () => {
+      const result = await executeBuiltinTool("run_code", {
+        code: 'console.log("hello")',
+      });
+      expect(result).toBe("hello");
+    });
+
+    it("returns error for syntax errors", async () => {
+      const result = await executeBuiltinTool("run_code", {
+        code: "this is not valid javascript %%%",
+      });
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.error).toBeDefined();
+    });
+
+    it("returns no-output message for silent code", async () => {
+      const result = await executeBuiltinTool("run_code", {
+        code: "const x = 1 + 1;",
+      });
+      expect(result).toBe("Code ran successfully (no output)");
+    });
+  });
+
+  describe("fetch_json", () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it("fetches and returns JSON", async () => {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ name: "test", value: 42 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof globalThis.fetch;
+
+      const result = await executeBuiltinTool("fetch_json", {
+        url: "https://api.example.com/data",
+      });
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.name).toBe("test");
+      expect(parsed.value).toBe(42);
+    });
+
+    it("handles non-OK response", async () => {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("Server Error", {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
+        )) as typeof globalThis.fetch;
+
+      const result = await executeBuiltinTool("fetch_json", {
+        url: "https://api.example.com/fail",
+      });
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.error).toContain("500");
+    });
+
+    it("handles non-JSON response", async () => {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("this is not json", {
+            status: 200,
+          }),
+        )) as typeof globalThis.fetch;
+
+      const result = await executeBuiltinTool("fetch_json", {
+        url: "https://api.example.com/text",
+      });
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.error).toContain("not valid JSON");
     });
   });
 });

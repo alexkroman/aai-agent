@@ -1,44 +1,111 @@
 // Root CLI entry point for the aai agent development toolkit.
 
-import { Command } from "@cliffy/command";
-import { colors } from "@cliffy/ansi/colors";
-import { devCommand, runDev } from "./commands/dev.ts";
-import { buildCommand, runBuild } from "./commands/build.ts";
-import { deployCommand, runDeploy } from "./commands/deploy.ts";
+import { parseArgs } from "@std/cli/parse-args";
+import { red } from "@std/fmt/colors";
 
-// Wire actions here (not in the command modules) so tests can
-// import and parse commands without triggering side effects.
-buildCommand.action(async (options) => {
-  await runBuild({ outDir: options.outDir });
-});
+function printUsage(): void {
+  console.log(`aai — Agent development toolkit
 
-deployCommand.action(async (options) => {
-  await runDeploy({
-    url: options.url,
-    bundleDir: options.bundleDir,
-    dryRun: options.dryRun ?? false,
-  });
-});
+Usage: aai <command> [options]
 
-devCommand.action(async (options) => {
-  await runDev({ port: options.port });
-});
+Commands:
+  dev      Start development server with watch mode and hot-reload
+  build    Bundle agents for production into dist/bundle/
+  deploy   Deploy bundled agents to a running orchestrator
 
-export const cli = new Command()
-  .name("aai")
-  .version("0.1.0")
-  .description(
-    "Agent development toolkit — build, serve, and deploy voice agents.",
-  )
-  .globalOption("--verbose", "Enable verbose output.")
-  .command("dev", devCommand)
-  .command("build", buildCommand)
-  .command("deploy", deployCommand)
-  .error((error, _cmd) => {
-    console.error(colors.red(`error: ${error.message}`));
-    Deno.exit(1);
-  });
+Options:
+  -h, --help       Show this help message
+  -V, --version    Show version number
+
+Run 'aai <command> --help' for command-specific options.`);
+}
+
+/** Returns exit code (0 = success). */
+export async function main(args: string[]): Promise<number> {
+  const command = args[0];
+  const rest = args.slice(1);
+
+  // Global flags
+  if (!command || command === "--help" || command === "-h") {
+    printUsage();
+    return 0;
+  }
+  if (command === "--version" || command === "-V") {
+    console.log("0.1.0");
+    return 0;
+  }
+
+  // Per-command help
+  if (rest.includes("--help") || rest.includes("-h")) {
+    switch (command) {
+      case "dev":
+        console.log(`aai dev — Start development server
+
+Options:
+  -p, --port <number>  Server port (default: 3000)`);
+        return 0;
+      case "build":
+        console.log(`aai build — Bundle agents for production
+
+Options:
+  -o, --out-dir <dir>  Output directory (default: dist/bundle)`);
+        return 0;
+      case "deploy":
+        console.log(`aai deploy — Deploy bundled agents
+
+Options:
+  -u, --url <url>          Orchestrator URL (default: http://localhost:3000)
+      --bundle-dir <dir>   Bundle directory (default: dist/bundle)
+      --dry-run            Show what would be deployed without sending`);
+        return 0;
+      default:
+        console.error(red(`error: unknown command '${command}'`));
+        printUsage();
+        return 1;
+    }
+  }
+
+  switch (command) {
+    case "dev": {
+      const flags = parseArgs(rest, {
+        string: ["port"],
+        alias: { p: "port" },
+      });
+      const { runDev } = await import("./dev.ts");
+      await runDev({ port: Number(flags.port) || 3000 });
+      return 0;
+    }
+    case "build": {
+      const flags = parseArgs(rest, {
+        string: ["out-dir"],
+        alias: { o: "out-dir" },
+      });
+      const { runBuild } = await import("./build.ts");
+      await runBuild({ outDir: flags["out-dir"] || "dist/bundle" });
+      return 0;
+    }
+    case "deploy": {
+      const flags = parseArgs(rest, {
+        boolean: ["dry-run"],
+        string: ["url", "bundle-dir"],
+        alias: { u: "url" },
+      });
+      const { runDeploy } = await import("./deploy.ts");
+      await runDeploy({
+        url: flags.url || "http://localhost:3000",
+        bundleDir: flags["bundle-dir"] || "dist/bundle",
+        dryRun: !!flags["dry-run"],
+      });
+      return 0;
+    }
+    default:
+      console.error(red(`error: unknown command '${command}'`));
+      printUsage();
+      return 1;
+  }
+}
 
 if (import.meta.main) {
-  await cli.parse(Deno.args);
+  const code = await main(Deno.args);
+  if (code !== 0) Deno.exit(code);
 }

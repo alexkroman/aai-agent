@@ -2,7 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
 import { tool } from "./tool.ts";
-import { FAVICON_SVG } from "./html.ts";
+import { FAVICON_SVG } from "../ui/html.ts";
 import { DEFAULT_GREETING, DEFAULT_INSTRUCTIONS } from "./agent_types.ts";
 
 function makeTestAgent() {
@@ -119,6 +119,51 @@ Deno.test("Agent.fetch - CORS preflight works", async () => {
   assert(res.status < 500);
 });
 
+Deno.test("Agent.fetch - unknown route returns 404", async () => {
+  const agent = makeTestAgent();
+  const res = await agent.fetch(
+    new Request("http://localhost/does-not-exist"),
+  );
+  assertEquals(res.status, 404);
+});
+
+Deno.test("Agent.fetch - concurrent requests succeed", async () => {
+  const agent = makeTestAgent();
+  const [r1, r2, r3] = await Promise.all([
+    agent.fetch(new Request("http://localhost/health")),
+    agent.fetch(new Request("http://localhost/")),
+    agent.fetch(new Request("http://localhost/favicon.ico")),
+  ]);
+  assertEquals(r1.status, 200);
+  assertEquals(r2.status, 200);
+  assertEquals(r3.status, 200);
+  assertEquals((await r1.json()).status, "ok");
+  assert((await r2.text()).includes("TestBot"));
+  assertEquals(await r3.text(), FAVICON_SVG);
+});
+
+// ── upgrade() ───────────────────────────────────────────────────
+
+Deno.test("Agent.upgrade - returns 400 without upgrade header", async () => {
+  const agent = makeTestAgent();
+  const res = agent.upgrade(new Request("http://localhost/session"));
+  assertEquals(res.status, 400);
+  const text = await res.text();
+  assert(text.includes("WebSocket"));
+});
+
+Deno.test("Agent.upgrade - returns 400 with wrong upgrade header", async () => {
+  const agent = makeTestAgent();
+  const res = agent.upgrade(
+    new Request("http://localhost/session", {
+      headers: { upgrade: "h2c" },
+    }),
+  );
+  assertEquals(res.status, 400);
+  const text = await res.text();
+  assert(text.includes("WebSocket"));
+});
+
 // ── Properties are accessible ───────────────────────────────────
 
 Deno.test("Agent - tools are accessible for testing", async () => {
@@ -128,4 +173,11 @@ Deno.test("Agent - tools are accessible for testing", async () => {
     { secrets: {}, fetch: globalThis.fetch },
   );
   assertEquals(result, "hello");
+});
+
+Deno.test("Agent - fetch is a bound function", () => {
+  const agent = makeTestAgent();
+  const { fetch } = agent;
+  // Can be destructured and still works (bound to the agent)
+  assertEquals(typeof fetch, "function");
 });

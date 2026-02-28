@@ -1,13 +1,9 @@
-// Bridges VoiceSession events into Preact signals + context provider.
-
 import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { signal } from "@preact/signals";
 import type { VoiceSession } from "./session.ts";
 import type { AgentState, Message } from "./types.ts";
-
-// ── Signal bridge ───────────────────────────────────────────────
 
 export function createSessionSignals(session: VoiceSession) {
   const state = signal<AgentState>("connecting");
@@ -17,11 +13,11 @@ export function createSessionSignals(session: VoiceSession) {
   const started = signal(false);
   const running = signal(true);
 
-  session.on("stateChange", (s) => (state.value = s));
-  session.on(
-    "message",
-    (msg) => (messages.value = [...messages.value, msg]),
-  );
+  session.on("stateChange", (s) => {
+    state.value = s;
+    if (s === "error") running.value = false;
+  });
+  session.on("message", (msg) => (messages.value = [...messages.value, msg]));
   session.on("transcript", (t) => (transcript.value = t));
   session.on("error", (err) => (error.value = err.message));
   session.on("reset", () => {
@@ -54,8 +50,6 @@ export function createSessionSignals(session: VoiceSession) {
 }
 
 export type SessionSignals = ReturnType<typeof createSessionSignals>;
-
-// ── Context provider ────────────────────────────────────────────
 
 const Ctx = createContext<SessionSignals | null>(null);
 

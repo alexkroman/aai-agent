@@ -1,6 +1,4 @@
-import { Agent, tool, z } from "@aai/sdk";
-
-const TIMEOUT_MS = 5_000;
+import { Agent } from "@aai/sdk";
 
 export default new Agent({
   name: "Coda",
@@ -28,55 +26,5 @@ Examples of questions you MUST use code for:
   voice: "dan",
   prompt:
     "Transcribe numbers, mathematical expressions, variable names, and programming terms accurately. Listen for keywords like factorial, fibonacci, prime, sort, reverse, encrypt, decode, base64, hex, binary, regex, and JSON.",
-  tools: {
-    run_code: tool({
-      description:
-        "Execute JavaScript in a sandboxed Deno subprocess with no permissions. Use console.log() for output. No network or filesystem access.",
-      parameters: z.object({
-        code: z
-          .string()
-          .describe(
-            "JavaScript code to execute. Use console.log() for output.",
-          ),
-      }),
-      handler: async ({ code }) => {
-        const cmd = new Deno.Command("deno", {
-          args: [
-            "run",
-            "--deny-net",
-            "--deny-read",
-            "--deny-write",
-            "--deny-env",
-            "--deny-sys",
-            "--deny-run",
-            "--deny-ffi",
-            "-",
-          ],
-          stdin: "piped",
-          stdout: "piped",
-          stderr: "piped",
-        });
-
-        const proc = cmd.spawn();
-        const writer = proc.stdin.getWriter();
-        await writer.write(new TextEncoder().encode(code));
-        await writer.close();
-
-        const timer = setTimeout(() => proc.kill(), TIMEOUT_MS);
-
-        try {
-          const { code: exit, stdout, stderr } = await proc.output();
-          clearTimeout(timer);
-
-          const out = new TextDecoder().decode(stdout).trim();
-          const err = new TextDecoder().decode(stderr).trim();
-
-          if (exit !== 0) return { error: err || "Execution failed" };
-          return out || "Code ran successfully (no output)";
-        } catch {
-          return { error: "Execution timed out" };
-        }
-      },
-    }),
-  },
+  builtinTools: ["run_code"],
 });

@@ -1,5 +1,3 @@
-// Shared test helpers for UI component tests.
-
 import "./_dom_shim.ts";
 import { DOMParser } from "@b-fuze/deno-dom";
 import { signal } from "@preact/signals";
@@ -55,15 +53,50 @@ export class MockWebSocket extends EventTarget {
     this.readyState = MockWebSocket.CLOSED;
     this.dispatchEvent(new CloseEvent("close", { code: code ?? 1000 }));
   }
+
+  /** Simulate receiving a message from the server. */
+  simulateMessage(data: string | ArrayBuffer) {
+    this.dispatchEvent(new MessageEvent("message", { data }));
+  }
 }
 
-/** Install MockWebSocket as globalThis.WebSocket; returns restore function. */
-export function installMockWebSocket(): () => void {
+/** Install MockWebSocket as globalThis.WebSocket; returns `{ restore, lastWs }`. */
+export function installMockWebSocket(): {
+  restore(): void;
+  get lastWs(): MockWebSocket | null;
+} {
   const saved = globalThis.WebSocket;
+  let last: MockWebSocket | null = null;
   // deno-lint-ignore no-explicit-any
-  (globalThis as any).WebSocket = MockWebSocket;
-  return () => {
-    globalThis.WebSocket = saved;
+  (globalThis as any).WebSocket = class extends MockWebSocket {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      super(url, protocols);
+      last = this;
+    }
+  };
+  return {
+    restore() {
+      globalThis.WebSocket = saved;
+    },
+    get lastWs() {
+      return last;
+    },
+  };
+}
+
+/** Drain the microtask queue (one tick). */
+export const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+/** Polyfill globalThis.location for tests; returns `{ restore }`. */
+export function installMockLocation(origin = "http://localhost:3000") {
+  const had = "location" in globalThis;
+  // deno-lint-ignore no-explicit-any
+  if (!had) (globalThis as any).location = { origin };
+  return {
+    restore() {
+      // deno-lint-ignore no-explicit-any
+      if (!had) delete (globalThis as any).location;
+    },
   };
 }
 

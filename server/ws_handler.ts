@@ -1,11 +1,20 @@
 import { getLogger } from "../_utils/logger.ts";
 import { ControlMessageSchema } from "./types.ts";
-import { ServerSession } from "./session.ts";
 
 const log = getLogger("ws");
 
+/** The methods handleSessionWebSocket actually calls on a session. */
+export interface Session {
+  start(): void;
+  stop(): Promise<void>;
+  onAudioReady(): void;
+  onAudio(data: Uint8Array): void;
+  onCancel(): void;
+  onReset(): void;
+}
+
 export interface WsSessionOptions {
-  createSession: (sessionId: string, ws: WebSocket) => ServerSession;
+  createSession: (sessionId: string, ws: WebSocket) => Session;
   logContext?: Record<string, string>;
   onOpen?: () => void;
   onClose?: () => void;
@@ -13,14 +22,14 @@ export interface WsSessionOptions {
 
 export function handleSessionWebSocket(
   ws: WebSocket,
-  sessions: Map<string, ServerSession>,
+  sessions: Map<string, Session>,
   opts: WsSessionOptions,
 ): void {
   const sessionId = crypto.randomUUID();
   const sid = sessionId.slice(0, 8);
   const ctx = opts.logContext ?? {};
 
-  let session: ServerSession | null = null;
+  let session: Session | null = null;
   let ready = false;
   const pendingMessages: string[] = [];
 

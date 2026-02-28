@@ -1,18 +1,17 @@
-// Agent class — server handler that plugs into Deno.serve.
+// Voice agent — Request → Response handler that plugs into Deno.serve.
 
 import { Hono } from "@hono/hono";
 import { serveStatic } from "@hono/hono/deno";
 import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
 import { applyMiddleware } from "./middleware.ts";
-import { renderAgentPage } from "./html.ts";
+import { renderAgentPage } from "../ui/html.ts";
 import { favicon } from "./routes/favicon.ts";
 import { createHealthRoute } from "./routes/health.ts";
-import { createServerSession } from "./session_factory.ts";
 import { agentToolsToSchemas } from "./protocol.ts";
 import { getBuiltinToolSchemas } from "./builtin_tools.ts";
 import { createToolExecutor, toToolHandlers } from "./tool_executor.ts";
 import { ServerSession } from "./session.ts";
-import { handleSessionWebSocket } from "./ws_handler.ts";
+import { handleSessionWebSocket, type Session } from "./ws_handler.ts";
 import {
   type AgentOptions,
   DEFAULT_GREETING,
@@ -61,11 +60,10 @@ export class Agent {
   readonly onError?: AgentOptions["onError"];
   readonly onTurn?: AgentOptions["onTurn"];
 
-  #sessions = new Map<string, ServerSession>();
-  #platformConfig: PlatformConfig | null = null;
-  #secrets: Record<string, string> | null = null;
-  #app: Hono | null = null;
-  #clientDir?: string;
+  readonly #sessions = new Map<string, Session>();
+  #platform: { secrets: Record<string, string>; config: PlatformConfig } | null =
+    null;
+  #app: Hono;
 
   constructor(options: AgentOptions) {
     this.name = options.name;
@@ -79,11 +77,12 @@ export class Agent {
     this.onDisconnect = options.onDisconnect;
     this.onError = options.onError;
     this.onTurn = options.onTurn;
+    this.#app = this.#buildApp();
   }
 
-  /** Standard `Request → Response` handler. Lazily builds internal Hono app. */
+  /** Standard `Request → Response` handler. */
   fetch = (req: Request): Response | Promise<Response> => {
-    return this.#ensureApp().fetch(req);
+    return this.#app.fetch(req);
   };
 
   /** WebSocket upgrade for embedding in a custom server. */
@@ -108,9 +107,10 @@ export class Agent {
       // .env not found — that's fine
     }
 
-    this.#clientDir = opts?.clientDir ?? Deno.env.get("CLIENT_DIR");
-    // Reset app so it picks up the new clientDir
-    this.#app = null;
+    const clientDir = opts?.clientDir ?? Deno.env.get("CLIENT_DIR");
+    if (clientDir) {
+      this.#app = this.#buildApp(clientDir);
+    }
 
     const port = opts?.port ?? parseInt(Deno.env.get("PORT") ?? "3000");
     const server = Deno.serve({ port }, this.fetch);
@@ -126,7 +126,7 @@ export class Agent {
       ...getBuiltinToolSchemas([...(this.builtinTools ?? [])]),
     ];
 
-    const { secrets, platformConfig } = this.#ensurePlatform();
+    const { secrets, config } = this.#loadPlatform();
 
     handleSessionWebSocket(socket, this.#sessions, {
       createSession: (sessionId, ws) => {
@@ -141,32 +141,29 @@ export class Agent {
           toToolHandlers(this.tools),
           secrets,
         );
-        return createServerSession(sessionId, ws, agentConfig, toolSchemas, {
-          platformConfig,
+        return ServerSession.create(sessionId, ws, agentConfig, toolSchemas, {
+          platformConfig: config,
           executeTool,
         });
       },
     });
   }
 
-  #ensurePlatform(): {
+  #loadPlatform(): {
     secrets: Record<string, string>;
-    platformConfig: PlatformConfig;
+    config: PlatformConfig;
   } {
-    if (!this.#platformConfig) {
+    if (!this.#platform) {
       const env = Deno.env.toObject();
-      this.#platformConfig = loadPlatformConfig(env);
-      this.#secrets = env;
+      this.#platform = {
+        config: loadPlatformConfig(env),
+        secrets: env,
+      };
     }
-    return {
-      secrets: this.#secrets!,
-      platformConfig: this.#platformConfig,
-    };
+    return this.#platform;
   }
 
-  #ensureApp(): Hono {
-    if (this.#app) return this.#app;
-
+  #buildApp(clientDir?: string): Hono {
     const app = new Hono();
     applyMiddleware(app);
     app.route("/", createHealthRoute());
@@ -184,11 +181,10 @@ export class Agent {
 
     app.get("/", (c) => c.html(renderAgentPage(this.name)));
 
-    if (this.#clientDir) {
-      app.use("/*", serveStatic({ root: this.#clientDir }));
+    if (clientDir) {
+      app.use("/*", serveStatic({ root: clientDir }));
     }
 
-    this.#app = app;
     return app;
   }
 }

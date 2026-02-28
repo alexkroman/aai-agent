@@ -20,27 +20,23 @@ export interface ITtsClient {
   close(): void;
 }
 
-export type TtsWebSocketFactory = (config: TTSConfig) => WebSocket;
-
-function createTtsWs(config: TTSConfig): WebSocket {
-  // deno-lint-ignore no-explicit-any
-  const ws = new (WebSocket as any)(config.wssUrl, {
-    headers: { Authorization: `Api-Key ${config.apiKey}` },
-  });
-  ws.binaryType = "arraybuffer";
-  return ws;
-}
-
 export class TtsClient {
   private config: TTSConfig;
   private warmWs: WebSocket | null = null;
   private disposed = false;
-  private createWs: TtsWebSocketFactory;
 
-  constructor(config: TTSConfig, createWebSocket?: TtsWebSocketFactory) {
+  constructor(config: TTSConfig) {
     this.config = config;
-    this.createWs = createWebSocket ?? createTtsWs;
     this.warmUp();
+  }
+
+  private createWs(): WebSocket {
+    // deno-lint-ignore no-explicit-any
+    const ws = new (WebSocket as any)(this.config.wssUrl, {
+      headers: { Authorization: `Api-Key ${this.config.apiKey}` },
+    });
+    ws.binaryType = "arraybuffer";
+    return ws;
   }
 
   private warmUp(): void {
@@ -53,7 +49,7 @@ export class TtsClient {
 
     let ws: WebSocket;
     try {
-      ws = this.createWs(this.config);
+      ws = this.createWs();
     } catch (err) {
       log.warn("warmUp: failed to create WebSocket", { error: err });
       return;
@@ -84,7 +80,7 @@ export class TtsClient {
         safeClose(this.warmWs);
         this.warmWs = null;
       }
-      ws = this.createWs(this.config);
+      ws = this.createWs();
     }
 
     return this.runTtsProtocol(ws, text, onAudio, signal);
