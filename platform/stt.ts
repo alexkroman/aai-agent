@@ -1,23 +1,16 @@
-// stt.ts — AssemblyAI streaming STT WebSocket client.
-// Deno-native: uses standard WebSocket API with Authorization header (Deno 2.5+).
-// No temp tokens needed — server-side connections auth directly with the API key.
-
 import { deadline } from "@std/async/deadline";
 import { TIMEOUTS } from "../sdk/shared-protocol.ts";
-import { ERR_INTERNAL } from "../sdk/errors.ts";
+import { ERR_INTERNAL } from "./errors.ts";
 import { createLogger } from "../sdk/logger.ts";
-import { type STTConfig, SttMessageSchema } from "../sdk/types.ts";
-import { createDenoWebSocket } from "./deno-ext.ts";
+import { type STTConfig, SttMessageSchema } from "./types.ts";
 
 const log = createLogger("stt");
 
-/** Factory for creating STT WebSocket connections. */
 export type SttWebSocketFactory = (
   url: string,
   options: { headers: Record<string, string> },
 ) => WebSocket;
 
-/** Callbacks for STT events (transcripts, completed turns, errors, close). */
 export interface SttEvents {
   onTranscript: (text: string, isFinal: boolean) => void;
   onTurn: (text: string) => void;
@@ -25,16 +18,12 @@ export interface SttEvents {
   onClose: () => void;
 }
 
-/** Handle returned by connectStt. */
 export interface SttHandle {
   send: (audio: Uint8Array) => void;
   clear: () => void;
   close: () => void;
 }
 
-/**
- * Connect a single STT WebSocket using the API key directly.
- */
 async function connectSttWs(
   apiKey: string,
   config: STTConfig,
@@ -56,13 +45,10 @@ async function connectSttWs(
 
   const url = `${config.wssBase}?${params}`;
   const wsOpts = { headers: { Authorization: apiKey } };
-  // Deno 2.5+ supports custom headers on client WebSocket connections
-  let ws: WebSocket;
-  if (createWebSocket) {
-    ws = createWebSocket(url, wsOpts);
-  } else {
-    ws = createDenoWebSocket(url, wsOpts);
-  }
+
+  const ws = createWebSocket?.(url, wsOpts) ??
+    // deno-lint-ignore no-explicit-any
+    new (WebSocket as any)(url, wsOpts);
 
   try {
     return await deadline(
@@ -70,9 +56,7 @@ async function connectSttWs(
         ws.onopen = () => {
           const handle: SttHandle = {
             send(audio: Uint8Array) {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(audio);
-              }
+              if (ws.readyState === WebSocket.OPEN) ws.send(audio);
             },
             clear() {
               if (ws.readyState === WebSocket.OPEN) {
@@ -87,7 +71,7 @@ async function connectSttWs(
         };
 
         let msgCount = 0;
-        ws.onmessage = (event) => {
+        ws.onmessage = (event: MessageEvent) => {
           if (typeof event.data !== "string") return;
           let parsed: unknown;
           try {
@@ -124,7 +108,7 @@ async function connectSttWs(
           }
         };
 
-        ws.onerror = (event) => {
+        ws.onerror = (event: Event) => {
           const err = event instanceof ErrorEvent
             ? new Error(event.message)
             : new Error("WebSocket error");
@@ -132,7 +116,7 @@ async function connectSttWs(
           reject(err);
         };
 
-        ws.onclose = (event) => {
+        ws.onclose = (event: CloseEvent) => {
           if (event.code !== 1000) {
             log.error(
               { code: event.code, reason: event.reason ?? "" },
@@ -153,14 +137,10 @@ async function connectSttWs(
   }
 }
 
-/** Options for connectStt. */
 export interface ConnectSttOptions {
   createWebSocket?: SttWebSocketFactory;
 }
 
-/**
- * Connect to AssemblyAI STT with the API key directly via Authorization header.
- */
 export function connectStt(
   apiKey: string,
   config: STTConfig,

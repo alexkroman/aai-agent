@@ -1,6 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { normalizeVoiceText } from "../voice-cleaner.ts";
+import { normalizeVoiceText } from "../util/voice-cleaner.ts";
 
 describe("normalizeVoiceText", () => {
   describe("markdown stripping", () => {

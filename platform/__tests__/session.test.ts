@@ -1,6 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { VoiceSession } from "../session.ts";
+import { ServerSession } from "../session.ts";
 import { MSG } from "../../sdk/shared-protocol.ts";
 import type { AgentConfig } from "../../sdk/types.ts";
 import {
@@ -16,7 +16,7 @@ function createSession(
 ) {
   const transport = createMockTransport();
   const mocks = createMockSessionDeps(overrides);
-  const session = new VoiceSession(
+  const session = new ServerSession(
     "test-session-id",
     transport,
     {
@@ -56,7 +56,7 @@ function createSessionWithTurnCallback(
     ...overrides,
   });
 
-  const session = new VoiceSession(
+  const session = new ServerSession(
     "test-session",
     transport,
     {
@@ -87,12 +87,12 @@ function createSessionWithTurnCallback(
   };
 }
 
-describe("VoiceSession", () => {
+describe("ServerSession", () => {
   describe("constructor", () => {
     it("pushes system message with instructions + voice rules", () => {
       const transport = createMockTransport();
       const mocks = createMockSessionDeps();
-      const session = new VoiceSession(
+      const session = new ServerSession(
         "id",
         transport,
         {
@@ -109,7 +109,7 @@ describe("VoiceSession", () => {
     it("merges voice config override", () => {
       const transport = createMockTransport();
       const mocks = createMockSessionDeps();
-      const session = new VoiceSession(
+      const session = new ServerSession(
         "id",
         transport,
         {
@@ -126,7 +126,7 @@ describe("VoiceSession", () => {
     it("merges prompt config override", () => {
       const transport = createMockTransport();
       const mocks = createMockSessionDeps();
-      const session = new VoiceSession(
+      const session = new ServerSession(
         "id",
         transport,
         {
@@ -416,7 +416,7 @@ describe("VoiceSession", () => {
         },
       };
       const mocks = createMockSessionDeps();
-      const session = new VoiceSession(
+      const session = new ServerSession(
         "id",
         transport,
         { instructions: "Test", greeting: "Hi!", voice: "jess" },

@@ -1,5 +1,3 @@
-// config.ts — Centralized environment variable loading (Deno-native).
-
 import { z } from "zod";
 import {
   DEFAULT_MODEL,
@@ -7,7 +5,7 @@ import {
   DEFAULT_TTS_CONFIG,
   type STTConfig,
   type TTSConfig,
-} from "../sdk/types.ts";
+} from "./types.ts";
 
 const EnvSchema = z.object({
   ASSEMBLYAI_API_KEY: z.string().min(1, "ASSEMBLYAI_API_KEY is required"),
@@ -18,7 +16,6 @@ const EnvSchema = z.object({
   LLM_MODEL: z.string().optional(),
 });
 
-/** Platform configuration loaded from environment variables. */
 export interface PlatformConfig {
   apiKey: string;
   ttsApiKey: string;
@@ -28,10 +25,6 @@ export interface PlatformConfig {
   llmGatewayBase: string;
 }
 
-/**
- * Load platform configuration from an explicit env object.
- * Falls back to defaults for optional values.
- */
 export function loadPlatformConfig(
   env: Record<string, string | undefined>,
 ): PlatformConfig {

@@ -1,6 +1,6 @@
 // _discover.ts — Shared agent discovery logic for scripts.
 // If INIT_CWD (set by `deno task`) is inside an agent directory,
-// returns only that agent. Otherwise returns all agents.
+// returns only that agent. Otherwise returns all examples.
 
 import { parse as parseDotenv } from "@std/dotenv/parse";
 import { relative } from "@std/path";
@@ -44,21 +44,21 @@ async function loadAgent(dir: string): Promise<AgentEntry | null> {
 }
 
 /**
- * Discover agents to operate on.
- * - If INIT_CWD is inside agents/<name>/, return just that agent.
- * - Otherwise, scan agents/ and return all.
+ * Discover examples to operate on.
+ * - If INIT_CWD is inside examples/<name>/, return just that agent.
+ * - Otherwise, scan examples/ and return all.
  */
 export async function discoverAgents(): Promise<AgentEntry[]> {
   const initCwd = Deno.env.get("INIT_CWD");
 
   // Check if the caller is inside an agent directory
   if (initCwd) {
-    const agentsAbsolute = Deno.cwd() + "/agents";
-    const rel = relative(agentsAbsolute, initCwd);
+    const examplesAbsolute = Deno.cwd() + "/examples";
+    const rel = relative(examplesAbsolute, initCwd);
     // rel looks like "night-owl" or "night-owl/src" — not ".." or absolute
     if (rel && !rel.startsWith("..") && !rel.startsWith("/")) {
       const agentName = rel.split("/")[0];
-      const dir = `agents/${agentName}`;
+      const dir = `examples/${agentName}`;
       const agent = await loadAgent(dir);
       if (agent) return [agent];
       console.warn(
@@ -68,9 +68,9 @@ export async function discoverAgents(): Promise<AgentEntry[]> {
   }
 
   // Scan all agent directories
-  const agents: AgentEntry[] = [];
+  const examples: AgentEntry[] = [];
   for await (
-    const entry of walk("agents", {
+    const entry of walk("examples", {
       maxDepth: 2,
       includeDirs: false,
       match: [/agent\.ts$/],
@@ -79,11 +79,11 @@ export async function discoverAgents(): Promise<AgentEntry[]> {
     const dir = entry.path.replace(/\/agent\.ts$/, "");
     const agent = await loadAgent(dir);
     if (agent) {
-      agents.push(agent);
+      examples.push(agent);
     } else {
       console.warn(`  Skipping ${dir} — no agent.ts or SLUG`);
     }
   }
-  agents.sort((a, b) => a.slug.localeCompare(b.slug));
-  return agents;
+  examples.sort((a, b) => a.slug.localeCompare(b.slug));
+  return examples;
 }

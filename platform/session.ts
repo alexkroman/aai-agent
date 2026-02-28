@@ -1,55 +1,42 @@
-// session.ts — VoiceSession class: orchestrates one voice conversation.
-// Deno-native: standard WebSocket API, ToolExecutor instead of Sandbox, Uint8Array.
-
 import type { PlatformConfig } from "./config.ts";
 import { MAX_TOOL_ITERATIONS, MSG } from "../sdk/shared-protocol.ts";
-import { ERR } from "../sdk/errors.ts";
+import { ERR } from "./errors.ts";
 import type { CallLLMOptions } from "./llm.ts";
 import { createLogger, type Logger } from "../sdk/logger.ts";
-import type { IToolExecutor } from "../sdk/tool-executor.ts";
-import type {
-  connectStt as connectSttType,
-  SttEvents,
-  SttHandle,
-} from "./stt.ts";
+import type { IToolExecutor } from "./tool-executor.ts";
+import type { SttEvents, SttHandle } from "./stt.ts";
 import type { ITtsClient } from "./tts.ts";
-import type { normalizeVoiceText as normalizeVoiceTextType } from "./voice-cleaner.ts";
-import type { executeBuiltinTool as executeBuiltinToolType } from "./builtin-tools.ts";
+import type { ChatMessage, LLMResponse, STTConfig, ToolSchema } from "./types.ts";
 import {
   type AgentConfig,
-  type ChatMessage,
   DEFAULT_GREETING,
   DEFAULT_INSTRUCTIONS,
-  type LLMResponse,
-  type ToolSchema,
   VOICE_RULES,
 } from "../sdk/types.ts";
 
-/**
- * Minimal transport interface used by VoiceSession.
- * A real WebSocket satisfies this.
- */
 export interface SessionTransport {
   send(data: string | ArrayBuffer | Uint8Array): void;
   readonly readyState: number;
 }
 
-/** All external dependencies for VoiceSession — required, no optionals. */
 export interface SessionDeps {
   config: PlatformConfig;
-  connectStt: typeof connectSttType;
-  callLLM: (opts: CallLLMOptions) => Promise<LLMResponse>;
+  connectStt(
+    apiKey: string,
+    config: STTConfig,
+    events: SttEvents,
+  ): Promise<SttHandle>;
+  callLLM(opts: CallLLMOptions): Promise<LLMResponse>;
   ttsClient: ITtsClient;
   toolExecutor: IToolExecutor;
-  normalizeVoiceText: typeof normalizeVoiceTextType;
-  executeBuiltinTool: typeof executeBuiltinToolType;
+  normalizeVoiceText(text: string): string;
+  executeBuiltinTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string | null>;
 }
 
-/**
- * Orchestrates a single voice conversation between a browser client and
- * the STT / LLM / TTS pipeline. One instance per WebSocket connection.
- */
-export class VoiceSession {
+export class ServerSession {
   private id: string;
   private agentConfig: AgentConfig;
   private deps: SessionDeps;
@@ -62,8 +49,9 @@ export class VoiceSession {
   private messages: ChatMessage[] = [];
   private toolSchemas: ToolSchema[];
   private stopped = false;
+  private audioFrameCount = 0;
+  private pendingGreeting: string | null = null;
 
-  /** Resolves when the current handleTurn completes. Null when idle. */
   public turnPromise: Promise<void> | null = null;
 
   constructor(
@@ -91,18 +79,14 @@ export class VoiceSession {
         },
       },
     };
-
     this.toolSchemas = toolSchemas;
 
-    // Initialize system message
     const instructions = this.agentConfig.instructions || DEFAULT_INSTRUCTIONS;
     this.messages.push({
       role: "system",
       content: instructions + VOICE_RULES,
     });
   }
-
-  // ── Send helpers (safe for closed WS) ─────────────────────────────
 
   private trySendJson(data: Record<string, unknown>): void {
     try {
@@ -124,11 +108,7 @@ export class VoiceSession {
     }
   }
 
-  /**
-   * Start the voice session: connect STT, send ready + greeting.
-   */
   start(): void {
-    // Send READY immediately — don't block on STT connection
     this.trySendJson({
       type: MSG.READY,
       version: 1,
@@ -136,32 +116,19 @@ export class VoiceSession {
       ttsSampleRate: this.deps.config.ttsConfig.sampleRate,
     });
 
-    // Defer greeting until client signals audio_ready.
     const greeting = this.agentConfig.greeting ?? DEFAULT_GREETING;
-    if (greeting) {
-      this.pendingGreeting = greeting;
-    }
+    if (greeting) this.pendingGreeting = greeting;
 
-    // Connect STT in background — doesn't block session startup.
-    // The .catch() is a safety net: connectStt() has its own try/catch,
-    // but this guards against any unhandled rejection that escapes it.
     this.connectStt().catch((err) => {
       this.logger.error({ err }, "Unhandled error in connectStt");
     });
   }
 
-  private audioFrameCount = 0;
-  private pendingGreeting: string | null = null;
-
   private async connectStt(): Promise<void> {
     const events: SttEvents = {
       onTranscript: (text, isFinal) => {
         this.logger.info({ text, isFinal }, "transcript");
-        this.trySendJson({
-          type: MSG.TRANSCRIPT,
-          text,
-          final: isFinal,
-        });
+        this.trySendJson({ type: MSG.TRANSCRIPT, text, final: isFinal });
       },
       onTurn: (text) => {
         this.logger.info({ text }, "turn");
@@ -169,12 +136,8 @@ export class VoiceSession {
           this.turnPromise = null;
         });
       },
-      onError: (err) => {
-        this.logger.warn({ err }, "STT error");
-      },
-      onClose: () => {
-        this.logger.info("STT closed");
-      },
+      onError: (err) => this.logger.warn({ err }, "STT error"),
+      onClose: () => this.logger.info("STT closed"),
     };
 
     try {
@@ -186,16 +149,10 @@ export class VoiceSession {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error({ error: msg }, "Failed to connect STT");
-      this.trySendJson({
-        type: MSG.ERROR,
-        message: ERR.STT_CONNECT_FAILED,
-      });
+      this.trySendJson({ type: MSG.ERROR, message: ERR.STT_CONNECT_FAILED });
     }
   }
 
-  /**
-   * Client's audio worklet is ready — safe to send greeting TTS.
-   */
   onAudioReady(): void {
     if (this.pendingGreeting) {
       this.trySendJson({ type: MSG.GREETING, text: this.pendingGreeting });
@@ -204,9 +161,6 @@ export class VoiceSession {
     }
   }
 
-  /**
-   * Handle incoming binary audio from the browser — relay to STT.
-   */
   onAudio(data: Uint8Array): void {
     this.audioFrameCount++;
     if (this.audioFrameCount <= 3) {
@@ -218,26 +172,18 @@ export class VoiceSession {
     this.stt?.send(data);
   }
 
-  /**
-   * Handle cancel command (barge-in).
-   */
   onCancel(): void {
     this.cancelInflight();
     this.stt?.clear();
     this.trySendJson({ type: MSG.CANCELLED });
   }
 
-  /**
-   * Handle reset command.
-   */
   onReset(): void {
     this.cancelInflight();
     this.stt?.clear();
-    // Keep system message, clear conversation
     this.messages = this.messages.slice(0, 1);
     this.trySendJson({ type: MSG.RESET });
 
-    // Re-send greeting
     const greeting = this.agentConfig.greeting ?? DEFAULT_GREETING;
     if (greeting) {
       this.trySendJson({ type: MSG.GREETING, text: greeting });
@@ -245,9 +191,6 @@ export class VoiceSession {
     }
   }
 
-  /**
-   * Stop the session and clean up all resources.
-   */
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
@@ -259,8 +202,6 @@ export class VoiceSession {
     this.deps.ttsClient.close();
     this.deps.toolExecutor.dispose();
   }
-
-  // ── Private methods ────────────────────────────────────────────────
 
   private cancelInflight(): void {
     this.chatAbort?.abort();
@@ -287,9 +228,6 @@ export class VoiceSession {
     );
   }
 
-  /**
-   * Handle a completed turn from STT: run LLM + tools + TTS.
-   */
   private async handleTurn(text: string): Promise<void> {
     this.cancelInflight();
 
@@ -369,7 +307,6 @@ export class VoiceSession {
               }
               this.logger.info({ tool: tc.function.name, args }, "tool call");
 
-              // Try built-in tools first, then fall back to tool executor
               const builtinResult = await this.deps.executeBuiltinTool(
                 tc.function.name,
                 args,
@@ -431,11 +368,7 @@ export class VoiceSession {
             "turn complete",
           );
 
-          this.trySendJson({
-            type: MSG.CHAT,
-            text: responseText,
-            steps,
-          });
+          this.trySendJson({ type: MSG.CHAT, text: responseText, steps });
 
           if (responseText) {
             this.ttsRelay(responseText);
@@ -451,15 +384,10 @@ export class VoiceSession {
       this.logger.error({ error: msg }, "Chat failed");
       this.trySendJson({ type: MSG.ERROR, message: ERR.CHAT_FAILED });
     } finally {
-      if (this.chatAbort === abort) {
-        this.chatAbort = null;
-      }
+      if (this.chatAbort === abort) this.chatAbort = null;
     }
   }
 
-  /**
-   * Synthesize text via TTS and relay audio chunks to the browser.
-   */
   private ttsRelay(text: string): void {
     const abort = new AbortController();
     this.ttsAbort = abort;

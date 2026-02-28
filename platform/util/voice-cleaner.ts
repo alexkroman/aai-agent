@@ -1,0 +1,237 @@
+import { remark } from "remark";
+import stripMarkdown from "strip-markdown";
+import { escape as escapeRegExp } from "@std/regexp/escape";
+
+const ONES = [
+  "",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const TENS = [
+  "",
+  "",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+];
+const SCALES = ["", "thousand", "million", "billion", "trillion"];
+
+function toWords(n: number): string {
+  if (n === 0) return "zero";
+  if (n < 0) return "negative " + toWords(-n);
+
+  const parts: string[] = [];
+  let scaleIdx = 0;
+  let remaining = Math.floor(Math.abs(n));
+
+  while (remaining > 0) {
+    const chunk = remaining % 1000;
+    if (chunk > 0) {
+      const chunkWords = chunkToWords(chunk);
+      const scale = SCALES[scaleIdx];
+      parts.unshift(scale ? `${chunkWords} ${scale}` : chunkWords);
+    }
+    remaining = Math.floor(remaining / 1000);
+    scaleIdx++;
+  }
+
+  return parts.join(" ");
+}
+
+function chunkToWords(n: number): string {
+  const parts: string[] = [];
+  if (n >= 100) {
+    parts.push(ONES[Math.floor(n / 100)] + " hundred");
+    n %= 100;
+  }
+  if (n >= 20) {
+    const ten = TENS[Math.floor(n / 10)];
+    const one = ONES[n % 10];
+    parts.push(one ? `${ten}-${one}` : ten);
+  } else if (n > 0) {
+    parts.push(ONES[n]);
+  }
+  return parts.join(" ");
+}
+
+const ORDINAL_ONES = [
+  "",
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
+];
+const ORDINAL_TENS = [
+  "",
+  "",
+  "twentieth",
+  "thirtieth",
+  "fortieth",
+  "fiftieth",
+  "sixtieth",
+  "seventieth",
+  "eightieth",
+  "ninetieth",
+];
+
+function toWordsOrdinal(n: number): string {
+  if (n <= 0) return toWords(n);
+  if (n < 20) return ORDINAL_ONES[n];
+  if (n < 100) {
+    const rem = n % 10;
+    if (rem === 0) return ORDINAL_TENS[Math.floor(n / 10)];
+    return TENS[Math.floor(n / 10)] + "-" + ORDINAL_ONES[rem];
+  }
+  const words = toWords(n);
+  if (words.endsWith("y")) return words.slice(0, -1) + "ieth";
+  return words + "th";
+}
+
+const RE_URLS = /https?:\/\/\S+/g;
+const RE_CURRENCY = /([$£€¥])(\d+(?:,\d{3})*(?:\.\d{2})?)/g;
+const RE_PERCENTAGES = /(\d+(?:\.\d+)?)%/g;
+const RE_PHONE = /(\d{3})-(\d{3})-(\d{4})/g;
+const RE_ORDINALS = /\b(\d{1,2})(st|nd|rd|th)\b/g;
+const RE_NUMBERS = /(?<![:\w])\b\d+(?:\.\d+)?\b(?![:\w])/g;
+const RE_SPACES = /[ \t]+/g;
+const RE_NEWLINES = /\n{2,}/g;
+
+const CURRENCY_MAP: Record<string, string> = {
+  $: "dollars",
+  "£": "pounds",
+  "€": "euros",
+  "¥": "yen",
+};
+
+const UNIT_MAP: Record<string, string> = {
+  Hz: "hertz",
+  kHz: "kilohertz",
+  MHz: "megahertz",
+  GHz: "gigahertz",
+  KB: "kilobytes",
+  MB: "megabytes",
+  GB: "gigabytes",
+  TB: "terabytes",
+  ms: "milliseconds",
+  kb: "kilobits",
+  Mb: "megabits",
+  Gb: "gigabits",
+};
+
+function num2words(n: number): string {
+  if (Number.isInteger(n)) {
+    return toWords(n);
+  }
+  const [intPart, decPart] = String(n).split(".");
+  const intWords = toWords(parseInt(intPart));
+  const decWords = decPart
+    .split("")
+    .map((d: string) => toWords(parseInt(d)))
+    .join(" ");
+  return `${intWords} point ${decWords}`;
+}
+
+const processor = remark().use(stripMarkdown);
+
+export function normalizeVoiceText(text: string): string {
+  text = String(processor.processSync(text));
+
+  text = text.replace(RE_URLS, "");
+
+  text = text.replace(RE_CURRENCY, (_match, symbol: string, num: string) => {
+    const numClean = num.replace(/,/g, "");
+    const currency = CURRENCY_MAP[symbol] ?? "currency";
+    if (numClean.includes(".")) {
+      const [dollars, cents] = numClean.split(".");
+      return `${num2words(parseInt(dollars))} ${currency} and ${
+        num2words(parseInt(cents))
+      } cents`;
+    }
+    return `${num2words(parseInt(numClean))} ${currency}`;
+  });
+
+  text = text.replace(RE_PERCENTAGES, "$1 percent");
+
+  text = text.replace(
+    RE_PHONE,
+    (_match, a: string, b: string, c: string) => {
+      const expand = (group: string) =>
+        group
+          .split("")
+          .map((d) => num2words(parseInt(d)))
+          .join(" ");
+      return `${expand(a)}, ${expand(b)}, ${expand(c)}`;
+    },
+  );
+
+  text = text.replace(RE_ORDINALS, (_match, num: string) => {
+    return toWordsOrdinal(parseInt(num));
+  });
+
+  for (const [abbr, full] of Object.entries(UNIT_MAP)) {
+    const re = new RegExp(
+      `(\\d)\\s*${escapeRegExp(abbr)}\\b`,
+      "g",
+    );
+    text = text.replace(re, `$1 ${full}`);
+  }
+
+  text = text.replace(RE_NUMBERS, (match) => {
+    try {
+      const n = match.includes(".") ? parseFloat(match) : parseInt(match);
+      return num2words(n);
+    } catch {
+      return match;
+    }
+  });
+
+  text = text.replace(/°F/g, " degrees Fahrenheit");
+  text = text.replace(/°C/g, " degrees Celsius");
+  text = text.replace(/°/g, " degrees");
+  text = text.replace(/&/g, " and ");
+  text = text.replace(/\+/g, " plus ");
+  text = text.replace(/→/g, "");
+  text = text.replace(/—/g, ", ");
+  text = text.replace(/–/g, ", ");
+
+  text = text.replace(RE_SPACES, " ");
+  text = text.replace(RE_NEWLINES, "\n");
+  return text.trim();
+}

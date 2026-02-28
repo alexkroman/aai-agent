@@ -12,7 +12,7 @@ COPY sdk/ sdk/
 COPY ui/ ui/
 COPY scripts/ scripts/
 COPY mod.ts main.ts ./
-COPY agents/ agents/
+COPY examples/ examples/
 
 # Build client bundles
 RUN deno task build:client

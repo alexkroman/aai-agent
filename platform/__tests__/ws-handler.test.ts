@@ -1,7 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { handleSessionWebSocket } from "../ws-handler.ts";
-import { VoiceSession } from "../session.ts";
+import { ServerSession } from "../session.ts";
 import { MSG } from "../../sdk/shared-protocol.ts";
 import type { AgentConfig } from "../../sdk/types.ts";
 import { createMockSessionDeps } from "./_test-utils.ts";
@@ -43,14 +43,14 @@ class MockServerWs {
 function createTestSession(
   _sessionId: string,
   ws: WebSocket,
-): { session: VoiceSession; agentConfig: AgentConfig } {
+): { session: ServerSession; agentConfig: AgentConfig } {
   const mocks = createMockSessionDeps();
   const agentConfig: AgentConfig = {
     instructions: "Test",
     greeting: "Hello!",
     voice: "jess",
   };
-  const session = new VoiceSession(
+  const session = new ServerSession(
     _sessionId,
     ws,
     agentConfig,
@@ -63,7 +63,7 @@ function createTestSession(
 describe("handleSessionWebSocket", () => {
   it("creates session and starts it on ws.onopen", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
     let createCalled = false;
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
@@ -83,7 +83,7 @@ describe("handleSessionWebSocket", () => {
 
   it("calls onOpen/onClose callbacks", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
     let openCalled = false;
     let closeCalled = false;
 
@@ -108,7 +108,7 @@ describe("handleSessionWebSocket", () => {
 
   it("responds to ping with pong before session is ready", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -128,8 +128,8 @@ describe("handleSessionWebSocket", () => {
 
   it("queues non-ping messages before session is ready", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
-    let sessionRef: VoiceSession | null = null;
+    const sessions = new Map<string, ServerSession>();
+    let sessionRef: ServerSession | null = null;
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => {
@@ -152,7 +152,7 @@ describe("handleSessionWebSocket", () => {
 
   it("handles ping/pong after session is ready", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -174,7 +174,7 @@ describe("handleSessionWebSocket", () => {
 
   it("handles binary audio after session is ready", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -192,7 +192,7 @@ describe("handleSessionWebSocket", () => {
 
   it("handles control messages (cancel, reset) after session is ready", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -212,7 +212,7 @@ describe("handleSessionWebSocket", () => {
 
   it("ignores invalid JSON messages", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -228,7 +228,7 @@ describe("handleSessionWebSocket", () => {
 
   it("ignores unknown control message types", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -243,7 +243,7 @@ describe("handleSessionWebSocket", () => {
 
   it("cleans up session on ws.onclose", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -260,7 +260,7 @@ describe("handleSessionWebSocket", () => {
 
   it("handles ws.onerror without crashing", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),
@@ -273,7 +273,7 @@ describe("handleSessionWebSocket", () => {
 
   it("includes logContext in logs", async () => {
     const ws = new MockServerWs();
-    const sessions = new Map<string, VoiceSession>();
+    const sessions = new Map<string, ServerSession>();
 
     handleSessionWebSocket(ws as unknown as WebSocket, sessions, {
       createSession: (id, wsArg) => createTestSession(id, wsArg),

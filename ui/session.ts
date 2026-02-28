@@ -2,6 +2,8 @@
 // Simplified: no auth/configure — agent is configured server-side.
 
 import {
+  DEFAULT_STT_SAMPLE_RATE,
+  DEFAULT_TTS_SAMPLE_RATE,
   type ErrorMessage,
   MSG,
   type ServerMessage,
@@ -172,8 +174,8 @@ export class VoiceSession extends EventTarget {
         this.audioSetupInFlight = true;
         import("./audio.ts").then(({ createAudioPlayer, startMicCapture }) =>
           Promise.all([
-            createAudioPlayer(msg.ttsSampleRate ?? 24000),
-            startMicCapture(this.ws!, msg.sampleRate ?? 16000),
+            createAudioPlayer(msg.ttsSampleRate ?? DEFAULT_TTS_SAMPLE_RATE),
+            startMicCapture(this.ws!, msg.sampleRate ?? DEFAULT_STT_SAMPLE_RATE),
           ])
         )
           .then(([player, micCleanup]) => {

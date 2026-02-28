@@ -5,7 +5,7 @@ node_modules/
 dist/
 
 # Agent secrets
-agents/*/.env
+examples/*/.env
 
 # Environment and secrets
 .env

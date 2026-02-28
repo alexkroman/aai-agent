@@ -1,19 +1,32 @@
-// agent.ts — Agent SDK class with chainable .tool(), .routes(), and .serve().
+// agent.ts — Agent class: the core primitive for building voice agent apps.
 //
-// Inspired by Fresh 2's App() and Hono's chainable builder pattern.
-// Each agent is a standalone Deno server that imports this class.
+// Chainable builder with .tool(), lifecycle hooks, and Deno-native serving.
 
 import { z } from "zod";
 import type { ToolContext, ToolHandler } from "./tool-executor.ts";
+import {
+  type ConnectHandler,
+  DEFAULT_GREETING,
+  DEFAULT_INSTRUCTIONS,
+  type DisconnectHandler,
+  type ErrorHandler,
+  type TurnHandler,
+} from "./types.ts";
 
 export type { ToolContext };
 
 export interface AgentOptions {
+  /** Display name for this agent. */
   name: string;
-  instructions: string;
-  greeting: string;
-  voice: string;
+  /** System prompt / instructions for the LLM. */
+  instructions?: string;
+  /** Initial greeting spoken when a session starts. */
+  greeting?: string;
+  /** TTS voice name (e.g., "dan", "jess", "luna"). */
+  voice?: string;
+  /** Optional transcription prompt to guide STT. */
   prompt?: string;
+  /** Names of built-in server-side tools to enable (e.g., ["web_search"]). */
   builtinTools?: string[];
 }
 
@@ -39,34 +52,54 @@ export interface StoredToolDef {
   ) => Promise<unknown> | unknown;
 }
 
+/** Lifecycle hook storage. */
+export interface AgentHooks {
+  onConnect?: ConnectHandler;
+  onDisconnect?: DisconnectHandler;
+  onError?: ErrorHandler;
+  onTurn?: TurnHandler;
+}
+
 /**
- * A voice agent definition with chainable .tool() builder,
- * .routes() for Hono composability, and .serve() for standalone mode.
+ * A voice agent definition with chainable builder API.
  *
  * @example
  * ```ts
- * import { Agent, z } from "../../mod.ts";
+ * import { Agent, z } from "@aai/sdk";
  *
- * const agent = new Agent({
+ * export const agent = new Agent({
  *   name: "Coda",
- *   instructions: "You are a code assistant...",
- *   greeting: "Hi!",
+ *   instructions: "You are a code assistant.",
  *   voice: "dan",
- * }).tool("run_code", {
+ * })
+ * .tool("run_code", {
  *   description: "Execute JavaScript",
  *   parameters: z.object({ code: z.string().describe("JS code") }),
  *   handler: async ({ code }) => eval(code),
+ * })
+ * .onConnect(({ sessionId }) => {
+ *   console.log(`Session ${sessionId} started`);
  * });
- *
- * export default agent;
  * ```
  */
 export class Agent {
-  readonly config: AgentOptions;
+  readonly config:
+    & Required<
+      Pick<AgentOptions, "name" | "instructions" | "greeting" | "voice">
+    >
+    & Pick<AgentOptions, "prompt" | "builtinTools">;
   readonly tools = new Map<string, StoredToolDef>();
+  readonly hooks: AgentHooks = {};
 
-  constructor(config: AgentOptions) {
-    this.config = config;
+  constructor(options: AgentOptions) {
+    this.config = {
+      name: options.name,
+      instructions: options.instructions ?? DEFAULT_INSTRUCTIONS,
+      greeting: options.greeting ?? DEFAULT_GREETING,
+      voice: options.voice ?? "jess",
+      prompt: options.prompt,
+      builtinTools: options.builtinTools,
+    };
   }
 
   /** Register a tool (chainable). Handler args are typed from the Zod schema. */
@@ -77,13 +110,35 @@ export class Agent {
     if (this.tools.has(name)) {
       throw new Error(`Tool "${name}" is already registered`);
     }
-    // Safe: Zod validates args at runtime before handler is called.
-    // The handler accepts z.infer<T> which is a subtype of Record<string, unknown>.
     this.tools.set(name, {
       description: def.description,
       parameters: def.parameters,
       handler: def.handler as StoredToolDef["handler"],
     });
+    return this;
+  }
+
+  /** Called when a new voice session connects. */
+  onConnect(handler: ConnectHandler): this {
+    this.hooks.onConnect = handler;
+    return this;
+  }
+
+  /** Called when a voice session disconnects. */
+  onDisconnect(handler: DisconnectHandler): this {
+    this.hooks.onDisconnect = handler;
+    return this;
+  }
+
+  /** Called when an error occurs during a session. */
+  onError(handler: ErrorHandler): this {
+    this.hooks.onError = handler;
+    return this;
+  }
+
+  /** Called when a user completes a speech turn. */
+  onTurn(handler: TurnHandler): this {
+    this.hooks.onTurn = handler;
     return this;
   }
 
@@ -119,16 +174,15 @@ export class Agent {
     });
   }
 
-  /** Start serving this agent. */
+  /** Start serving this agent on the given port. */
   async serve(
     opts?: { port?: number; clientDir?: string },
   ): Promise<Deno.HttpServer> {
-    // Load .env from agent directory (best-effort)
     try {
       const { load } = await import("@std/dotenv");
       await load({ export: true });
     } catch {
-      // .env not found or @std/dotenv not available — that's fine
+      // .env not found — that's fine
     }
 
     const app = await this.routes({

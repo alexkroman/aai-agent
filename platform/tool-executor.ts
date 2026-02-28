@@ -1,13 +1,6 @@
-// tool-executor.ts — In-process tool execution with Zod validation.
-//
-// Runs agent tool handlers directly in the Deno process. No serialization,
-// no V8 isolate, no IPC. Handlers are trusted server-side code.
-// Validates arguments against the tool's Zod schema before calling the handler.
-
 import { TIMEOUTS } from "../sdk/shared-protocol.ts";
 import { createLogger } from "../sdk/logger.ts";
 import {
-  type IToolExecutor,
   type ToolContext,
   type ToolHandler,
   withTimeout,
@@ -15,10 +8,12 @@ import {
 
 const log = createLogger("tool-executor");
 
-/**
- * Execute a single tool call with Zod validation, timeout, and result serialization.
- * Shared by ToolExecutor (in-process) and worker-entry (Worker).
- */
+/** Interface for tool execution — satisfied by ToolExecutor and ComlinkToolExecutor. */
+export interface IToolExecutor {
+  execute(name: string, args: Record<string, unknown>): Promise<string>;
+  dispose(): void;
+}
+
 export async function executeToolCall(
   name: string,
   args: Record<string, unknown>,
@@ -59,9 +54,6 @@ export async function executeToolCall(
   }
 }
 
-/**
- * Executes tool handlers in-process with Zod validation and a timeout.
- */
 export class ToolExecutor implements IToolExecutor {
   private tools: Map<string, ToolHandler>;
   private secrets: Record<string, string>;
@@ -83,7 +75,5 @@ export class ToolExecutor implements IToolExecutor {
     return await executeToolCall(name, args, tool, this.secrets);
   }
 
-  dispose(): void {
-    // noop — no isolate to clean up
-  }
+  dispose(): void {}
 }

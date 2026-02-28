@@ -1,16 +1,11 @@
-// llm.ts — LLM client (AssemblyAI LLM Gateway, OpenAI-compat).
-
-import { ERR_INTERNAL } from "../sdk/errors.ts";
+import { ERR_INTERNAL } from "./errors.ts";
 import {
   type ChatMessage,
   type LLMResponse,
   LLMResponseSchema,
   type ToolSchema,
-} from "../sdk/types.ts";
+} from "./types.ts";
 
-/**
- * Replace empty text content with "..." (gateway rejects empty text blocks).
- */
 function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((msg) => {
     if (typeof msg.content === "string" && !msg.content.trim()) {
@@ -20,7 +15,6 @@ function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   });
 }
 
-/** Options for callLLM. */
 export interface CallLLMOptions {
   messages: ChatMessage[];
   tools: ToolSchema[];
@@ -28,13 +22,9 @@ export interface CallLLMOptions {
   model: string;
   signal?: AbortSignal;
   gatewayBase?: string;
-  /** Injectable fetch — defaults to globalThis.fetch. */
   fetch?: typeof globalThis.fetch;
 }
 
-/**
- * Call the AssemblyAI LLM Gateway (OpenAI-compatible).
- */
 export async function callLLM(opts: CallLLMOptions): Promise<LLMResponse> {
   const base = opts.gatewayBase ?? "https://llm-gateway.assemblyai.com/v1";
   const fetchFn = opts.fetch ?? globalThis.fetch;

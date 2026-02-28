@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { callLLM } from "../llm.ts";
-import type { ChatMessage, ToolSchema } from "../../sdk/types.ts";
+import type { ChatMessage, ToolSchema } from "../types.ts";
 
 describe("callLLM", () => {
   let originalFetch: typeof globalThis.fetch;

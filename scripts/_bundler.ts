@@ -5,8 +5,8 @@ import { build, type Plugin } from "esbuild";
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import { resolve, toFileUrl } from "@std/path";
 import type { AgentEntry } from "./_discover.ts";
-import { agentToolsToSchemas } from "../sdk/protocol.ts";
-import type { ToolSchema } from "../sdk/types.ts";
+import { agentToolsToSchemas } from "../platform/protocol.ts";
+import type { ToolSchema } from "../platform/types.ts";
 
 const configPath = resolve("deno.json");
 const zodShimPath = resolve("scripts/_zod-shim.ts");
@@ -61,6 +61,7 @@ export async function bundleAgent(
     bundle: true,
     format: "esm",
     platform: "neutral",
+    mainFields: ["module", "main"],
     outfile: `${outDir}/worker.js`,
     target: "es2022",
     treeShaking: true,
@@ -82,11 +83,14 @@ export async function bundleAgent(
   });
   await Deno.remove(tempEntry).catch(() => {});
 
-  // Client
+  // Client — uses denoPlugins so import map entries (@aai/ui, preact, etc.) resolve
   const clientResult = await build({
+    plugins: denoPlugins({ configPath }) as Plugin[],
     entryPoints: [agent.clientEntry],
     bundle: true,
     format: "esm",
+    platform: "neutral",
+    mainFields: ["module", "main"],
     outfile: `${outDir}/client.js`,
     target: "es2022",
     treeShaking: true,

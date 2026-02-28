@@ -30,10 +30,16 @@ export const TIMEOUTS = {
   TOOL_HANDLER: 30_000,
   /** STT token expiration in seconds */
   STT_TOKEN_EXPIRES: 480,
+  /** WebSocket ping interval */
+  PING_INTERVAL: 30_000,
 } as const;
 
 /** Maximum LLM tool-call iterations per turn. */
 export const MAX_TOOL_ITERATIONS = 3;
+
+/** Default audio sample rates in Hz. */
+export const DEFAULT_STT_SAMPLE_RATE = 16_000;
+export const DEFAULT_TTS_SAMPLE_RATE = 24_000;
 
 // ── Server -> Browser message interfaces ─────────────────────────
 

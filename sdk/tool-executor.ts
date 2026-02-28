@@ -1,9 +1,8 @@
-// tool-executor.ts — Tool execution interfaces and timeout utility.
-//
-// User-facing types used by agent tool handlers and the platform executor.
+// tool-executor.ts — Tool execution types and timeout utility.
 
 import { z } from "zod";
 
+/** A registered tool handler with its Zod schema. */
 export interface ToolHandler {
   schema: z.ZodObject<z.ZodRawShape>;
   handler: (
@@ -12,9 +11,13 @@ export interface ToolHandler {
   ) => Promise<unknown> | unknown;
 }
 
+/** Context provided to tool handlers at execution time. */
 export interface ToolContext {
+  /** Environment secrets available to the tool. */
   secrets: Record<string, string>;
+  /** Sandboxed fetch function. */
   fetch: typeof globalThis.fetch;
+  /** Abort signal for cancellation and timeouts. */
   signal?: AbortSignal;
 }
 
@@ -31,10 +34,4 @@ export function withTimeout<T>(
     });
     promise.then(resolve, reject);
   });
-}
-
-/** Interface for tool execution — satisfied by ToolExecutor and WorkerToolExecutor. */
-export interface IToolExecutor {
-  execute(name: string, args: Record<string, unknown>): Promise<string>;
-  dispose(): void;
 }

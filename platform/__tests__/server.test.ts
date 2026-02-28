@@ -1,14 +1,10 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { z } from "zod";
-import {
-  createAgentApp,
-  escapeHtml,
-  FAVICON_SVG,
-  renderAgentPage,
-} from "../server.ts";
+import { createAgentApp } from "../server.ts";
+import { escapeHtml, FAVICON_SVG, renderAgentPage } from "../html.ts";
 import { Agent } from "../../sdk/agent.ts";
-import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../../sdk/types.ts";
+import { DEFAULT_STT_CONFIG, DEFAULT_TTS_CONFIG } from "../types.ts";
 import type { PlatformConfig } from "../config.ts";
 import { createMockSessionDeps } from "./_test-utils.ts";
 

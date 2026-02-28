@@ -1,13 +1,8 @@
-// tts.ts — TTS client with connection pre-warming (Orpheus WebSocket relay).
-// Deno-native: uses standard WebSocket API, Uint8Array instead of Buffer.
-
 import { createLogger } from "../sdk/logger.ts";
-import type { TTSConfig } from "../sdk/types.ts";
-import { createDenoWebSocket } from "./deno-ext.ts";
+import type { TTSConfig } from "./types.ts";
 
 const log = createLogger("tts");
 
-/** Minimal interface for TTS client (enables test mocking without class internals). */
 export interface ITtsClient {
   synthesize(
     text: string,
@@ -17,27 +12,17 @@ export interface ITtsClient {
   close(): void;
 }
 
-/** Factory for creating TTS WebSocket connections. */
 export type TtsWebSocketFactory = (config: TTSConfig) => WebSocket;
 
-/** Create an authenticated WebSocket to the TTS endpoint. */
 function createTtsWs(config: TTSConfig): WebSocket {
-  // Deno 2.5+ supports custom headers on client WebSocket connections
-  const ws = createDenoWebSocket(config.wssUrl, {
+  // deno-lint-ignore no-explicit-any
+  const ws = new (WebSocket as any)(config.wssUrl, {
     headers: { Authorization: `Api-Key ${config.apiKey}` },
   });
   ws.binaryType = "arraybuffer";
   return ws;
 }
 
-/**
- * TTS client that pre-warms WebSocket connections for lower latency.
- *
- * Usage:
- *   const client = new TtsClient(config);
- *   await client.synthesize("Hello!", onAudio, signal);
- *   client.close();
- */
 export class TtsClient {
   private config: TTSConfig;
   private warmWs: WebSocket | null = null;
@@ -50,13 +35,9 @@ export class TtsClient {
     this.warmUp();
   }
 
-  /**
-   * Pre-warm a WebSocket connection so it's ready when synthesize() is called.
-   */
   private warmUp(): void {
     if (this.disposed || !this.config.apiKey) return;
 
-    // Close existing warm connection before creating a new one
     if (this.warmWs) {
       try {
         this.warmWs.close();
@@ -77,17 +58,12 @@ export class TtsClient {
     ws.onerror = (e) => {
       const msg = e instanceof ErrorEvent ? e.message : "unknown";
       log.warn({ error: msg }, "warmUp failed");
-      if (this.warmWs === ws) {
-        this.warmWs = null;
-      }
+      if (this.warmWs === ws) this.warmWs = null;
     };
 
     this.warmWs = ws;
   }
 
-  /**
-   * Synthesize text via Orpheus TTS and stream PCM16 audio chunks.
-   */
   synthesize(
     text: string,
     onAudio: (chunk: Uint8Array) => void,
@@ -95,7 +71,6 @@ export class TtsClient {
   ): Promise<void> {
     if (signal?.aborted) return Promise.resolve();
 
-    // Take the warm connection if open, otherwise create fresh
     let ws: WebSocket;
     if (this.warmWs && this.warmWs.readyState <= WebSocket.OPEN) {
       ws = this.warmWs;
@@ -113,9 +88,6 @@ export class TtsClient {
     return this.runTtsProtocol(ws, text, onAudio, signal);
   }
 
-  /**
-   * Close any pre-warmed connection and stop warming up.
-   */
   close(): void {
     this.disposed = true;
     if (this.warmWs) {
@@ -128,9 +100,6 @@ export class TtsClient {
     }
   }
 
-  /**
-   * Run the Orpheus TTS WebSocket protocol on a given connection.
-   */
   private runTtsProtocol(
     ws: WebSocket,
     text: string,
@@ -170,7 +139,6 @@ export class TtsClient {
         ws.send("__END__");
       };
 
-      // If already open (warm connection), send immediately
       if (ws.readyState === WebSocket.OPEN) {
         sendText();
       } else {

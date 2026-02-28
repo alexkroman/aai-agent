@@ -19,6 +19,14 @@ describe("Agent", () => {
     expect(agent.config.voice).toBe("jess");
   });
 
+  it("uses sensible defaults when optional fields omitted", () => {
+    const agent = new Agent({ name: "Minimal" });
+    expect(agent.config.name).toBe("Minimal");
+    expect(agent.config.instructions.length).toBeGreaterThan(0);
+    expect(agent.config.greeting.length).toBeGreaterThan(0);
+    expect(agent.config.voice).toBe("jess");
+  });
+
   it("stores optional config fields", () => {
     const agent = new Agent({
       ...baseConfig,
@@ -86,6 +94,44 @@ describe("Agent", () => {
       expect(agent.tools.size).toBe(2);
       expect(agent.tools.has("a")).toBe(true);
       expect(agent.tools.has("b")).toBe(true);
+    });
+  });
+
+  describe("lifecycle hooks", () => {
+    it("onConnect is chainable and stores handler", () => {
+      const handler = () => {};
+      const agent = new Agent(baseConfig).onConnect(handler);
+      expect(agent.hooks.onConnect).toBe(handler);
+    });
+
+    it("onDisconnect is chainable and stores handler", () => {
+      const handler = () => {};
+      const agent = new Agent(baseConfig).onDisconnect(handler);
+      expect(agent.hooks.onDisconnect).toBe(handler);
+    });
+
+    it("onError is chainable and stores handler", () => {
+      const handler = () => {};
+      const agent = new Agent(baseConfig).onError(handler);
+      expect(agent.hooks.onError).toBe(handler);
+    });
+
+    it("onTurn is chainable and stores handler", () => {
+      const handler = () => {};
+      const agent = new Agent(baseConfig).onTurn(handler);
+      expect(agent.hooks.onTurn).toBe(handler);
+    });
+
+    it("hooks can be chained together", () => {
+      const agent = new Agent(baseConfig)
+        .onConnect(() => {})
+        .onDisconnect(() => {})
+        .onError(() => {})
+        .onTurn(() => {});
+      expect(agent.hooks.onConnect).toBeDefined();
+      expect(agent.hooks.onDisconnect).toBeDefined();
+      expect(agent.hooks.onError).toBeDefined();
+      expect(agent.hooks.onTurn).toBeDefined();
     });
   });
 

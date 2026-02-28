@@ -1,17 +1,12 @@
-// builtin-tools.ts — Server-side tools that run in-process.
-//
-// Built-in tools are opt-in via the agent's `builtinTools` array.
-
 import { z } from "zod";
 import ddg from "@pikisoft/duckduckgo-search";
 import { mapNotNullish } from "@std/collections/map-not-nullish";
 import { createLogger } from "../sdk/logger.ts";
-import { zodToJsonSchema } from "../sdk/protocol.ts";
-import type { ToolSchema } from "../sdk/types.ts";
+import { zodToJsonSchema } from "./protocol.ts";
+import type { ToolSchema } from "./types.ts";
 
 const log = createLogger("builtin-tools");
 
-/** Lightweight HTML → readable text. No DOM parser needed. */
 export function htmlToText(html: string): string {
   let text = html;
   text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -32,7 +27,6 @@ export function htmlToText(html: string): string {
   return text.trim();
 }
 
-/** A server-side tool that runs with full Deno access. */
 interface BuiltinTool {
   name: string;
   description: string;
@@ -69,7 +63,6 @@ const webSearch: BuiltinTool = {
   },
 };
 
-/** Max characters to return from a webpage to avoid blowing up context. */
 const MAX_PAGE_CHARS = 10_000;
 
 const visitWebpageParams = z.object({
@@ -120,15 +113,11 @@ const visitWebpage: BuiltinTool = {
   },
 };
 
-/** All available built-in tools, keyed by name. */
 const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   web_search: webSearch,
   visit_webpage: visitWebpage,
 };
 
-/**
- * Get tool schemas for the requested built-in tools.
- */
 export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {
   return mapNotNullish(names, (name) => {
     const tool = BUILTIN_TOOLS[name];
@@ -141,9 +130,6 @@ export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {
   });
 }
 
-/**
- * Execute a built-in tool by name. Returns null if the tool is not a built-in.
- */
 export async function executeBuiltinTool(
   name: string,
   args: Record<string, unknown>,

@@ -1,4 +1,26 @@
 // mod.ts — Single public API for @aai/ui.
+//
+// Re-exports Preact essentials and goober so custom UIs only need
+// a single import: `import { css, useEffect, mount, ... } from "@aai/ui"`.
+
+import { h } from "preact";
+import { setup } from "goober";
+
+setup(h);
+
+// Preact re-exports (so users don't need preact as a direct dependency)
+export { h, Fragment } from "preact";
+export {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "preact/hooks";
+
+// Goober re-export
+export { css, keyframes, styled } from "goober";
 
 // Session
 export { VoiceSession } from "./session.ts";
