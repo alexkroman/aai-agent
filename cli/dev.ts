@@ -91,6 +91,7 @@ export async function runDev(
       loader: { ".worklet.js": "text" },
       jsx: "automatic",
       jsxImportSource: "preact",
+      logOverride: { "commonjs-variable-in-esm": "silent" },
     });
     await ctx.watch();
     clientContexts.push(ctx);

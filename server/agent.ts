@@ -1,6 +1,6 @@
 import { Hono } from "@hono/hono";
 import { serveStatic } from "@hono/hono/deno";
-import { loadPlatformConfig, type PlatformConfig } from "./config.ts";
+import type { PlatformConfig } from "./config.ts";
 import { applyMiddleware } from "./middleware.ts";
 import { renderAgentPage } from "../ui/html.ts";
 import { favicon } from "./routes/favicon.ts";
@@ -117,13 +117,13 @@ export class Agent {
     return server;
   }
 
-  #handleWs(socket: WebSocket): void {
+  async #handleWs(socket: WebSocket): Promise<void> {
     const toolSchemas = [
       ...agentToolsToSchemas(this.tools),
       ...getBuiltinToolSchemas([...(this.builtinTools ?? [])]),
     ];
 
-    const { secrets, config } = this.#loadPlatform();
+    const { secrets, config } = await this.#loadPlatform();
 
     handleSessionWebSocket(socket, this.#sessions, {
       createSession: (sessionId, ws) => {
@@ -146,11 +146,12 @@ export class Agent {
     });
   }
 
-  #loadPlatform(): {
+  async #loadPlatform(): Promise<{
     secrets: Record<string, string>;
     config: PlatformConfig;
-  } {
+  }> {
     if (!this.#platform) {
+      const { loadPlatformConfig } = await import("./config.ts");
       const env = Deno.env.toObject();
       this.#platform = {
         config: loadPlatformConfig(env),

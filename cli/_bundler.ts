@@ -81,6 +81,7 @@ export async function bundleAgent(
     drop: ["debugger"],
     metafile: true,
     external: ["*.wasm", "*/config.ts", "@hono/*", "@std/dotenv"],
+    logOverride: { "commonjs-variable-in-esm": "silent" },
   });
   await Deno.remove(tempEntry).catch(() => {});
 
@@ -102,6 +103,7 @@ export async function bundleAgent(
     loader: { ".worklet.js": "text" },
     jsx: "automatic",
     jsxImportSource: "preact",
+    logOverride: { "commonjs-variable-in-esm": "silent" },
   });
 
   await Deno.writeTextFile(

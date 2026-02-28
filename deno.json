@@ -8,8 +8,8 @@
     "serve": "deno run --allow-net --allow-read --allow-env --allow-write=dist --unstable-worker-options --unstable-kv main.ts",
     "build": "deno run --allow-all cli/cli.ts build",
     "deploy": "deno run --allow-all cli/cli.ts deploy",
-    "test": "deno test --allow-net --allow-read --allow-env --allow-run --unstable-kv",
-    "check": "deno check server/**/*.ts ui/**/*.ts ui/**/*.tsx cli/**/*.ts examples/**/*.ts _utils/**/*.ts _protocol.ts main.ts mod.ts && deno lint && deno fmt --check && deno test --allow-net --allow-read --allow-env --allow-run --unstable-kv"
+    "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-run --unstable-kv",
+    "check": "deno check server/**/*.ts ui/**/*.ts ui/**/*.tsx cli/**/*.ts examples/**/*.ts _utils/**/*.ts _protocol.ts main.ts mod.ts && deno lint && deno fmt --check && deno test --allow-net --allow-read --allow-write --allow-env --allow-run --unstable-kv"
   },
   "imports": {
     "@b-fuze/deno-dom": "jsr:@b-fuze/deno-dom@^0.1.56",
