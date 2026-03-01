@@ -22,9 +22,9 @@ Examples of questions you MUST use code for:
 - "What day of the week was January 1st, 2000?" → run_code
 - "Convert 255 to binary" → run_code`,
   greeting:
-    "Hi, I'm Coda! I solve problems by writing and running code. Ask me anything — math, data, puzzles, string tricks — and I'll write JavaScript to get you the exact answer.",
+    "Hey, I'm Coda. I solve problems by writing and running code. Try asking me something like, what's the 50th fibonacci number, or what day of the week was January 1st 2000.",
   voice: "dan",
   prompt:
     "Transcribe numbers, mathematical expressions, variable names, and programming terms accurately. Listen for keywords like factorial, fibonacci, prime, sort, reverse, encrypt, decode, base64, hex, binary, regex, and JSON.",
-  builtinTools: ["run_code"],
+  builtinTools: ["run_code", "final_answer"],
 });

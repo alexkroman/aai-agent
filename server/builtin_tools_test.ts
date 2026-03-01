@@ -74,36 +74,50 @@ describe("htmlToText", () => {
 });
 
 describe("getBuiltinToolSchemas", () => {
-  it("returns schemas for known tools", () => {
+  it("returns schemas for known tools plus required tools", () => {
     const schemas = getBuiltinToolSchemas([
       "web_search",
       "visit_webpage",
       "run_code",
       "fetch_json",
     ]);
-    expect(schemas).toHaveLength(4);
-    expect(schemas[0].name).toBe("web_search");
-    expect(schemas[1].name).toBe("visit_webpage");
-    expect(schemas[2].name).toBe("run_code");
-    expect(schemas[3].name).toBe("fetch_json");
+    // 4 requested + final_answer (auto-included)
+    expect(schemas).toHaveLength(5);
+    const names = schemas.map((s) => s.name);
+    expect(names).toContain("final_answer");
+    expect(names).toContain("web_search");
+    expect(names).toContain("visit_webpage");
+    expect(names).toContain("run_code");
+    expect(names).toContain("fetch_json");
   });
 
   it("ignores unknown tool names", () => {
     const schemas = getBuiltinToolSchemas(["unknown_tool", "web_search"]);
-    expect(schemas).toHaveLength(1);
-    expect(schemas[0].name).toBe("web_search");
+    // web_search + final_answer
+    expect(schemas).toHaveLength(2);
+    const names = schemas.map((s) => s.name);
+    expect(names).toContain("web_search");
+    expect(names).toContain("final_answer");
   });
 
-  it("returns empty array for empty input", () => {
+  it("always includes required tools even with empty input", () => {
     const schemas = getBuiltinToolSchemas([]);
-    expect(schemas).toHaveLength(0);
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].name).toBe("final_answer");
+  });
+
+  it("does not duplicate final_answer when explicitly requested", () => {
+    const schemas = getBuiltinToolSchemas(["final_answer", "web_search"]);
+    const names = schemas.map((s) => s.name);
+    expect(names.filter((n) => n === "final_answer")).toHaveLength(1);
   });
 
   it("returns schemas with correct shape", () => {
     const schemas = getBuiltinToolSchemas(["web_search"]);
-    expect(schemas[0].name).toBe("web_search");
-    expect(typeof schemas[0].description).toBe("string");
-    expect(schemas[0].parameters).toBeDefined();
+    const webSearch = schemas.find((s) => s.name === "web_search")!;
+    expect(webSearch.name).toBe("web_search");
+    expect(typeof webSearch.description).toBe("string");
+    expect(webSearch.parameters).toBeDefined();
   });
 });
 

@@ -8,6 +8,7 @@ Deno.test("travel-concierge - has correct config", () => {
     "web_search",
     "visit_webpage",
     "fetch_json",
+    "final_answer",
   ]);
   assertEquals(Object.keys(agent.tools).length, 0);
 });

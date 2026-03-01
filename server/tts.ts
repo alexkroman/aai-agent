@@ -69,18 +69,29 @@ export class TtsClient {
     onAudio: (chunk: Uint8Array) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (signal?.aborted) return Promise.resolve();
+    if (signal?.aborted) {
+      log.info("synthesize skipped (already aborted)");
+      return Promise.resolve();
+    }
+
+    log.info("synthesize start", {
+      textLength: text.length,
+      text: text.length > 200 ? text.slice(0, 200) + "…" : text,
+      voice: this.config.voice,
+    });
 
     let ws: WebSocket;
     if (this.warmWs && this.warmWs.readyState <= WebSocket.OPEN) {
       ws = this.warmWs;
       this.warmWs = null;
+      log.info("using warm WebSocket");
     } else {
       if (this.warmWs) {
         safeClose(this.warmWs);
         this.warmWs = null;
       }
       ws = this.createWs();
+      log.info("created new WebSocket");
     }
 
     return this.runTtsProtocol(ws, text, onAudio, signal);
@@ -103,7 +114,11 @@ export class TtsClient {
     return new Promise((resolve, reject) => {
       const cleanup = () => safeClose(ws);
 
+      let chunkCount = 0;
+      let totalBytes = 0;
+
       const onAbort = () => {
+        log.info("TTS aborted", { chunkCount, totalBytes });
         cleanup();
         resolve();
       };
@@ -111,6 +126,9 @@ export class TtsClient {
       signal?.addEventListener("abort", onAbort, { once: true });
 
       const sendText = () => {
+        log.info("TTS sending text to WebSocket", {
+          wordCount: text.split(/\s+/).filter(Boolean).length,
+        });
         ws.send(
           JSON.stringify({
             voice: this.config.voice,
@@ -135,8 +153,12 @@ export class TtsClient {
 
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
+          chunkCount++;
+          totalBytes += event.data.byteLength;
           onAudio(new Uint8Array(event.data));
         } else if (event.data instanceof Blob) {
+          chunkCount++;
+          totalBytes += event.data.size;
           event.data.arrayBuffer()
             .then((buf) => onAudio(new Uint8Array(buf)))
             .catch((err) => {
@@ -149,17 +171,25 @@ export class TtsClient {
         signal?.removeEventListener("abort", onAbort);
         this.warmUp();
         if (event.code !== 1000 && event.code !== 1005) {
+          log.error("TTS WebSocket closed unexpectedly", {
+            code: event.code,
+            reason: event.reason,
+            chunkCount,
+            totalBytes,
+          });
           reject(
             new Error(
               `TTS WebSocket closed unexpectedly (code ${event.code})`,
             ),
           );
         } else {
+          log.info("TTS complete", { code: event.code, chunkCount, totalBytes });
           resolve();
         }
       };
 
       ws.onerror = () => {
+        log.error("TTS WebSocket error", { chunkCount, totalBytes });
         signal?.removeEventListener("abort", onAbort);
         cleanup();
         reject(new Error("TTS WebSocket error"));

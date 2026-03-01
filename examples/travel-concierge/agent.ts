@@ -24,9 +24,9 @@ API endpoints (use fetch_json):
 - Currency rates: https://open.er-api.com/v6/latest/{CODE}
   Returns { rates: { USD: 1.0, EUR: 0.85, ... } }`,
   greeting:
-    "Welcome! I'm Aria, your travel concierge. Where are you dreaming of going?",
+    "Hey, I'm Aria, your travel concierge. Try asking me something like, what's the weather in Tokyo this week, or help me plan a long weekend in Barcelona.",
   voice: "tara",
   prompt:
     "Transcribe travel-related terms accurately including city names, airport codes like JFK SFO LAX CDG, airline names, hotel chains, currencies like USD EUR GBP JPY, and dates.",
-  builtinTools: ["web_search", "visit_webpage", "fetch_json"],
+  builtinTools: ["web_search", "visit_webpage", "fetch_json", "final_answer"],
 });

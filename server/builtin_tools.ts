@@ -1,5 +1,4 @@
 import { z } from "zod";
-import ddg from "@pikisoft/duckduckgo-search";
 import { DOMParser } from "@b-fuze/deno-dom";
 import { getLogger } from "../_utils/logger.ts";
 import type { ToolSchema } from "./types.ts";
@@ -32,7 +31,10 @@ interface BuiltinTool {
   name: string;
   description: string;
   parameters: z.ZodObject<z.ZodRawShape>;
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  execute: (
+    args: Record<string, unknown>,
+    env: Record<string, string | undefined>,
+  ) => Promise<string>;
 }
 
 const webSearchParams = z.object({
@@ -43,22 +45,58 @@ const webSearchParams = z.object({
     .optional(),
 });
 
+const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
+
 const webSearch: BuiltinTool = {
   name: "web_search",
   description:
-    "Search the web using DuckDuckGo. Returns a list of results with title, URL, and description.",
+    "Search the web using Brave Search. Returns a list of results with title, URL, and description.",
   parameters: webSearchParams,
-  execute: async (args) => {
+  execute: async (args, env) => {
     const { query, max_results } = args as z.infer<typeof webSearchParams>;
     const maxResults = max_results ?? 5;
 
     log.info("web_search", { query, maxResults });
 
-    const results: { title: string; url: string; description: string }[] = [];
-    for await (const r of ddg.text(query)) {
-      results.push({ title: r.title, url: r.href, description: r.body });
-      if (results.length >= maxResults) break;
+    const apiKey = env.BRAVE_API_KEY ?? Deno.env.get("BRAVE_API_KEY");
+    if (!apiKey) {
+      log.error("BRAVE_API_KEY not set");
+      return JSON.stringify({
+        results: [],
+        note: "No search results available. Answer the user's question to the best of your ability.",
+      });
     }
+
+    const url = `${BRAVE_SEARCH_URL}?${new URLSearchParams({
+      q: query,
+      count: String(maxResults),
+    })}`;
+
+    const resp = await fetch(url, {
+      headers: { "X-Subscription-Token": apiKey },
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!resp.ok) {
+      log.error("Brave Search request failed", {
+        status: resp.status,
+        statusText: resp.statusText,
+      });
+      return JSON.stringify({
+        results: [],
+        note: "No search results available. Answer the user's question to the best of your ability.",
+      });
+    }
+
+    const data = await resp.json() as {
+      web?: { results?: { title: string; url: string; description: string }[] };
+    };
+
+    const results = (data.web?.results ?? []).slice(0, maxResults).map((r) => ({
+      title: r.title,
+      url: r.url,
+      description: r.description,
+    }));
 
     return JSON.stringify(results);
   },
@@ -77,7 +115,7 @@ const visitWebpage: BuiltinTool = {
   description:
     "Fetch a webpage URL and return its content as clean Markdown. Useful for reading articles, documentation, or any web page found via search.",
   parameters: visitWebpageParams,
-  execute: async (args) => {
+  execute: async (args, _env) => {
     const { url } = args as z.infer<typeof visitWebpageParams>;
 
     log.info("visit_webpage", { url });
@@ -127,7 +165,7 @@ const runCode: BuiltinTool = {
   description:
     "Execute JavaScript in a sandboxed Deno subprocess with no permissions. Use console.log() for output. No network or filesystem access.",
   parameters: runCodeParams,
-  execute: async (args) => {
+  execute: async (args, _env) => {
     const { code } = args as z.infer<typeof runCodeParams>;
 
     log.info("run_code", { codeLength: code.length });
@@ -186,7 +224,7 @@ const fetchJson: BuiltinTool = {
   description:
     "Fetch a URL via HTTP GET and return the JSON response. Useful for calling REST APIs that return JSON data.",
   parameters: fetchJsonParams,
-  execute: async (args) => {
+  execute: async (args, _env) => {
     const { url, headers } = args as z.infer<typeof fetchJsonParams>;
 
     log.info("fetch_json", { url });
@@ -215,15 +253,38 @@ const fetchJson: BuiltinTool = {
   },
 };
 
+const finalAnswerParams = z.object({
+  answer: z.string().describe(
+    "Your final response to the user. This will be spoken aloud.",
+  ),
+});
+
+const finalAnswer: BuiltinTool = {
+  name: "final_answer",
+  description:
+    "Provide your final answer to the user. You MUST call this tool to deliver every response — it is the only way to complete the task, otherwise you will be stuck in a loop.",
+  parameters: finalAnswerParams,
+  execute: async (args, _env) => {
+    const { answer } = args as z.infer<typeof finalAnswerParams>;
+    return answer;
+  },
+};
+
+export const FINAL_ANSWER_TOOL = "final_answer";
+
+const REQUIRED_BUILTIN_TOOLS = [FINAL_ANSWER_TOOL];
+
 const BUILTIN_TOOLS: Record<string, BuiltinTool> = {
   web_search: webSearch,
   visit_webpage: visitWebpage,
   run_code: runCode,
   fetch_json: fetchJson,
+  final_answer: finalAnswer,
 };
 
 export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {
-  return names.flatMap((name) => {
+  const allNames = [...new Set([...REQUIRED_BUILTIN_TOOLS, ...names])];
+  return allNames.flatMap((name) => {
     const tool = BUILTIN_TOOLS[name];
     if (!tool) return [];
     return [{
@@ -237,6 +298,7 @@ export function getBuiltinToolSchemas(names: string[]): ToolSchema[] {
 export async function executeBuiltinTool(
   name: string,
   args: Record<string, unknown>,
+  env: Record<string, string | undefined> = {},
 ): Promise<string | null> {
   const tool = BUILTIN_TOOLS[name];
   if (!tool) return null;
@@ -248,7 +310,7 @@ export async function executeBuiltinTool(
   }
 
   try {
-    return await tool.execute(parsed.data as Record<string, unknown>);
+    return await tool.execute(parsed.data as Record<string, unknown>, env);
   } catch (err) {
     log.error("Built-in tool execution failed", { err, tool: name });
     return `Error: ${err instanceof Error ? err.message : String(err)}`;

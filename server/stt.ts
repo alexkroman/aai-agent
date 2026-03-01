@@ -108,7 +108,7 @@ export async function connectStt(
         };
 
         ws.onclose = (event: CloseEvent) => {
-          if (event.code !== 1000) {
+          if (event.code !== 1000 && event.code !== 1005) {
             log.error("WebSocket closed unexpectedly", {
               code: event.code,
               reason: event.reason ?? "",

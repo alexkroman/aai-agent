@@ -4,7 +4,6 @@
     "jsr:@b-fuze/deno-dom@~0.1.56": "0.1.56",
     "jsr:@hono/hono@4": "4.12.3",
     "jsr:@luca/esbuild-deno-loader@0.11": "0.11.1",
-    "jsr:@pikisoft/duckduckgo-search@*": "0.0.1",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/assert@^1.0.17": "1.0.19",
     "jsr:@std/assert@^1.0.19": "1.0.19",
@@ -49,9 +48,6 @@
         "jsr:@std/encoding",
         "jsr:@std/path@^1.0.6"
       ]
-    },
-    "@pikisoft/duckduckgo-search@0.0.1": {
-      "integrity": "02b7ee4938f85369fc2c1d766b7e522e70eea345fc9b5844b12320a7487b1829"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -328,7 +324,6 @@
       "jsr:@b-fuze/deno-dom@~0.1.56",
       "jsr:@hono/hono@4",
       "jsr:@luca/esbuild-deno-loader@0.11",
-      "jsr:@pikisoft/duckduckgo-search@*",
       "jsr:@std/assert@1",
       "jsr:@std/async@1",
       "jsr:@std/cli@1",

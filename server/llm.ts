@@ -23,6 +23,12 @@ export interface CallLLMOptions {
   signal?: AbortSignal;
   gatewayBase?: string;
   fetch?: typeof globalThis.fetch;
+  toolChoice?:
+    | "auto"
+    | "none"
+    | "required"
+    | { type: "function"; function: { name: string } };
+  maxTokens?: number;
 }
 
 export async function callLLM(opts: CallLLMOptions): Promise<LLMResponse> {
@@ -32,6 +38,7 @@ export async function callLLM(opts: CallLLMOptions): Promise<LLMResponse> {
   const body: Record<string, unknown> = {
     model: opts.model,
     messages: sanitizeMessages(opts.messages),
+    max_tokens: opts.maxTokens ?? 300,
   };
 
   if (opts.tools.length > 0) {
@@ -43,6 +50,7 @@ export async function callLLM(opts: CallLLMOptions): Promise<LLMResponse> {
         parameters: t.parameters,
       },
     }));
+    body.tool_choice = opts.toolChoice ?? "auto";
   }
 
   const resp = await fetchFn(`${base}/chat/completions`, {

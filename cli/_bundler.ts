@@ -21,6 +21,40 @@ export const workletTextPlugin: Plugin = {
   },
 };
 
+// Stubs for platform-only modules that carry heavy deps (WASM, native libs).
+// The worker never calls these — it only needs agent data + tool execution.
+const WORKER_STUBS: Record<string, string> = {
+  "builtin_tools": [
+    "export function getBuiltinToolSchemas() { return []; }",
+    "export function executeBuiltinTool() { return null; }",
+    "export function htmlToText() { return ''; }",
+  ].join("\n"),
+  "config":
+    "export function loadPlatformConfig() { throw new Error('unavailable in worker'); }",
+};
+
+const serverDir = resolve("server");
+
+const workerStubPlugin: Plugin = {
+  name: "worker-stub",
+  setup(b) {
+    b.onResolve(
+      { filter: /builtin_tools\.ts$|\/config\.ts$/ },
+      (args) => {
+        const full = resolve(args.resolveDir, args.path);
+        if (!full.startsWith(serverDir)) return undefined;
+        const base = full.split("/").pop()!.replace(".ts", "");
+        if (!WORKER_STUBS[base]) return undefined;
+        return { path: base, namespace: "worker-stub" };
+      },
+    );
+    b.onLoad({ filter: /.*/, namespace: "worker-stub" }, (args) => ({
+      contents: WORKER_STUBS[args.path] ?? "export {}",
+      loader: "ts",
+    }));
+  },
+};
+
 const configPath = resolve("deno.json");
 const zodShimPath = resolve("cli/_zod_shim.ts");
 
@@ -65,7 +99,7 @@ export async function bundleAgent(
   );
 
   const workerResult = await build({
-    plugins: denoPlugins({ configPath }) as Plugin[],
+    plugins: [workerStubPlugin, ...denoPlugins({ configPath }) as Plugin[]],
     entryPoints: [tempEntry],
     bundle: true,
     format: "esm",
@@ -80,7 +114,7 @@ export async function bundleAgent(
     define: { "process.env.NODE_ENV": '"production"' },
     drop: ["debugger"],
     metafile: true,
-    external: ["*.wasm", "*/config.ts", "@hono/*", "@std/dotenv"],
+    external: ["@hono/*", "@std/dotenv"],
     logOverride: { "commonjs-variable-in-esm": "silent" },
   });
   await Deno.remove(tempEntry).catch(() => {});

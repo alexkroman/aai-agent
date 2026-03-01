@@ -16,9 +16,9 @@ Examples:
 - Dice rolls: console.log(Array.from({length: N}, () => Math.floor(Math.random() * sides) + 1))
 - Random numbers: console.log(Math.floor(Math.random() * (max - min + 1)) + min)`,
   greeting:
-    "Hey! I'm Math Buddy. Ask me to calculate something, convert units, or roll some dice!",
+    "Hey, I'm Math Buddy. Try asking me something like, what's 127 times 849, convert 5 miles to kilometers, or roll 3 twenty-sided dice.",
   voice: "jess",
   prompt:
     "Transcribe mathematical expressions and numbers accurately. Listen for operators like plus, minus, times, divided by, squared, cubed, square root, and unit names like kilometers, miles, pounds, kilograms, Fahrenheit, Celsius, liters, and gallons.",
-  builtinTools: ["run_code"],
+  builtinTools: ["run_code", "final_answer"],
 });

@@ -6,7 +6,6 @@ import { renderAgentPage } from "../ui/html.ts";
 import { favicon } from "./routes/favicon.ts";
 import { createHealthRoute } from "./routes/health.ts";
 import { agentToolsToSchemas } from "./protocol.ts";
-import { getBuiltinToolSchemas } from "./builtin_tools.ts";
 import { createToolExecutor, toToolHandlers } from "./tool_executor.ts";
 import { ServerSession } from "./session.ts";
 import { handleSessionWebSocket, type Session } from "./ws_handler.ts";
@@ -118,6 +117,7 @@ export class Agent {
   }
 
   async #handleWs(socket: WebSocket): Promise<void> {
+    const { getBuiltinToolSchemas } = await import("./builtin_tools.ts");
     const toolSchemas = [
       ...agentToolsToSchemas(this.tools),
       ...getBuiltinToolSchemas([...(this.builtinTools ?? [])]),
@@ -141,6 +141,7 @@ export class Agent {
         return ServerSession.create(sessionId, ws, agentConfig, toolSchemas, {
           platformConfig: config,
           executeTool,
+          secrets,
         });
       },
     });

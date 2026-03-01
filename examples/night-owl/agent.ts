@@ -75,11 +75,11 @@ Use run_code for sleep calculations:
 - If result is negative, add 1440 (24 hours in minutes)
 - Format as HH:MM`,
   greeting:
-    "Hey there, night owl. What are we getting into tonight — a movie, some music, or just chatting under the stars?",
+    "Hey there, night owl. Try asking me for a cozy movie recommendation, or tell me what time you need to wake up and I'll calculate the best time to fall asleep.",
   voice: "dan",
   prompt:
     "Transcribe movie titles, music artists, book names, and times accurately. Listen for genres like horror, comedy, sci-fi, jazz, ambient, and mood words like chill, intense, cozy, spooky.",
-  builtinTools: ["run_code"],
+  builtinTools: ["run_code", "final_answer"],
   tools: {
     recommend: tool({
       description:

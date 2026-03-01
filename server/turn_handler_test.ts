@@ -256,14 +256,40 @@ describe("executeTurn", () => {
       expect(toolMsgs[1].tool_call_id).toBe("c2");
     });
 
-    it("stops after MAX_TOOL_ITERATIONS without final text", async () => {
-      // Every LLM call returns tool calls — never a text response
+    it("forces final_answer after MAX_TOOL_ITERATIONS", async () => {
+      // Every LLM call during the loop returns tool calls
       const toolResp = createMockLLMResponse(null, [
         { id: "c1", name: "loop_tool", arguments: "{}" },
       ]);
+      const forcedResp = createMockLLMResponse(null, [
+        {
+          id: "c2",
+          name: "final_answer",
+          arguments: '{"answer":"Here are the results."}',
+        },
+      ]);
 
+      let callCount = 0;
       const ctx = createCtx({
-        callLLM: () => Promise.resolve(toolResp),
+        toolSchemas: [
+          { name: "loop_tool", description: "loops", parameters: {} },
+          {
+            name: "final_answer",
+            description: "deliver answer",
+            parameters: {},
+          },
+        ],
+        callLLM: (opts) => {
+          callCount++;
+          // Forced call only has final_answer tool
+          if (
+            opts.tools.length === 1 &&
+            opts.tools[0].name === "final_answer"
+          ) {
+            return Promise.resolve(forcedResp);
+          }
+          return Promise.resolve(toolResp);
+        },
       });
 
       const result = await executeTurn(
@@ -272,10 +298,121 @@ describe("executeTurn", () => {
         new AbortController().signal,
       );
 
-      // Should exhaust iterations and return empty
-      expect(result.text).toBe("");
+      expect(result.text).toBe("Here are the results.");
       // One tool execution per loop iteration
-      expect(ctx.builtinCalls.length).toBe(3);
+      expect(ctx.userToolCalls.length).toBe(3);
+      // 1 initial + 2 re-calls + 1 forced final_answer = 4 LLM calls
+      expect(callCount).toBe(4);
+    });
+  });
+
+  describe("final_answer", () => {
+    it("short-circuits the loop and returns the answer", async () => {
+      const resp = createMockLLMResponse(null, [
+        {
+          id: "c1",
+          name: "final_answer",
+          arguments: '{"answer":"The sky is blue."}',
+        },
+      ]);
+
+      let callCount = 0;
+      const ctx = createCtx({
+        callLLM: () => {
+          callCount++;
+          return Promise.resolve(resp);
+        },
+      });
+
+      const result = await executeTurn(
+        "Why is the sky blue?",
+        ctx,
+        new AbortController().signal,
+      );
+
+      expect(result.text).toBe("The sky is blue.");
+      expect(result.steps).toEqual(["Using final_answer"]);
+      // No tools should have been executed
+      expect(ctx.builtinCalls.length).toBe(0);
+      expect(ctx.userToolCalls.length).toBe(0);
+      // Only 1 LLM call — no re-call after final_answer
+      expect(callCount).toBe(1);
+    });
+
+    it("takes final_answer even when called alongside other tools", async () => {
+      const resp = createMockLLMResponse(null, [
+        { id: "c1", name: "web_search", arguments: '{"query":"test"}' },
+        {
+          id: "c2",
+          name: "final_answer",
+          arguments: '{"answer":"Here you go."}',
+        },
+      ]);
+
+      const ctx = createCtx({
+        callLLM: () => Promise.resolve(resp),
+      });
+
+      const result = await executeTurn(
+        "Search",
+        ctx,
+        new AbortController().signal,
+      );
+
+      expect(result.text).toBe("Here you go.");
+      expect(result.steps).toEqual(["Using final_answer"]);
+      // Other tools should NOT have been executed
+      expect(ctx.builtinCalls.length).toBe(0);
+      expect(ctx.userToolCalls.length).toBe(0);
+    });
+
+    it("returns empty string for malformed final_answer arguments", async () => {
+      const resp = createMockLLMResponse(null, [
+        { id: "c1", name: "final_answer", arguments: "not json" },
+      ]);
+
+      const ctx = createCtx({
+        callLLM: () => Promise.resolve(resp),
+      });
+
+      const result = await executeTurn(
+        "Hi",
+        ctx,
+        new AbortController().signal,
+      );
+
+      expect(result.text).toBe("");
+      expect(result.steps).toEqual(["Using final_answer"]);
+    });
+
+    it("works after other tools execute first", async () => {
+      const toolResp = createMockLLMResponse(null, [
+        { id: "c1", name: "web_search", arguments: '{"query":"weather"}' },
+      ]);
+      const finalResp = createMockLLMResponse(null, [
+        {
+          id: "c2",
+          name: "final_answer",
+          arguments: '{"answer":"It is sunny."}',
+        },
+      ]);
+
+      let idx = 0;
+      const ctx = createCtx({
+        callLLM: () => {
+          const r = [toolResp, finalResp][idx++] ?? finalResp;
+          return Promise.resolve(r);
+        },
+      });
+
+      const result = await executeTurn(
+        "Weather?",
+        ctx,
+        new AbortController().signal,
+      );
+
+      expect(result.text).toBe("It is sunny.");
+      expect(result.steps).toEqual(["Using web_search", "Using final_answer"]);
     });
   });
 

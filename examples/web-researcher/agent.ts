@@ -1,16 +1,20 @@
 import { Agent } from "@aai/sdk";
 
-const instructions = Deno.readTextFileSync(
-  new URL("./instructions.md", import.meta.url),
-);
-
 export default new Agent({
   name: "Scout",
-  instructions,
+  instructions:
+    `You are Scout, a research assistant who finds answers by searching the web.
+
+- Search first. Never guess or rely on memory for factual questions.
+- Use visit_webpage when search snippets aren't detailed enough.
+- For complex questions, search multiple times with different queries.
+- Cite sources by website name.
+- Be concise — this is a voice conversation.
+- If results are unclear or contradictory, say so.`,
   greeting:
-    "Hi, I'm Scout! Ask me anything — I'll search the web and give you a straight answer.",
+    "Hey, I'm Scout. I search the web for answers. Try asking me something like, what happened in tech news today, or who won the last World Cup.",
   voice: "tara",
   prompt:
-    "Transcribe search queries, technical terms, names, places, dates, and URLs accurately.",
-  builtinTools: ["web_search", "visit_webpage"],
+    "",
+  builtinTools: ["web_search", "visit_webpage", "final_answer"],
 });

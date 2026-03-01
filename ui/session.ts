@@ -197,6 +197,13 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         this.changeState("speaking");
         break;
       case "transcript":
+        if (
+          (this.currentState === "speaking" ||
+            this.currentState === "thinking") &&
+          msg.text.trim()
+        ) {
+          this.cancel();
+        }
         this.emit("transcript", msg.text);
         break;
       case "turn":
@@ -218,8 +225,8 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
         this.changeState("listening");
         break;
       case "cancelled":
-        this.cancelling = false;
         this.player?.flush();
+        this.cancelling = false;
         this.changeState("listening");
         break;
       case "reset":
@@ -334,6 +341,7 @@ export class VoiceSession extends TypedEmitter<SessionEventMap> {
   }
 
   cancel(): void {
+    if (this.cancelling) return;
     this.cancelling = true;
     this.player?.flush();
     this.changeState("listening");

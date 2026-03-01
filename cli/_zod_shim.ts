@@ -18,6 +18,7 @@ export const z = {
   array: chainable,
   enum: chainable,
   union: chainable,
+  discriminatedUnion: chainable,
   literal: chainable,
   optional: chainable,
   nullable: chainable,

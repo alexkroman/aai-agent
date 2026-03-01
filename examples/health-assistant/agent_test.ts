@@ -10,7 +10,7 @@ Deno.test("health-assistant - has correct config", () => {
   assertEquals(agent.name, "Dr. Sage");
   assertEquals(agent.voice, "tara");
   assertEquals(Object.keys(agent.tools).length, 2);
-  assertEquals(agent.builtinTools, ["web_search", "run_code"]);
+  assertEquals(agent.builtinTools, ["web_search", "run_code", "final_answer"]);
 });
 
 Deno.test("health-assistant - drug_info returns information", async () => {

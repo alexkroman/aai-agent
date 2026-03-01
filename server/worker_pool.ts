@@ -68,7 +68,7 @@ export async function spawnAgent(
       permissions: {
         net: true,
         read: false,
-        env: true,
+        env: ["LOG_LEVEL"],
         run: false,
         write: false,
         ffi: false,

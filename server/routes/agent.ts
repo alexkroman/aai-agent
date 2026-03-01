@@ -81,7 +81,7 @@ export function createAgentRoutes(ctx: {
           ws,
           info.config,
           info.toolSchemas,
-          { platformConfig: slot.platformConfig, executeTool },
+          { platformConfig: slot.platformConfig, executeTool, secrets: slot.env },
         );
       },
       logContext: { slug: info.slug },

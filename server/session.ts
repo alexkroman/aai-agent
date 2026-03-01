@@ -26,6 +26,8 @@ const VOICE_RULES =
   "- NEVER use markdown: no **, no *, no _, no #, no `, no [](), no ---\n" +
   "- NEVER use bullet points (-, *, •) or numbered lists (1., 2.)\n" +
   "- NEVER use code blocks or inline code\n" +
+  "- NEVER mention tools, search, APIs, or technical failures to the user. " +
+  "If a tool returns no results, just answer naturally without explaining why.\n" +
   "- Write exactly as you would say it out loud to a friend\n" +
   '- Use short conversational sentences. To list things, say "First," "Next," "Finally,"\n' +
   "- Keep responses concise — a few sentences max";
@@ -96,10 +98,27 @@ export class ServerSession {
     };
     this.toolSchemas = toolSchemas;
 
-    const instructions = this.agentConfig.instructions || DEFAULT_INSTRUCTIONS;
+    const agentInstructions = this.agentConfig.instructions
+      ? `\n\nAgent-Specific Instructions:\n${this.agentConfig.instructions}`
+      : "";
+    const toolReminder = this.toolSchemas.length > 0
+      ? "\n\nAnswer the user's request using relevant tools (if they are available). " +
+        "Before calling a tool, do some analysis. " +
+        "First, think about which of the provided tools is the relevant tool to answer the user's request. " +
+        "Second, go through each of the required parameters of the relevant tool and determine if the user has directly provided or given enough information to infer a value. " +
+        "When deciding if the parameter can be inferred, carefully consider all the context to see if it supports a specific value. " +
+        "If all of the required parameters are present or can be reasonably inferred, proceed with the tool call. " +
+        "BUT, if one of the values for a required parameter is missing, DO NOT invoke the function (not even with fillers for the missing params) and instead, ask the user to provide the missing parameters. " +
+        "DO NOT ask for more information on optional parameters if it is not provided. " +
+        "Do not answer from memory alone when a tool can provide accurate, up-to-date information." +
+        "\n\nIMPORTANT: You MUST call the final_answer tool to deliver every response. " +
+        "Put your complete spoken response in the answer parameter. " +
+        "It is the only way to complete the task — otherwise you will be stuck in a loop."
+      : "";
     this.messages.push({
       role: "system",
-      content: instructions + VOICE_RULES,
+      content: DEFAULT_INSTRUCTIONS + agentInstructions + toolReminder +
+        VOICE_RULES,
     });
   }
 
@@ -200,9 +219,15 @@ export class ServerSession {
   }
 
   onCancel(): void {
+    const pending = this.ttsPromise;
     this.cancelInflight();
     this.stt?.clear();
-    this.trySendJson({ type: "cancelled" });
+    if (pending) {
+      // Wait for TTS to finish aborting so no audio chunks arrive after "cancelled".
+      pending.then(() => this.trySendJson({ type: "cancelled" }));
+    } else {
+      this.trySendJson({ type: "cancelled" });
+    }
   }
 
   onReset(): void {
@@ -313,6 +338,7 @@ export class ServerSession {
     toolSchemas: ToolSchema[],
     opts: CreateSessionOptions,
   ): ServerSession {
+    const secrets = opts.secrets ?? {};
     const deps: SessionDeps = {
       config: {
         ...opts.platformConfig,
@@ -324,7 +350,7 @@ export class ServerSession {
         new TtsClient(opts.platformConfig.ttsConfig),
       executeTool: opts.depsOverride?.executeTool ?? opts.executeTool,
       executeBuiltinTool: opts.depsOverride?.executeBuiltinTool ??
-        defaultExecuteBuiltinTool,
+        ((name, args) => defaultExecuteBuiltinTool(name, args, secrets)),
     };
     return new ServerSession(sessionId, ws, agentConfig, toolSchemas, deps);
   }
@@ -333,5 +359,6 @@ export class ServerSession {
 export interface CreateSessionOptions {
   platformConfig: PlatformConfig;
   executeTool: ExecuteTool;
+  secrets?: Record<string, string | undefined>;
   depsOverride?: Partial<SessionDeps>;
 }

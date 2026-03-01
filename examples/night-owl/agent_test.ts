@@ -7,7 +7,7 @@ const ctx = testCtx();
 Deno.test("night-owl - has correct config", () => {
   assertEquals(agent.name, "Night Owl");
   assertEquals(agent.voice, "dan");
-  assertEquals(agent.builtinTools, ["run_code"]);
+  assertEquals(agent.builtinTools, ["run_code", "final_answer"]);
   assertEquals(Object.keys(agent.tools).length, 1);
 });
 

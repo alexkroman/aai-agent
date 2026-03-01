@@ -9,7 +9,8 @@ let cachedKv: Deno.Kv | null = null;
 
 export async function openKv(): Promise<Deno.Kv> {
   if (!cachedKv) {
-    cachedKv = await Deno.openKv();
+    const path = Deno.env.get("AAI_DEV") === "1" ? ":memory:" : undefined;
+    cachedKv = await Deno.openKv(path);
   }
   return cachedKv;
 }

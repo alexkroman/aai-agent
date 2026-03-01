@@ -36,7 +36,7 @@ const defaultDeps: DevDeps = {
         "--unstable-kv",
         "main.ts",
       ],
-      env: { ...Deno.env.toObject(), BUNDLE_DIR: bundleDir },
+      env: { ...Deno.env.toObject(), BUNDLE_DIR: bundleDir, AAI_DEV: "1" },
       stdout: "inherit",
       stderr: "inherit",
     });

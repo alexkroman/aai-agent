@@ -88,7 +88,7 @@ const LLMChoiceSchema = z.object({
 export const LLMResponseSchema = z
   .object({
     id: z.string().optional(),
-    choices: z.array(LLMChoiceSchema),
+    choices: z.array(LLMChoiceSchema).nullable().transform((v) => v ?? []),
   })
   .passthrough();
 

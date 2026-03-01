@@ -70,4 +70,15 @@ export function applyTheme(el: HTMLElement, theme: Theme): void {
       s.setProperty(`--aai-${camelToKebab(key)}`, value as string);
     }
   }
+
+  // Apply bg/text/font directly so the theme is visible without extra CSS.
+  s.background = theme.bg;
+  s.color = theme.text;
+  s.fontFamily = theme.font;
+  s.minHeight = "100vh";
+  s.margin = "0";
+  if (typeof document !== "undefined") {
+    document.body.style.margin = "0";
+    document.body.style.background = theme.bg;
+  }
 }
